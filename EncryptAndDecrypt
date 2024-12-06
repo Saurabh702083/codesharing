@@ -1,0 +1,89 @@
+public class EncryptDecryptDTO {
+    private String value;
+    private String key;
+--------------------------------------
+@RestController
+@RequestMapping
+public class EncryptDecryptController {
+    @Autowired
+    private EncryptDecryptService encryptDecryptService;
+
+    @PostMapping("/encryption")
+//    public ResponseEntity<String> encryptValue(@RequestBody EncryptRequest request) {
+//        try {
+//            String encryptedValue = encryptDecryptService.encrypt(
+//                    request.getValue(),
+//                    request.key(),
+//                    request.getAlgorithm(),
+//                    request.getGcmIvLength(),
+//                    request.getGcmTagLength() );
+//            return ResponseEntity.ok(encryptedValue);
+//        } catch (Exception e) {
+//            return ResponseEntity.badRequest().body("Error during encryption: " + e.getMessage());
+//        }
+//    }
+
+    public ResponseEntity<String> encryptValue(@RequestBody String value) {
+        try {
+            String encryptedValue = encryptDecryptService.encrypt(value);
+            return ResponseEntity.ok(encryptedValue);
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body("Error during encryption: " + e.getMessage());
+        }
+    }
+
+    @PostMapping("/decryption")
+    public ResponseEntity<String> decryptValue(@RequestBody String encryptedValue) {
+        try {
+            String decryptedValue = encryptDecryptService.decrypt(encryptedValue);
+            return ResponseEntity.ok(decryptedValue);
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body("Error during decryption: " + e.getMessage());
+        }
+    }
+}
+----------------------------------------------------------------
+@Service
+public class EncryptDecryptService {
+    private final String Key = "S4ugAtSjSXSpksIqNpA/v8TVyJS5ltKPrA7QE1R+IJE=";
+    private final String algorithm = "AES";
+    private final int gcmIvLength = 12;
+     private final int gcmTagLength = 128;
+    public String encrypt(String value) throws Exception {
+        SecretKeySpec secretKeySpec = new SecretKeySpec(Base64.getDecoder().decode(Key), algorithm);
+        Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
+        byte[] iv = new byte[gcmIvLength];
+        GCMParameterSpec gcmParameterSpec = new GCMParameterSpec(gcmTagLength, iv);
+        cipher.init(Cipher.ENCRYPT_MODE, secretKeySpec, gcmParameterSpec);
+        byte[] encryptedValue = cipher.doFinal(value.getBytes());
+        return Base64.getEncoder().encodeToString(encryptedValue);
+    }
+
+    public String decrypt(String encryptedValue) throws Exception {
+        SecretKeySpec secretKeySpec = new SecretKeySpec(Base64.getDecoder().decode(Key), algorithm);
+        Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
+        byte[] iv = new byte[gcmIvLength];
+        GCMParameterSpec gcmParameterSpec = new GCMParameterSpec(gcmTagLength, iv);
+        cipher.init(Cipher.DECRYPT_MODE, secretKeySpec, gcmParameterSpec);
+        byte[] decodedValue = Base64.getDecoder().decode(encryptedValue);
+        byte[] decryptedValue = cipher.doFinal(decodedValue);
+        return new String(decryptedValue);
+    }
+
+
+
+}
+--------------------------------------------------
+@SpringBootApplication
+public class EncryptionAndDecryptionApplication {
+
+	public static void main(String[] args) throws NoSuchAlgorithmException {
+		SpringApplication.run(EncryptionAndDecryptionApplication.class, args);
+
+		KeyGenerator keyGen = KeyGenerator.getInstance("AES");
+		keyGen.init(256); // 128, 192, or 256 bits key size
+		 SecretKey secretKey = keyGen.generateKey(); // Encode the key to Base64 for use in your application
+		 String base64EncodedKey = Base64.getEncoder().encodeToString(secretKey.getEncoded());
+		 System.out.println("Generated Key: " + base64EncodedKey);
+	}
+	}
