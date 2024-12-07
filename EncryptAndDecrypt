@@ -87,3 +87,110 @@ public class EncryptionAndDecryptionApplication {
 		 System.out.println("Generated Key: " + base64EncodedKey);
 	}
 	}
+----------------_-_------------
+Got it! Let's dive into how you can create an RSA encryption utility in Java. You'll need to use the Java Cryptography Architecture (JCA) and the Bouncy Castle library, which provides additional cryptographic functionalities.
+
+Here's a step-by-step guide:
+
+1. **Set Up Your Project**: Ensure you have the Bouncy Castle library. You can add it to your project using Maven or download it manually.
+
+   For Maven, add this to your `pom.xml`:
+   ```xml
+   <dependency>
+       <groupId>org.bouncycastle</groupId>
+       <artifactId>bcprov-jdk15on</artifactId>
+       <version>1.68</version>
+   </dependency>
+   ```
+
+2. **Key Generation**: Generate RSA keys.
+   ```java
+   import java.security.KeyPair;
+   import java.security.KeyPairGenerator;
+   import java.security.PrivateKey;
+   import java.security.PublicKey;
+
+   public class RSAKeyGen {
+       public static void main(String[] args) throws Exception {
+           KeyPairGenerator keyGen = KeyPairGenerator.getInstance("RSA");
+           keyGen.initialize(2048);
+           KeyPair pair = keyGen.generateKeyPair();
+           PublicKey pubKey = pair.getPublic();
+           PrivateKey privKey = pair.getPrivate();
+
+           // Save keys to files (this is just an example, in a real application you'd use proper serialization)
+           System.out.println("Public Key: " + pubKey);
+           System.out.println("Private Key: " + privKey);
+       }
+   }
+   ```
+
+3. **Encryption**: Encrypt data using the public key.
+   ```java
+   import java.security.PublicKey;
+   import javax.crypto.Cipher;
+   import java.util.Base64;
+
+   public class RSAEncrypt {
+       public static String encrypt(String data, PublicKey pubKey) throws Exception {
+           Cipher cipher = Cipher.getInstance("RSA");
+           cipher.init(Cipher.ENCRYPT_MODE, pubKey);
+           byte[] encryptedBytes = cipher.doFinal(data.getBytes());
+           return Base64.getEncoder().encodeToString(encryptedBytes);
+       }
+   }
+   ```
+
+4. **Decryption**: Decrypt data using the private key.
+   ```java
+   import java.security.PrivateKey;
+   import javax.crypto.Cipher;
+   import java.util.Base64;
+
+   public class RSADecrypt {
+       public static String decrypt(String data, PrivateKey privKey) throws Exception {
+           Cipher cipher = Cipher.getInstance("RSA");
+           cipher.init(Cipher.DECRYPT_MODE, privKey);
+           byte[] decryptedBytes = cipher.doFinal(Base64.getDecoder().decode(data));
+           return new String(decryptedBytes);
+       }
+   }
+   ```
+
+5. **Testing**: Integrate the components and test.
+   ```java
+   public class Main {
+       public static void main(String[] args) throws Exception {
+           // Generate keys
+           RSAKeyGen keyGen = new RSAKeyGen();
+           KeyPair pair = keyGen.generateKeyPair();
+           PublicKey pubKey = pair.getPublic();
+           PrivateKey privKey = pair.getPrivate();
+
+           // Encrypt data
+           String encrypted = RSAEncrypt.encrypt("This is a secret message", pubKey);
+           System.out.println("Encrypted: " + encrypted);
+
+           // Decrypt data
+           String decrypted = RSADecrypt.decrypt(encrypted, privKey);
+           System.out.println("Decrypted: " + decrypted);
+       }
+   }
+   ```
+
+This should give you a basic utility for RSA encryption and decryption in Java. You can expand on this by adding better key management, improving security practices, or creating a user interface. Happy coding!
+--------------------
+. **Key Generation Class**:
+   ```java
+   import java.security.KeyPair;
+   import java.security.KeyPairGenerator;
+   import java.security.PrivateKey;
+   import java.security.PublicKey;
+
+   public class RSAKeyGen {
+       public KeyPair generateKeyPair() throws Exception {
+           KeyPairGenerator keyGen = KeyPairGenerator.getInstance("RSA");
+           keyGen.initialize(2048);
+           return keyGen.generateKeyPair();
+       }
+   }
