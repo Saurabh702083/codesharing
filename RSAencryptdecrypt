@@ -1,0 +1,157 @@
+package EncryptionAndDecryption.example.EncryptionAndDecryption.RSAencryptdecrypt.service;
+
+//import com.sbi.epay.RSAencryptdecrypt.constant.RESEncryptDecryptConstant;
+//import com.sbi.epay.RSAencryptdecrypt.exception.RESEncryptDecryptException;
+//import com.sbi.epay.logging.utility.LoggerFactoryUtility;
+//import com.sbi.epay.logging.utility.LoggerUtility;
+//import lombok.AllArgsConstructor;
+
+import javax.crypto.BadPaddingException;
+import javax.crypto.Cipher;
+import javax.crypto.IllegalBlockSizeException;
+import javax.crypto.NoSuchPaddingException;
+import java.security.InvalidAlgorithmParameterException;
+import java.security.InvalidKeyException;
+import java.security.NoSuchAlgorithmException;
+import java.security.PrivateKey;
+import java.util.Base64;
+
+import EncryptionAndDecryption.example.EncryptionAndDecryption.RSAencryptdecrypt.constant.RESEncryptDecryptConstant;
+import EncryptionAndDecryption.example.EncryptionAndDecryption.RSAencryptdecrypt.exception.RESEncryptDecryptException;
+import lombok.AllArgsConstructor;
+
+@AllArgsConstructor
+public class RSADecrypt {
+    RSAKeyGen rsaKeyGen;
+//    private  static final LoggerUtility log = LoggerFactoryUtility.getLogger(RSADecrypt.class);
+
+    public static String decrypt(String data, PrivateKey privateKey) throws RESEncryptDecryptException {
+        try {
+//            log.debug("RSADecrypt decrypt key : {} keyToDecrypt: {}", data, RSAKeyGen.generateKeyPair().getPrivate());
+            Cipher cipher = Cipher.getInstance("RSA/ECB/OAEPWithSHA-256AndMGF1Padding");
+            cipher.init(Cipher.DECRYPT_MODE, privateKey);
+            byte[] decryptedBytes = cipher.doFinal(Base64.getDecoder().decode(data));
+            return new String(decryptedBytes);
+        } catch (NoSuchAlgorithmException | NoSuchPaddingException | InvalidKeyException | IllegalArgumentException | UnsupportedOperationException |
+                 IllegalStateException | IllegalBlockSizeException | BadPaddingException e) {
+//            log.error("RSADecrypt :: decrypt ", e);
+            throw new RESEncryptDecryptException(RESEncryptDecryptConstant.GENERIC_ERROR_CODE, RESEncryptDecryptConstant.GENERIC_ERROR_MESSAGE);
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
+
+    }
+}
+---------------------------------------------
+package EncryptionAndDecryption.example.EncryptionAndDecryption.RSAencryptdecrypt.service;
+import EncryptionAndDecryption.example.EncryptionAndDecryption.RSAencryptdecrypt.constant.RESEncryptDecryptConstant;
+import EncryptionAndDecryption.example.EncryptionAndDecryption.RSAencryptdecrypt.exception.RESEncryptDecryptException;
+//import com.sbi.epay.RSAencryptdecrypt.constant.RESEncryptDecryptConstant;
+//
+//import com.sbi.epay.RSAencryptdecrypt.exception.RESEncryptDecryptException;
+//import com.sbi.epay.logging.utility.LoggerFactoryUtility;
+//import com.sbi.epay.logging.utility.LoggerUtility;
+import lombok.AllArgsConstructor;
+import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Autowired;
+
+import javax.crypto.BadPaddingException;
+import javax.crypto.Cipher;
+import javax.crypto.IllegalBlockSizeException;
+import javax.crypto.NoSuchPaddingException;
+import java.security.InvalidAlgorithmParameterException;
+import java.security.InvalidKeyException;
+import java.security.NoSuchAlgorithmException;
+import java.security.PublicKey;
+import java.util.Base64;
+@AllArgsConstructor
+public class RSAEncrypt {
+//     RSAKeyGen rsaKeyGen;
+//    private   final LoggerUtility log = LoggerFactoryUtility.getLogger(RSAEncrypt.class);
+
+
+    public static String encypt (String ASEkey ,PublicKey publicKey)throws RESEncryptDecryptException {
+        try {
+//            log.debug("RSAEncrypt encrypt key : {} keyToEncrypt: {}", ASEkey, RSAKeyGen.generateKeyPair().getPublic());
+            Cipher cipher = Cipher.getInstance("RSA/ECB/OAEPWithSHA-256AndMGF1Padding");
+            cipher.init(Cipher.ENCRYPT_MODE, publicKey);
+            byte[] encryptedBytes = cipher.doFinal(ASEkey.getBytes());
+            return Base64.getEncoder().encodeToString(encryptedBytes);
+        } catch
+        (NoSuchAlgorithmException | NoSuchPaddingException | InvalidKeyException | IllegalArgumentException |
+                 UnsupportedOperationException |
+                 IllegalStateException | IllegalBlockSizeException | BadPaddingException e) {
+//            log.error("RSAEncrypt :: encrypt ", e);
+            throw new RESEncryptDecryptException(RESEncryptDecryptConstant.GENERIC_ERROR_CODE, RESEncryptDecryptConstant.GENERIC_ERROR_MESSAGE);
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
+    }
+}
+---------------------------------------
+package EncryptionAndDecryption.example.EncryptionAndDecryption.RSAencryptdecrypt.service;
+
+import lombok.AllArgsConstructor;
+import lombok.NoArgsConstructor;
+
+import java.security.KeyPairGenerator;
+import java.security.KeyPair;
+import java.security.PrivateKey;
+import java.security.PublicKey;
+@AllArgsConstructor
+public class RSAKeyGen {
+
+    public static KeyPair generateKeyPair() throws Exception {
+        KeyPairGenerator keyGen = KeyPairGenerator.getInstance("RSA");
+        keyGen.initialize(2048);
+        KeyPair pair = keyGen.generateKeyPair();
+//        PublicKey pubKey = pair.getPublic();
+//        PrivateKey privKey = pair.getPrivate();
+        return pair;
+
+    }
+}
+----------------------------------------
+package EncryptionAndDecryption.example.EncryptionAndDecryption.RSAencryptdecrypt;
+
+import EncryptionAndDecryption.example.EncryptionAndDecryption.RSAencryptdecrypt.service.RSADecrypt;
+import EncryptionAndDecryption.example.EncryptionAndDecryption.RSAencryptdecrypt.service.RSAEncrypt;
+import EncryptionAndDecryption.example.EncryptionAndDecryption.RSAencryptdecrypt.service.RSAKeyGen;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.CommandLineRunner;
+import org.springframework.boot.SpringApplication;
+import org.springframework.boot.autoconfigure.SpringBootApplication;
+
+import java.security.KeyPair;
+import java.security.PrivateKey;
+import java.security.PublicKey;
+
+@SpringBootApplication
+public class RsAencryptdecryptApplication implements CommandLineRunner {
+
+	public static void main(String[] args) {
+		SpringApplication.run(RsAencryptdecryptApplication.class, args);
+
+
+	}
+
+
+	@Override
+	public void run(String... args) throws Exception {
+		RSAKeyGen keyGen= new RSAKeyGen();
+		KeyPair pair =keyGen.generateKeyPair();
+		PublicKey pubKey= pair.getPublic();
+		PrivateKey privKey = pair.getPrivate();
+
+
+
+		String enpryptedValue= RSAEncrypt.encypt("This is my ASE key ",pubKey);
+		System.out.println("My encrpted value is :" + enpryptedValue);
+
+		String decryptValue= RSADecrypt.decrypt(enpryptedValue, privKey);
+		System.out.println("My decrypted value is :" +decryptValue );
+
+
+
+	}
+}
