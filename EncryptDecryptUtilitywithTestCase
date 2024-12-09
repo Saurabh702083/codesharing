@@ -1,0 +1,494 @@
+package com.sbi.epay.encryptdecrypt.service;
+
+
+import com.sbi.epay.encryptdecrypt.constant.EncryptionDecryptionConstants;
+import com.sbi.epay.encryptdecrypt.exception.EncryptionDecryptionException;
+import com.sbi.epay.encryptdecrypt.util.EncryptionDecryptionAlgo;
+import com.sbi.epay.encryptdecrypt.util.GCMIvLength;
+import com.sbi.epay.encryptdecrypt.util.GCMTagLength;
+import com.sbi.epay.logging.utility.LoggerFactoryUtility;
+import com.sbi.epay.logging.utility.LoggerUtility;
+import jdk.jfr.Description;
+import lombok.NonNull;
+
+import javax.crypto.*;
+import javax.crypto.spec.GCMParameterSpec;
+import javax.crypto.spec.SecretKeySpec;
+import java.security.InvalidAlgorithmParameterException;
+import java.security.InvalidKeyException;
+import java.security.NoSuchAlgorithmException;
+import java.util.Arrays;
+import java.util.Base64;
+
+
+/**
+ * Class Name: DecryptionService
+ * *
+ * Description:This class will be used for  decryption using AES-GSM-NOPADDING algorithm
+ * *
+ * Author: V1018212(Hrishikesh Pandirakar)
+ * Copyright (c) 2024 [State Bank of India]
+ * All rights reserved
+ * *
+ * Version:1.0
+ */
+@Description("This class will be used for  decryption using AES-GSM-NOPADDING algorithm")
+public class DecryptionService {
+    private static final LoggerUtility log = LoggerFactoryUtility.getLogger(DecryptionService.class);
+
+    /**
+     * This method will be used for decryption of Keys .
+     *
+     * @param key          String which we want to decrypt
+     * @param keyToDecrypt the SecretKey by which we want use for decrypt the given text
+     * @param algorithm    EncryptionDecryptionAlgo algorithm
+     * @param gcmIvLength  algorithm iv length
+     * @param gcmTagLength algorithm tag length
+     * @return the String of original encoded KEK
+     */
+    public static String decryptKey(String key, String keyToDecrypt, @NonNull EncryptionDecryptionAlgo algorithm, @NonNull GCMIvLength gcmIvLength, @NonNull GCMTagLength gcmTagLength) throws EncryptionDecryptionException {
+        try {
+            byte[] decSecretKeyBytes = decrypt(decodedSecretKey(key).getEncoded(), decodedSecretKey(keyToDecrypt), algorithm, gcmIvLength, gcmTagLength);
+            SecretKey secretKeyKeK = new SecretKeySpec(decSecretKeyBytes, "AES");
+            return Base64.getEncoder().encodeToString(secretKeyKeK.getEncoded());
+        } catch (NoSuchAlgorithmException | NoSuchPaddingException | InvalidKeyException |
+                 InvalidAlgorithmParameterException | IllegalArgumentException | UnsupportedOperationException |
+                 IllegalStateException | IllegalBlockSizeException | BadPaddingException e) {
+            log.error("DecryptionService :: decrypt ", e);
+            throw new EncryptionDecryptionException(EncryptionDecryptionConstants.GENERIC_ERROR_CODE, EncryptionDecryptionConstants.GENERIC_ERROR_MESSAGE);
+        }
+    }
+
+    /**
+     * This method will be used for decryption of Value .
+     *
+     * @param value        String which we want to decrypt
+     * @param secretKey    the SecretKey by which we want use for decrypt the given text
+     * @param algorithm    EncryptionDecryptionAlgo algorithm
+     * @param gcmIvLength  algorithm iv length
+     * @param gcmTagLength algorithm tag length
+     * @return the String of original encoded KEK
+     */
+    public String decryptValue(@NonNull byte[] value, @NonNull SecretKey secretKey, @NonNull EncryptionDecryptionAlgo algorithm, @NonNull GCMIvLength gcmIvLength, @NonNull GCMTagLength gcmTagLength) throws EncryptionDecryptionException {
+        try {
+            byte[] decSecretKeyBytes = decrypt(value, secretKey, algorithm, gcmIvLength, gcmTagLength);
+            return new String(decSecretKeyBytes);
+        } catch (NoSuchAlgorithmException | NoSuchPaddingException | InvalidKeyException |
+                 InvalidAlgorithmParameterException | IllegalArgumentException | UnsupportedOperationException |
+                 IllegalStateException | IllegalBlockSizeException | BadPaddingException e) {
+            log.error("DecryptionService :: decrypt ", e);
+            throw new EncryptionDecryptionException(EncryptionDecryptionConstants.GENERIC_ERROR_CODE, EncryptionDecryptionConstants.GENERIC_ERROR_MESSAGE);
+        }
+    }
+
+    /**
+     * This method will be used for decode SecretKey .
+     *
+     * @param key encoded SecretKey
+     * @return a SecretKey
+     */
+    public static SecretKey decodedSecretKey(String key) {
+        log.debug("DecryptionService :: decodedSecretKey key {}", key);
+        byte[] decodedKey = Base64.getDecoder().decode(key);
+        return new SecretKeySpec(decodedKey, 0, decodedKey.length, "AES");
+    }
+
+    private static byte[] decrypt(byte[] value, SecretKey secretKey, EncryptionDecryptionAlgo algorithm, GCMIvLength gcmIvLength, GCMTagLength gcmTagLength) throws NoSuchAlgorithmException, NoSuchPaddingException, InvalidKeyException, InvalidAlgorithmParameterException, IllegalBlockSizeException, BadPaddingException {
+        log.debug("DecryptionService :: decryptKeK key {}, value {}, algorithm {}, gcmIvLength {}, gcmTagLength {}", secretKey, value, algorithm, gcmIvLength, gcmTagLength);
+        byte[] iv = Arrays.copyOfRange(value, 0, gcmIvLength.getLengthInBytes());
+        byte[] encryptedKey = Arrays.copyOfRange(value, gcmIvLength.getLengthInBytes(), value.length);
+
+        Cipher cipher = Cipher.getInstance(algorithm.getName());
+        GCMParameterSpec gcmParameterSpec = new GCMParameterSpec(gcmTagLength.getLengthInBits(), iv);
+        cipher.init(Cipher.DECRYPT_MODE, secretKey, gcmParameterSpec);
+        return cipher.doFinal(encryptedKey);
+    }
+
+}
+
+------------------------------------------------
+package com.sbi.epay.encryptdecrypt.service;
+
+
+import com.sbi.epay.encryptdecrypt.constant.EncryptionDecryptionConstants;
+import com.sbi.epay.encryptdecrypt.exception.EncryptionDecryptionException;
+import com.sbi.epay.encryptdecrypt.util.EncryptionDecryptionAlgo;
+import com.sbi.epay.encryptdecrypt.util.GCMIvLength;
+import com.sbi.epay.encryptdecrypt.util.GCMTagLength;
+import com.sbi.epay.logging.utility.LoggerFactoryUtility;
+import com.sbi.epay.logging.utility.LoggerUtility;
+import lombok.NonNull;
+
+import javax.crypto.*;
+import javax.crypto.spec.GCMParameterSpec;
+import javax.crypto.spec.SecretKeySpec;
+import java.security.InvalidAlgorithmParameterException;
+import java.security.InvalidKeyException;
+import java.security.NoSuchAlgorithmException;
+import java.security.SecureRandom;
+import java.util.Base64;
+
+/**
+ * Class Name: EncryptionService
+ * *
+ * Description:This class will be used for  encryption using AES-GSM-NOPADDING algorithm
+ * *
+ * Author: V1018212(Hrishikesh Pandirakar)
+ * Copyright (c) 2024 [State Bank of India]
+ * All rights reserved
+ * *
+ * Version:1.0
+ */
+
+public class EncryptionService {
+    private static final LoggerUtility log = LoggerFactoryUtility.getLogger(EncryptionService.class);
+
+    /**
+     * Encrypts the given SecretKey using the another SecretKey.
+     *
+     * @param key          the SecretKey by which we want use for encrypting the given key
+     * @param keyToEncrypt SecretKey which we want to encrypt
+     * @return the String of encrypted and encoded KEK
+     */
+    public static String encryptSecretKey(@NonNull String key, @NonNull String keyToEncrypt, @NonNull EncryptionDecryptionAlgo algorithm, @NonNull GCMIvLength gcmIvLength, @NonNull GCMTagLength gcmTagLength) throws EncryptionDecryptionException {
+        try {
+            log.debug("EncryptionService encryptSecretKey key : {} keyToEncrypt: {} ", key, keyToEncrypt);
+            byte[] encryptedKeK = encryptValueBySecretKey(algorithm, gcmIvLength, gcmTagLength, decodedSecretKey(keyToEncrypt), decodedSecretKey(key).getEncoded());
+            return Base64.getEncoder().encodeToString(encryptedKeK);
+        } catch (NoSuchAlgorithmException | NoSuchPaddingException | InvalidKeyException |
+                 InvalidAlgorithmParameterException | IllegalArgumentException | UnsupportedOperationException |
+                 IllegalStateException | IllegalBlockSizeException | BadPaddingException e) {
+            log.error("EncryptionService :: encrypt ", e);
+            throw new EncryptionDecryptionException(EncryptionDecryptionConstants.GENERIC_ERROR_CODE, EncryptionDecryptionConstants.GENERIC_ERROR_MESSAGE);
+        }
+    }
+
+    /**
+     * Encrypts the given plain-text using the SecretKey.
+     *
+     * @param key          the SecretKey by which we want use for encrypting the given text
+     * @param value        String which we want to encrypt
+     * @param algorithm    EncryptionDecryptionAlgo algorithm
+     * @param gcmIvLength  algorithm iv length
+     * @param gcmTagLength algorithm tag length
+     * @return the byte[] array of encrypted plain-text
+     */
+    public byte[] encryptValue(@NonNull SecretKey key, @NonNull String value, @NonNull EncryptionDecryptionAlgo algorithm, @NonNull GCMIvLength gcmIvLength, @NonNull GCMTagLength gcmTagLength) throws EncryptionDecryptionException {
+        try {
+            log.info("EncryptionService :: encrypt  key : {}, value : {}, algorithm : {}, gcmIvLength : {}, gcmTagLength : {}", key, value, algorithm, gcmIvLength, gcmTagLength);
+            return encryptValueBySecretKey(algorithm, gcmIvLength, gcmTagLength, key, value.getBytes());
+        } catch (NoSuchAlgorithmException | NoSuchPaddingException | InvalidKeyException |
+                 InvalidAlgorithmParameterException | IllegalArgumentException | UnsupportedOperationException |
+                 IllegalStateException | IllegalBlockSizeException | BadPaddingException e) {
+            log.error("EncryptionService :: encrypt ", e);
+            throw new EncryptionDecryptionException(EncryptionDecryptionConstants.GENERIC_ERROR_CODE, EncryptionDecryptionConstants.GENERIC_ERROR_MESSAGE);
+        }
+    }
+
+    /**
+     * This method will be used for decode a SecretKey key
+     *
+     * @param key it specifies the String of encoded SecretKey
+     * @return the SecretKey
+     */
+    private static SecretKey decodedSecretKey(@NonNull String key) {
+        log.info("EncryptionService :: decodedSecretKey ");
+        byte[] decodedKey = Base64.getDecoder().decode(key);
+        return new SecretKeySpec(decodedKey, 0, decodedKey.length, "AES");
+    }
+
+    private static byte[] encryptValueBySecretKey(EncryptionDecryptionAlgo algorithm, GCMIvLength gcmIvLength, GCMTagLength gcmTagLength, SecretKey key, byte[] value) throws NoSuchAlgorithmException, NoSuchPaddingException, InvalidKeyException, InvalidAlgorithmParameterException, IllegalBlockSizeException, BadPaddingException {
+        Cipher cipher = Cipher.getInstance(algorithm.getName());
+        byte[] iv = new byte[gcmIvLength.getLengthInBytes()];
+        SecureRandom random = new SecureRandom();
+        random.nextBytes(iv);
+        GCMParameterSpec gcmParameterSpec = new GCMParameterSpec(gcmTagLength.getLengthInBits(), iv);
+        cipher.init(Cipher.ENCRYPT_MODE, key, gcmParameterSpec);
+
+        byte[] encryptedValue = cipher.doFinal(value);
+        byte[] encryptValueWithIV = new byte[gcmIvLength.getLengthInBytes() + encryptedValue.length];
+
+        System.arraycopy(iv, 0, encryptValueWithIV, 0, gcmIvLength.getLengthInBytes());
+        System.arraycopy(encryptedValue, 0, encryptValueWithIV, gcmIvLength.getLengthInBytes(), encryptedValue.length);
+
+        return encryptValueWithIV;
+    }
+
+}
+
+----------------------------------------------------
+package com.sbi.epay.encryptdecrypt.service;
+
+
+import com.sbi.epay.encryptdecrypt.constant.EncryptionDecryptionConstants;
+import com.sbi.epay.encryptdecrypt.exception.EncryptionDecryptionException;
+import com.sbi.epay.encryptdecrypt.util.KeyGenerationAlgo;
+import com.sbi.epay.encryptdecrypt.util.SecretKeyLength;
+import com.sbi.epay.logging.utility.LoggerFactoryUtility;
+import com.sbi.epay.logging.utility.LoggerUtility;
+import jdk.jfr.Description;
+import lombok.NonNull;
+
+import javax.crypto.KeyGenerator;
+import javax.crypto.SecretKey;
+import java.security.InvalidParameterException;
+import java.security.NoSuchAlgorithmException;
+import java.security.SecureRandom;
+import java.util.Base64;
+
+/**
+ * Class Name: KeyGeneratorService
+ * *
+ * Description:This class will be used for generating keys and for there encryption and decryption.
+ * *
+ * Author: V1018212(Hrishikesh Pandirakar)
+ * Copyright (c) 2024 [State Bank of India]
+ * All rights reserved
+ * *
+ * Version:1.0
+ */
+@Description("This class will be used for generating keys and for there encryption and decryption.")
+public class KeyGeneratorService {
+    private static final LoggerUtility log = LoggerFactoryUtility.getLogger(KeyGeneratorService.class);
+
+    /**
+     * this method will generate a SecretKey based on size specified (256/128)
+     *
+     * @param secretKeyLength it specifies the size of key
+     * @return the String of encoded SecretKey
+     */
+    public String generateKeyByDefaultAlgo(@NonNull SecretKeyLength secretKeyLength) throws EncryptionDecryptionException {
+        log.debug("KeyGeneratorService :: generateKey size {}", secretKeyLength);
+        return Base64.getEncoder().encodeToString(getSecretKey(secretKeyLength, KeyGenerationAlgo.AES).getEncoded());
+    }
+
+    /**
+     * this method will generate a SecretKey based on size specified (256/128)
+     *
+     * @param secretKeyLength   it specifies the size of key
+     * @param keyGenerationAlgo it specifies the algorithm for key generation
+     * @return the String of encoded SecretKey
+     */
+    public String generateKeyByAlgo(@NonNull SecretKeyLength secretKeyLength, @NonNull KeyGenerationAlgo keyGenerationAlgo) throws EncryptionDecryptionException {
+        log.debug("KeyGeneratorService :: generateKey size {}, keyGenerationAlgo {} ", secretKeyLength, keyGenerationAlgo);
+        return Base64.getEncoder().encodeToString(getSecretKey(secretKeyLength, keyGenerationAlgo).getEncoded());
+    }
+
+
+    /**
+     * this method will generate a SecretKey based on size specified (256/128) and key generation algorithm
+     *
+     * @param keySize           it specifies the size of key
+     * @param keyGenerationAlgo it specifies the algorithm for key generation
+     * @return the SecretKey of encoded SecretKey
+     */
+    public SecretKey getSecretKey(SecretKeyLength keySize, KeyGenerationAlgo keyGenerationAlgo) throws EncryptionDecryptionException {
+        try {
+            KeyGenerator keyGen = KeyGenerator.getInstance(keyGenerationAlgo.getAlgorithmName());
+            SecureRandom random = new SecureRandom();
+            keyGen.init(keySize.getLengthInBits(), random);
+            return keyGen.generateKey();
+        } catch (NoSuchAlgorithmException | InvalidParameterException e) {
+            log.error("KeyGeneratorService :: getSecretKey ", e);
+            throw new EncryptionDecryptionException(EncryptionDecryptionConstants.GENERIC_ERROR_CODE, EncryptionDecryptionConstants.GENERIC_ERROR_MESSAGE);
+        }
+    }
+}
+------------------------------------
+package com.sbi.epay.encryptdecrypt.service;
+
+
+import com.sbi.epay.encryptdecrypt.constant.EncryptionDecryptionConstants;
+import com.sbi.epay.encryptdecrypt.exception.EncryptionDecryptionException;
+import com.sbi.epay.encryptdecrypt.util.KeyGenerationAlgo;
+import com.sbi.epay.encryptdecrypt.util.SecretKeyLength;
+import com.sbi.epay.logging.utility.LoggerFactoryUtility;
+import com.sbi.epay.logging.utility.LoggerUtility;
+import jdk.jfr.Description;
+import lombok.NonNull;
+
+import javax.crypto.KeyGenerator;
+import javax.crypto.SecretKey;
+import java.security.InvalidParameterException;
+import java.security.NoSuchAlgorithmException;
+import java.security.SecureRandom;
+import java.util.Base64;
+
+/**
+ * Class Name: KeyGeneratorService
+ * *
+ * Description:This class will be used for generating keys and for there encryption and decryption.
+ * *
+ * Author: V1018212(Hrishikesh Pandirakar)
+ * Copyright (c) 2024 [State Bank of India]
+ * All rights reserved
+ * *
+ * Version:1.0
+ */
+@Description("This class will be used for generating keys and for there encryption and decryption.")
+public class KeyGeneratorService {
+    private static final LoggerUtility log = LoggerFactoryUtility.getLogger(KeyGeneratorService.class);
+
+    /**
+     * this method will generate a SecretKey based on size specified (256/128)
+     *
+     * @param secretKeyLength it specifies the size of key
+     * @return the String of encoded SecretKey
+     */
+    public String generateKeyByDefaultAlgo(@NonNull SecretKeyLength secretKeyLength) throws EncryptionDecryptionException {
+        log.debug("KeyGeneratorService :: generateKey size {}", secretKeyLength);
+        return Base64.getEncoder().encodeToString(getSecretKey(secretKeyLength, KeyGenerationAlgo.AES).getEncoded());
+    }
+
+    /**
+     * this method will generate a SecretKey based on size specified (256/128)
+     *
+     * @param secretKeyLength   it specifies the size of key
+     * @param keyGenerationAlgo it specifies the algorithm for key generation
+     * @return the String of encoded SecretKey
+     */
+    public String generateKeyByAlgo(@NonNull SecretKeyLength secretKeyLength, @NonNull KeyGenerationAlgo keyGenerationAlgo) throws EncryptionDecryptionException {
+        log.debug("KeyGeneratorService :: generateKey size {}, keyGenerationAlgo {} ", secretKeyLength, keyGenerationAlgo);
+        return Base64.getEncoder().encodeToString(getSecretKey(secretKeyLength, keyGenerationAlgo).getEncoded());
+    }
+
+
+    /**
+     * this method will generate a SecretKey based on size specified (256/128) and key generation algorithm
+     *
+     * @param keySize           it specifies the size of key
+     * @param keyGenerationAlgo it specifies the algorithm for key generation
+     * @return the SecretKey of encoded SecretKey
+     */
+    public SecretKey getSecretKey(SecretKeyLength keySize, KeyGenerationAlgo keyGenerationAlgo) throws EncryptionDecryptionException {
+        try {
+            KeyGenerator keyGen = KeyGenerator.getInstance(keyGenerationAlgo.getAlgorithmName());
+            SecureRandom random = new SecureRandom();
+            keyGen.init(keySize.getLengthInBits(), random);
+            return keyGen.generateKey();
+        } catch (NoSuchAlgorithmException | InvalidParameterException e) {
+            log.error("KeyGeneratorService :: getSecretKey ", e);
+            throw new EncryptionDecryptionException(EncryptionDecryptionConstants.GENERIC_ERROR_CODE, EncryptionDecryptionConstants.GENERIC_ERROR_MESSAGE);
+        }
+    }
+}
+---------------------------------------------------------------------------------
+package com.sbi.epay.encryptdecrypt.service;
+
+import com.sbi.epay.encryptdecrypt.constant.EncryptionDecryptionConstants;
+import com.sbi.epay.encryptdecrypt.exception.EncryptionDecryptionException;
+import com.sbi.epay.encryptdecrypt.util.HashAlgorithm;
+import com.sbi.epay.logging.utility.LoggerFactoryUtility;
+import com.sbi.epay.logging.utility.LoggerUtility;
+import lombok.NonNull;
+
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.text.MessageFormat;
+
+public class HashingService {
+
+    private static final LoggerUtility log = LoggerFactoryUtility.getLogger(HashingService.class);
+
+    /**
+     * This method will be used for generating HASH values .
+     *
+     * @param data the data to be hashed
+     * @return the byte[] array of HASHED DATA
+     */
+
+    public static byte[] generateHash(byte @NonNull [] data, @NonNull HashAlgorithm algorithm) throws EncryptionDecryptionException {
+        try {
+            log.debug("HashingService :: generateHash  data {}, algorithm {}", data, algorithm);
+            MessageDigest digest = MessageDigest.getInstance(algorithm.getAlgorithmName());
+            return digest.digest(data);
+        } catch (NoSuchAlgorithmException e) {
+            log.error("HashingService :: generateHash ", e);
+            throw new EncryptionDecryptionException(EncryptionDecryptionConstants.INVALID_ERROR_CODE, MessageFormat.format(EncryptionDecryptionConstants.INVALID_ERROR_MESSAGE, "hash algorithm"));
+        } catch (Exception e) {
+            log.error("HashingService :: generateHash ", e);
+            throw new EncryptionDecryptionException(EncryptionDecryptionConstants.GENERIC_ERROR_CODE, EncryptionDecryptionConstants.GENERIC_ERROR_MESSAGE);
+        }
+    }
+
+}
+----------------------------------------------------------
+package com.epay.transaction;
+
+import com.sbi.epay.authentication.service.JwtService;
+import com.sbi.epay.encryptdecrypt.service.DecryptionService;
+import com.sbi.epay.encryptdecrypt.service.EncryptionService;
+import com.sbi.epay.encryptdecrypt.service.KeyGeneratorService;
+import com.sbi.epay.encryptdecrypt.service.KeyProviderService;
+import com.sbi.epay.encryptdecrypt.util.*;
+import org.springframework.beans.factory.annotation.Autowired;
+
+import javax.crypto.SecretKey;
+import javax.crypto.SecretKeyFactory;
+import java.util.Base64;
+
+/**
+ * Class Name:TestJson
+ * *
+ * Description:
+ * *
+ * Author:V1014352(Ranjan Kumar)
+ * <p>
+ * Copyright (c) 2024 [State Bank of INdia]
+ * All right reserved
+ * *
+ * Version:1.0
+ */
+public class TestJson {
+    public static void main(String[] args) throws Exception {
+        try {
+            EncryptionService encryptionService = new EncryptionService();
+            DecryptionService decryptionService = new DecryptionService();
+            KeyGeneratorService keyGeneratorService = new KeyGeneratorService();
+
+            //Step 1 : Key generator
+            String aek = "r4YJLpWvRkDujmWMgl5FlQ==";
+            System.out.println("aek: " + aek);
+            String kek = keyGeneratorService.generateKeyByAlgo(SecretKeyLength.AES_256, KeyGenerationAlgo.AES);
+            System.out.println("kek: " + kek);
+            String mek = keyGeneratorService.generateKeyByAlgo(SecretKeyLength.AES_256, KeyGenerationAlgo.AES);
+            System.out.println("mek: " + mek);
+
+
+            //Step 2 : Key Encryption
+            String kekbytes = encryptionService.encryptSecretKey(kek, aek, EncryptionDecryptionAlgo.AES_GCM_NO_PADDING, GCMIvLength.MAXIMUM, GCMTagLength.STANDARD);
+            System.out.println("kekbytes : " + kekbytes);
+            String deKek=DecryptionService.decryptKey(kekbytes,aek,EncryptionDecryptionAlgo.AES_GCM_NO_PADDING, GCMIvLength.MAXIMUM, GCMTagLength.STANDARD);
+            System.out.println("Decripted KEK"+deKek);
+            System.out.println("Original KEK"+kek);
+            String mekbytes = encryptionService.encryptSecretKey(mek, kek, EncryptionDecryptionAlgo.AES_GCM_NO_PADDING, GCMIvLength.MAXIMUM, GCMTagLength.STANDARD);
+            System.out.println("mekbytes : " + mekbytes);
+
+            //Step 3 : Key Provider
+
+            KeyProviderService keyProviderService = new KeyProviderService();
+            SecretKey secretKey = keyProviderService.getDecryptedMEK(mekbytes, kekbytes, aek, EncryptionDecryptionAlgo.AES_GCM_NO_PADDING, GCMIvLength.MAXIMUM, GCMTagLength.STANDARD);
+            System.out.println("secret: "+secretKey);
+            System.out.println("string Secret key: "+secretKey.getEncoded());
+
+            String encodedKey = Base64.getEncoder().encodeToString(secretKey.getEncoded());
+           // SecretKey s1=Base64.getDecoder().decode(encodedKey.)
+            System.out.println("encodedKey: "+encodedKey);
+            // Step 4 Encryption Decryption
+          //  String json = "{\"name\":\"ranjan\",\"phoneNumber\":\"9818809058\",\"email\":\"_ran@gmail.com\",\"gstIn\":\"27AAACS8577K2ZO\",\"mid\":\"12345\"}";
+            String json = "{\"mId\":\"121231212\",\"name\":\"lakhan vasnani\",\"email\":\"l17@gmail.com\",\"phoneNumber\":\"7262625667\",\"gstIn\":\"22AAAAA0000A127\",\"addressline1\":\"Gandhi road\",\"addressline2\":\"Ulhas\",\"city\":\"Mumbai\",\"state\":\"Maharashtra\",\"country\":\"India\",\"pinCode\":\"421004\"}";
+            byte[] bytes = encryptionService.encryptValue(secretKey, json, EncryptionDecryptionAlgo.AES_GCM_NO_PADDING, GCMIvLength.MAXIMUM, GCMTagLength.STANDARD);
+            System.out.println("encripted:="+ bytes.toString());
+            String str= Base64.getEncoder().encodeToString(bytes);
+            System.out.println("str:="+ str);
+            byte[] decode=Base64.getDecoder().decode(str);
+            String decryptionValue = decryptionService.decryptValue(decode, secretKey, EncryptionDecryptionAlgo.AES_GCM_NO_PADDING, GCMIvLength.MAXIMUM, GCMTagLength.STANDARD);
+            System.out.println(decryptionValue);
+
+
+        } catch (NullPointerException e) {
+            throw new Exception(e.getMessage() ,e);
+        }
+
+    }
+}
