@@ -1,1 +1,15 @@
-
+Once's the file is stored in the S3 bucket we have to read and file data and store it into Operation DB
+Step 1. Read the file BankCode from S3 bucket.
+Step 2. Call Admin Service:-
+Depending upon bankcode or bankName we have to get the file configuration for that particular bank from Admin Service.
+We can get the details of file config from RECON_FILE_CONFIG table in Admin DB. These Table contains details of BANK_ID, FILE_TYPE ,FILE_DELIMETER ,FILE_HEADER_ROW , FILE_READ_FROM, FILE_ENCRYPTED etc.
+Step 3. Decryption of file.
+If the for the particular bankCode ,its file are encrypted then we have to first decrypt that file. And for decryption we will get key and type of encryption from RECON_FILE_CONFIG table. If file is not encrypted then we can directly move to next sept.
+Step 4. Read the File details:-
+Depending upon bank file we have to pars the data. Every bank have different file format and data inside the file have different format.
+So to read the data we have to fellow the files config details for particular bank like from which row we will get bank id, bank Header ,ATRN details , transaction details etc.
+Step 5. Store in DB:-
+We have to store the read data to RECON_FILE_DTLS Table.
+To store the Data  we can use Kafka that will store the data in bundle. Data are stored in particular assigned row.
+Step 6. Acknowledge in s3.
+Once the file is read and data is stored in DB we have to crate Acknowledge file in S3 that will keep the status of the file.
