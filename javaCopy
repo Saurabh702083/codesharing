@@ -101,3 +101,297 @@ public class MerchantOrderPayment extends AuditEntity {
 
 so can you please rewrite the full code with entityes that will be reqrired in Recon service with  reposetory 
 and to get the data can we use JAP repository.
+
+
+Recon Service Implementation
+
+1. Entities for Recon Service
+
+a. Order Entity (MERCHANT_ORDERS)
+
+@Entity
+@Table(name = "MERCHANT_ORDERS")
+public class Order extends AuditEntity {
+
+    @Id
+    @Column(nullable = false, updatable = false, unique = true)
+    private String sbiOrderRefNumber;
+
+    private String mId;
+    private String customerId;
+    private String currencyCode;
+    private BigDecimal orderAmount;
+    private String orderRefNumber;
+
+    @Enumerated(EnumType.STRING)
+    private OrderStatus status;
+
+    @Lob
+    private String otherDetails;
+    private Long expiry;
+
+    @Lob
+    private String multiAccounts;
+    private String paymentMode;
+    private String orderHash;
+    private String returnUrl;
+    private Integer orderRetryCount;
+
+    @Lob
+    private String thirdPartyDetails;
+
+    @OneToMany(mappedBy = "order", cascade = CascadeType.ALL, fetch = FetchType.LAZY)
+    private List<MerchantOrderPayment> merchantOrderPayments;
+}
+
+b. MerchantOrderPayment Entity (MERCHANT_ORDER_PAYMENTS)
+
+@Entity
+@Table(name = "MERCHANT_ORDER_PAYMENTS")
+public class MerchantOrderPayment extends AuditEntity {
+
+    @Id
+    @Column(name = "ATRN_NUM", nullable = false, updatable = false, unique = true)
+    private String atrnNumber;
+
+    private String mId;
+    private String orderRefNumber;
+    private String sbiOrderRefNumber;
+    private String bankReferenceNumber;
+    private String currencyCode;
+    private BigDecimal orderAmount;
+
+    @Column(name = "DEBIT_AMT")
+    private BigDecimal debitAmount;
+
+    private BigDecimal availableRefundAmount;
+    private BigDecimal chargebackAmount;
+    private String gstIn;
+    private String channelBank;
+
+    @Enumerated(EnumType.STRING)
+    private PayMode payMode;
+
+    @Column(name = "GTW_MAP_ID")
+    private String pgBankCode;
+
+    private String payProcId;
+
+    @Column(name = "PAY_PROC_TYPE")
+    private String paymodeType;
+
+    @Column(name = "GTW_ISSUE_MECODE")
+    private String gatewayIssueMECode;
+
+    private String cin;
+
+    @Enumerated(EnumType.STRING)
+    private PaymentStatus paymentStatus;
+
+    @Enumerated(EnumType.STRING)
+    private TransactionStatus transactionStatus;
+
+    @Enumerated(EnumType.STRING)
+    private SettelmentStatus settlementStatus;
+
+    @Enumerated(EnumType.STRING)
+    private TransactionRefundStatus refundStatus;
+
+    @Enumerated(EnumType.STRING)
+    private CancellationStatus cancellationStatus;
+
+    private String chargebackStatus;
+
+    @Lob
+    private String pushResponse;
+
+    private Date paymentSuccessDate;
+    private String failReason;
+    private String pushStatus;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "sbiOrderRefNumber", insertable = false, updatable = false)
+    private Order order;
+}
+
+
+---
+
+2. Repositories
+
+public interface OrderRepository extends JpaRepository<Order, String> {}
+public interface MerchantOrderPaymentRepository extends JpaRepository<MerchantOrderPayment, String> {}
+
+
+---
+
+3. DTO Projections from Synonym Views
+
+If you use native queries to read from ORDER_RECON_VIEW and PAYMENT_RECON_VIEW, create DTOs:
+
+public interface OrderReconViewDTO {
+    String getSbiOrderRefNumber();
+    String getMId();
+    String getCustomerId();
+    String getCurrencyCode();
+    BigDecimal getOrderAmount();
+    String getOrderRefNumber();
+    String getStatus();
+    String getOtherDetails();
+    Long getExpiry();
+    String getMultiAccounts();
+    String getPaymentMode();
+    String getOrderHash();
+    String getReturnUrl();
+    Integer getOrderRetryCount();
+    String getThirdPartyDetails();
+}
+
+public interface PaymentReconViewDTO {
+    String getAtrnNumber();
+    String getMId();
+    String getOrderRefNumber();
+    String getSbiOrderRefNumber();
+    String getBankReferenceNumber();
+    String getCurrencyCode();
+    BigDecimal getOrderAmount();
+    BigDecimal getDebitAmount();
+    BigDecimal getAvailableRefundAmount();
+    BigDecimal getChargebackAmount();
+    String getGstIn();
+    String getChannelBank();
+    String getPayMode();
+    String getPgBankCode();
+    String getPayProcId();
+    String getPaymodeType();
+    String getGatewayIssueMECode();
+    String getCin();
+    String getPaymentStatus();
+    String getTransactionStatus();
+    String getSettlementStatus();
+    String getRefundStatus();
+    String getCancellationStatus();
+    String getChargebackStatus();
+    String getPushResponse();
+    Date getPaymentSuccessDate();
+    String getFailReason();
+    String getPushStatus();
+}
+
+
+---
+
+4. Repository with Native Query for Synonym Views
+
+@Repository
+public interface SynonymViewRepository extends JpaRepository<Order, String> {
+
+    @Query(value = "SELECT * FROM ORDER_RECON_VIEW", nativeQuery = true)
+    List<OrderReconViewDTO> fetchOrderReconView();
+
+    @Query(value = "SELECT * FROM PAYMENT_RECON_VIEW", nativeQuery = true)
+    List<PaymentReconViewDTO> fetchPaymentReconView();
+}
+
+
+---
+
+5. Service for Data Transfer
+
+@Service
+@RequiredArgsConstructor
+public class ReconDataTransferService {
+
+    private final SynonymViewRepository viewRepository;
+    private final OrderRepository orderRepository;
+    private final MerchantOrderPaymentRepository paymentRepository;
+
+    public void transferOrders() {
+        List<OrderReconViewDTO> views = viewRepository.fetchOrderReconView();
+        List<Order> orders = views.stream().map(this::mapToOrder).toList();
+        orderRepository.saveAll(orders);
+    }
+
+    public void transferPayments() {
+        List<PaymentReconViewDTO> views = viewRepository.fetchPaymentReconView();
+        List<MerchantOrderPayment> payments = views.stream().map(this::mapToPayment).toList();
+        paymentRepository.saveAll(payments);
+    }
+
+    private Order mapToOrder(OrderReconViewDTO dto) {
+        Order order = new Order();
+        order.setSbiOrderRefNumber(dto.getSbiOrderRefNumber());
+        order.setMId(dto.getMId());
+        order.setCustomerId(dto.getCustomerId());
+        order.setCurrencyCode(dto.getCurrencyCode());
+        order.setOrderAmount(dto.getOrderAmount());
+        order.setOrderRefNumber(dto.getOrderRefNumber());
+        order.setStatus(OrderStatus.valueOf(dto.getStatus()));
+        order.setOtherDetails(dto.getOtherDetails());
+        order.setExpiry(dto.getExpiry());
+        order.setMultiAccounts(dto.getMultiAccounts());
+        order.setPaymentMode(dto.getPaymentMode());
+        order.setOrderHash(dto.getOrderHash());
+        order.setReturnUrl(dto.getReturnUrl());
+        order.setOrderRetryCount(dto.getOrderRetryCount());
+        order.setThirdPartyDetails(dto.getThirdPartyDetails());
+        return order;
+    }
+
+    private MerchantOrderPayment mapToPayment(PaymentReconViewDTO dto) {
+        MerchantOrderPayment payment = new MerchantOrderPayment();
+        payment.setAtrnNumber(dto.getAtrnNumber());
+        payment.setMId(dto.getMId());
+        payment.setOrderRefNumber(dto.getOrderRefNumber());
+        payment.setSbiOrderRefNumber(dto.getSbiOrderRefNumber());
+        payment.setBankReferenceNumber(dto.getBankReferenceNumber());
+        payment.setCurrencyCode(dto.getCurrencyCode());
+        payment.setOrderAmount(dto.getOrderAmount());
+        payment.setDebitAmount(dto.getDebitAmount());
+        payment.setAvailableRefundAmount(dto.getAvailableRefundAmount());
+        payment.setChargebackAmount(dto.getChargebackAmount());
+        payment.setGstIn(dto.getGstIn());
+        payment.setChannelBank(dto.getChannelBank());
+        payment.setPayMode(PayMode.valueOf(dto.getPayMode()));
+        payment.setPgBankCode(dto.getPgBankCode());
+        payment.setPayProcId(dto.getPayProcId());
+        payment.setPaymodeType(dto.getPaymodeType());
+        payment.setGatewayIssueMECode(dto.getGatewayIssueMECode());
+        payment.setCin(dto.getCin());
+        payment.setPaymentStatus(PaymentStatus.valueOf(dto.getPaymentStatus()));
+        payment.setTransactionStatus(TransactionStatus.valueOf(dto.getTransactionStatus()));
+        payment.setSettlementStatus(SettelmentStatus.valueOf(dto.getSettlementStatus()));
+        payment.setRefundStatus(TransactionRefundStatus.valueOf(dto.getRefundStatus()));
+        payment.setCancellationStatus(CancellationStatus.valueOf(dto.getCancellationStatus()));
+        payment.setChargebackStatus(dto.getChargebackStatus());
+        payment.setPushResponse(dto.getPushResponse());
+        payment.setPaymentSuccessDate(dto.getPaymentSuccessDate());
+        payment.setFailReason(dto.getFailReason());
+        payment.setPushStatus(dto.getPushStatus());
+        return payment;
+    }
+}
+
+
+---
+
+6. Scheduler
+
+@Component
+@RequiredArgsConstructor
+public class ReconScheduler {
+
+    private final ReconDataTransferService service;
+
+    @Scheduled(cron = "0 0 2 * * ?") // 2 AM daily
+    public void runReconDataTransfer() {
+        service.transferOrders();
+        service.transferPayments();
+    }
+}
+
+
+---
+
+Would you like help generating enums or a skeleton project with this pre-wired?
+
