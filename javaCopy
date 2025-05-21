@@ -1,1 +1,103 @@
+in synonmus our DB team is puting the data. and they are geting this data from Transaction service. In Transaction service we have table name MERCHANT_ORDERS and MERCHANT_ORDER_PAYMENTS table so DB team takes this data and store it in Recon service synonyms. 
+and now its my task to get the data from these synonyms and store it in the Recon service in which we have to table named MERCHANT_ORDERS and MERCHANT_ORDER_PAYMENTS with the hepl od schedular.
 
+below is my fields in MERCHANT_ORDERS in my transaction service 
+@Entity
+@Table(name = "MERCHANT_ORDERS")
+public class Order extends AuditEntity {
+
+    @Id
+    @Column(nullable = false, updatable = false, unique = true)
+    private String sbiOrderRefNumber;
+    @Column(name = "MERCHANT_ID")
+    private String mId;
+    private String customerId;
+    private String currencyCode;
+    private BigDecimal orderAmount;
+    private String orderRefNumber;
+
+    @Enumerated(EnumType.STRING)
+    private OrderStatus status;
+
+    @Column(columnDefinition = "CLOB")
+    private String otherDetails;
+    private Long expiry;
+
+    @Column(columnDefinition = "CLOB")
+    private String multiAccounts;
+    private String paymentMode;
+    private String orderHash;
+    private String returnUrl;
+    private Integer orderRetryCount;
+
+    @Column(columnDefinition = "CLOB")
+    private String thirdPartyDetails;
+
+    @OneToMany(mappedBy = "sbiOrderRefNumber", cascade = CascadeType.ALL, fetch = FetchType.LAZY)
+    private List<MerchantOrderPayment> merchantOrderPayments;
+---------------------------------
+
+below are the field in MERCHANT_ORDER_PAYMENTS table  in my transaction service
+@Data
+@EqualsAndHashCode(callSuper = true)
+@Entity
+@Table(name = "MERCHANT_ORDER_PAYMENTS")
+public class MerchantOrderPayment extends AuditEntity {
+
+    @Id
+    @Column(name = "ATRN_NUM", nullable = false, updatable = false, unique = true)
+    private String atrnNumber;
+    @Column(name = "MERCHANT_ID")
+    private String mId;
+    private String orderRefNumber;
+    private String sbiOrderRefNumber;
+    private String bankReferenceNumber;
+
+    private String currencyCode;
+    private BigDecimal orderAmount;
+    @Column(name = "DEBIT_AMT")
+    private BigDecimal debitAmount;
+    private BigDecimal availableRefundAmount;
+    private BigDecimal chargebackAmount;
+
+    private String gstIn;
+    private String channelBank;
+    @Enumerated(EnumType.STRING)
+    private PayMode payMode;
+    @Column(name = "GTW_MAP_ID")
+    private String pgBankCode;//this is gateway map id
+    private String payProcId; //this is pay proc id e.g. Visa, Master, Rupay
+    @Column(name = "PAY_PROC_TYPE")
+    private String paymodeType; //this is Pay proc type e.g. onus, offus
+    @Column(name = "GTW_ISSUE_MECODE")
+    private String gatewayIssueMECode; //merchant wise and/or payment wise ME code received from bank
+    private String cin;
+
+    @Enumerated(EnumType.STRING)
+    private PaymentStatus paymentStatus;
+    @Enumerated(EnumType.STRING)
+    private TransactionStatus transactionStatus;
+    @Enumerated(EnumType.STRING)
+    private SettelmentStatus settlementStatus;
+    @Enumerated(EnumType.STRING)
+    private TransactionRefundStatus refundStatus;
+    @Enumerated(EnumType.STRING)
+    private CancellationStatus cancellationStatus;
+    private String chargebackStatus;
+
+    @Lob
+    private String pushResponse;
+    private Date paymentSuccessDate;
+    private String failReason;
+    private String pushStatus;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "sbiOrderRefNumber", insertable = false, updatable = false)
+    private Order order;
+
+
+--------------------------------------
+
+
+so can you please rewrite the full code with entityes that will be reqrired in Recon service with  reposetory 
+and to get the data can we use JAP repository.
