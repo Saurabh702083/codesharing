@@ -395,3 +395,109 @@ public class ReconScheduler {
 
 Would you like help generating enums or a skeleton project with this pre-wired?
 
+
+-+-+-+-+-+-+-+-+++++-+-+-+-+-+-+-+-+-+-+-++++++(-+-+-+-+
+
+
+
+// --- 1. Entities ---
+
+@Entity @Table(name = "ORDER_RECON_VIEW") @Immutable public class OrderReconView { @Id private String sbiOrderRefNumber; private String mId; private String customerId; private String currencyCode; private BigDecimal orderAmount; private String orderRefNumber; @Enumerated(EnumType.STRING) private OrderStatus status; @Lob private String otherDetails; private Long expiry; @Lob private String multiAccounts; private String paymentMode; private String orderHash; private String returnUrl; private Integer orderRetryCount; @Lob private String thirdPartyDetails; }
+
+@Entity @Table(name = "PAYMENT_RECON_VIEW") @Immutable public class PaymentReconView { @Id @Column(name = "ATRN_NUM") private String atrnNumber; private String mId; private String orderRefNumber; private String sbiOrderRefNumber; private String bankReferenceNumber; private String currencyCode; private BigDecimal orderAmount; private BigDecimal debitAmount; private BigDecimal availableRefundAmount; private BigDecimal chargebackAmount; private String gstIn; private String channelBank; @Enumerated(EnumType.STRING) private PayMode payMode; private String pgBankCode; private String payProcId; private String paymodeType; private String gatewayIssueMECode; private String cin; @Enumerated(EnumType.STRING) private PaymentStatus paymentStatus; @Enumerated(EnumType.STRING) private TransactionStatus transactionStatus; @Enumerated(EnumType.STRING) private SettelmentStatus settlementStatus; @Enumerated(EnumType.STRING) private TransactionRefundStatus refundStatus; @Enumerated(EnumType.STRING) private CancellationStatus cancellationStatus; private String chargebackStatus; @Lob private String pushResponse; private Date paymentSuccessDate; private String failReason; private String pushStatus; }
+
+// --- 2. Repositories ---
+
+public interface OrderReconViewRepository extends JpaRepository<OrderReconView, String> {} public interface PaymentReconViewRepository extends JpaRepository<PaymentReconView, String> {} public interface OrderRepository extends JpaRepository<Order, String> {} public interface MerchantOrderPaymentRepository extends JpaRepository<MerchantOrderPayment, String> {}
+
+// --- 3. Service Class ---
+
+@Service @RequiredArgsConstructor public class ReconDataSyncService {
+
+private final OrderReconViewRepository orderViewRepo;
+private final PaymentReconViewRepository paymentViewRepo;
+private final OrderRepository orderRepo;
+private final MerchantOrderPaymentRepository paymentRepo;
+
+public void syncData() {
+    List<Order> orders = orderViewRepo.findAll().stream()
+        .map(this::mapToOrderEntity)
+        .collect(Collectors.toList());
+    orderRepo.saveAll(orders);
+
+    List<MerchantOrderPayment> payments = paymentViewRepo.findAll().stream()
+        .map(this::mapToPaymentEntity)
+        .collect(Collectors.toList());
+    paymentRepo.saveAll(payments);
+}
+
+private Order mapToOrderEntity(OrderReconView view) {
+    Order order = new Order();
+    order.setSbiOrderRefNumber(view.getSbiOrderRefNumber());
+    order.setMId(view.getMId());
+    order.setCustomerId(view.getCustomerId());
+    order.setCurrencyCode(view.getCurrencyCode());
+    order.setOrderAmount(view.getOrderAmount());
+    order.setOrderRefNumber(view.getOrderRefNumber());
+    order.setStatus(view.getStatus());
+    order.setOtherDetails(view.getOtherDetails());
+    order.setExpiry(view.getExpiry());
+    order.setMultiAccounts(view.getMultiAccounts());
+    order.setPaymentMode(view.getPaymentMode());
+    order.setOrderHash(view.getOrderHash());
+    order.setReturnUrl(view.getReturnUrl());
+    order.setOrderRetryCount(view.getOrderRetryCount());
+    order.setThirdPartyDetails(view.getThirdPartyDetails());
+    return order;
+}
+
+private MerchantOrderPayment mapToPaymentEntity(PaymentReconView view) {
+    MerchantOrderPayment payment = new MerchantOrderPayment();
+    payment.setAtrnNumber(view.getAtrnNumber());
+    payment.setMId(view.getMId());
+    payment.setOrderRefNumber(view.getOrderRefNumber());
+    payment.setSbiOrderRefNumber(view.getSbiOrderRefNumber());
+    payment.setBankReferenceNumber(view.getBankReferenceNumber());
+    payment.setCurrencyCode(view.getCurrencyCode());
+    payment.setOrderAmount(view.getOrderAmount());
+    payment.setDebitAmount(view.getDebitAmount());
+    payment.setAvailableRefundAmount(view.getAvailableRefundAmount());
+    payment.setChargebackAmount(view.getChargebackAmount());
+    payment.setGstIn(view.getGstIn());
+    payment.setChannelBank(view.getChannelBank());
+    payment.setPayMode(view.getPayMode());
+    payment.setPgBankCode(view.getPgBankCode());
+    payment.setPayProcId(view.getPayProcId());
+    payment.setPaymodeType(view.getPaymodeType());
+    payment.setGatewayIssueMECode(view.getGatewayIssueMECode());
+    payment.setCin(view.getCin());
+    payment.setPaymentStatus(view.getPaymentStatus());
+    payment.setTransactionStatus(view.getTransactionStatus());
+    payment.setSettlementStatus(view.getSettlementStatus());
+    payment.setRefundStatus(view.getRefundStatus());
+    payment.setCancellationStatus(view.getCancellationStatus());
+    payment.setChargebackStatus(view.getChargebackStatus());
+    payment.setPushResponse(view.getPushResponse());
+    payment.setPaymentSuccessDate(view.getPaymentSuccessDate());
+    payment.setFailReason(view.getFailReason());
+    payment.setPushStatus(view.getPushStatus());
+    return payment;
+}
+
+}
+
+// --- 4. Scheduler Class ---
+
+@Component @RequiredArgsConstructor public class ReconDataScheduler {
+
+private final ReconDataSyncService reconDataSyncService;
+
+@Scheduled(cron = "0 0 2 * * *") // Every day at 2 AM
+public void runScheduledSync() {
+    reconDataSyncService.syncData();
+}
+
+}
+
+
+
