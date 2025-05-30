@@ -151,3 +151,179 @@ public class ReconService {
         return result;
     }
 }
+
+
+-+-+-+-+------&+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-++-+
+
+31/5/25
+
+1. 
+
+@Entity
+@Table(name = "merchant_order_payment")
+public class MerchantOrderPayment {
+
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+
+    @Column(name = "atrn", unique = true)
+    private String atrn;
+
+    @Column(name = "merchant_id")
+    private String merchantId;
+
+    @Column(name = "transaction_amount")
+    private Double transactionAmount;
+
+    @Column(name = "transaction_date")
+    private LocalDate transactionDate;
+
+    @Column(name = "payment_mode")
+    private String paymentMode;
+
+    // Getters and Setters
+}
+
+2.
+
+@Entity
+@Table(name = "recon_file_ditl")
+public class ReconFileDitl {
+
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+
+    @Column(name = "atrn")
+    private String atrn;
+
+    @Column(name = "transaction_amount")
+    private Double transactionAmount;
+
+    @Column(name = "transaction_date")
+    private LocalDate transactionDate;
+
+    @Column(name = "matched_status")
+    private String matchedStatus;
+
+    // Other fields as needed...
+
+    // Getters and Setters
+}
+
+3.
+public class ReconResultDTO {
+
+    private long matchedCount;
+    private long unmatchedCount;
+    private long duplicateCount;
+
+    private List<ReconFileDitl> matchedReconRecords;
+    private List<ReconFileDitl> unmatchedReconRecords;
+    private List<ReconFileDitl> duplicateReconRecords;
+
+    public ReconResultDTO() {
+        this.matchedReconRecords = new ArrayList<>();
+        this.unmatchedReconRecords = new ArrayList<>();
+        this.duplicateReconRecords = new ArrayList<>();
+    }
+
+    // Getters and Setters
+}
+
+
+4.
+
+@Repository
+public interface MerchantOrderPaymentRepository extends JpaRepository<MerchantOrderPayment, Long> {
+}
+
+
+5.
+
+@Repository
+public interface ReconRepository extends JpaRepository<ReconFileDitl, Long> {
+
+    @Query(value = """
+        SELECT r.atrn FROM recon_file_ditl r
+        INNER JOIN merchant_order_payment m ON r.atrn = m.atrn
+    """, nativeQuery = true)
+    List<String> findMatchedATRNs();
+
+    @Query(value = """
+        SELECT r.atrn FROM recon_file_ditl r
+        LEFT JOIN merchant_order_payment m ON r.atrn = m.atrn
+        WHERE m.atrn IS NULL
+    """, nativeQuery = true)
+    List<String> findUnmatchedATRNs();
+
+    @Query(value = """
+        SELECT r.atrn FROM recon_file_ditl r
+        WHERE r.atrn IN (
+            SELECT atrn FROM recon_file_ditl GROUP BY atrn HAVING COUNT(*) > 1
+        )
+    """, nativeQuery = true)
+    List<String> findDuplicateATRNs();
+
+    @Modifying
+    @Transactional
+    @Query(value = "UPDATE recon_file_ditl SET matched_status = :status WHERE atrn IN (:atrns)", nativeQuery = true)
+    int updateMatchedStatus(@Param("status") String status, @Param("atrns") List<String> atrns);
+
+    List<ReconFileDitl> findByAtrnIn(List<String> atrns);
+}
+
+
+6.
+@Service
+public class ReconService {
+
+    @Autowired
+    private ReconRepository reconRepository;
+
+    @Transactional
+    public ReconResultDTO getReconSummaryAndUpdateStatus() {
+        ReconResultDTO result = new ReconResultDTO();
+
+        // 1️⃣ Matched
+        List<String> matchedATRNs = reconRepository.findMatchedATRNs();
+        List<ReconFileDitl> matchedRecords = matchedATRNs.isEmpty() ? List.of() : reconRepository.findByAtrnIn(matchedATRNs);
+        reconRepository.updateMatchedStatus("MATCHED", matchedATRNs);
+        result.setMatchedReconRecords(matchedRecords);
+        result.setMatchedCount(matchedRecords.size());
+
+        // 2️⃣ Unmatched
+        List<String> unmatchedATRNs = reconRepository.findUnmatchedATRNs();
+        List<ReconFileDitl> unmatchedRecords = unmatchedATRNs.isEmpty() ? List.of() : reconRepository.findByAtrnIn(unmatchedATRNs);
+        reconRepository.updateMatchedStatus("UNMATCHED", unmatchedATRNs);
+        result.setUnmatchedReconRecords(unmatchedRecords);
+        result.setUnmatchedCount(unmatchedRecords.size());
+
+        // 3️⃣ Duplicate
+        List<String> duplicateATRNs = reconRepository.findDuplicateATRNs();
+        List<ReconFileDitl> duplicateRecords = duplicateATRNs.isEmpty() ? List.of() : reconRepository.findByAtrnIn(duplicateATRNs);
+        reconRepository.updateMatchedStatus("DUPLICATE", duplicateATRNs);
+        result.setDuplicateReconRecords(duplicateRecords);
+        result.setDuplicateCount(duplicateRecords.size());
+
+        return result;
+    }
+}
+
+7.
+@RestController
+@RequestMapping("/api/recon")
+public class ReconController {
+
+    @Autowired
+    private ReconService reconService;
+
+    @GetMapping("/summary")
+    public ResponseEntity<ReconResultDTO> getReconSummary() {
+        ReconResultDTO result = reconService.getReconSummaryAndUpdateStatus();
+        return ResponseEntity.ok(result);
+    }
+}
+
+8.
