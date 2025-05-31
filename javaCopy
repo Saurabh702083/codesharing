@@ -327,3 +327,301 @@ public class ReconController {
 }
 
 8.
+
+---------------------------------------------------------------------------------------------------------------------------------------------------
+So what i did the code you provide i made some change at the time of project start like 
+there is change in Table name of ReconFileDitl to RECON_FILE_DTLS , some enity field  name has been changed like atrn to ATRN_NUM , matchedStatus to reconStatus,  request you as well to make the changes in your code and let know know the reson why i am geeting that erroe
+
+Below is my MERCHANT_ORDER_PAYMENTS table 
+
+-----------------------------------------------------
+package com.epay.rns.entity;
+import com.epay.rns.util.enums.*;
+import jakarta.persistence.*;
+import lombok.Data;
+import org.springframework.data.annotation.CreatedBy;
+import org.springframework.data.annotation.CreatedDate;
+import org.springframework.data.annotation.LastModifiedBy;
+import org.springframework.data.annotation.LastModifiedDate;
+-
+import java.math.BigDecimal;
+import java.util.Date;
+
+@Data
+@Entity
+@Table(name = "MERCHANT_ORDER_PAYMENTS")
+public class MerchantOrderPaymentEntity {
+
+    @Id
+    @Column(name = "ATRN_NUM", nullable = false, updatable = false, unique = true)
+    private String atrnNumber;
+    @Column(name = "MERCHANT_ID")
+    private String mId;
+    private String orderRefNumber;
+    private String sbiOrderRefNumber;
+    private String bankReferenceNumber;
+
+    private String currencyCode;
+    private BigDecimal orderAmount;
+    @Column(name = "DEBIT_AMT")
+    private BigDecimal debitAmount;
+    private BigDecimal availableRefundAmount;
+    private BigDecimal chargebackAmount;
+
+    private String gstIn;
+    private String channelBank;
+    @Enumerated(EnumType.STRING)
+    private PayMode payMode;
+    @Column(name = "GTW_MAP_ID")
+    private String pgBankCode;
+    private String payProcId;
+    @Column(name = "PAY_PROC_TYPE")
+    private String paymodeType;
+    @Column(name = "GTW_ISSUE_MECODE")
+    private String gatewayIssueMECode;
+    private String cin;
+    @Enumerated(EnumType.STRING)
+    private PaymentStatus paymentStatus;
+    @Enumerated(EnumType.STRING)
+    private TransactionStatus transactionStatus;
+    @Enumerated(EnumType.STRING)
+    private SettlementStatus settlementStatus;
+    @Enumerated(EnumType.STRING)
+    private TransactionRefundStatus refundStatus;
+    @Enumerated(EnumType.STRING)
+    private CancellationStatus cancellationStatus;
+    private String chargebackStatus;
+    @Lob
+    private String pushResponse;
+    private Date paymentSuccessDate;
+    private String failReason;
+    private String pushStatus;
+    @CreatedBy
+    private String createdBy;
+    @LastModifiedBy
+    private String updatedBy;
+    @CreatedDate
+    private Long createdDate;
+    @LastModifiedDate
+    private Long updatedDate;
+
+}
+
+Below is my RECON_FILE_DTLS Table
+
+package com.epay.rns.entity;
+
+
+import jakarta.persistence.*;
+import lombok.Data;
+import org.apache.hadoop.shaded.org.apache.commons.net.ntp.TimeStamp;
+import org.joda.time.DateTime;
+import java.math.BigDecimal;
+import java.util.Date;
+import java.util.UUID;
+@Data
+@Entity
+@Table(name = "RECON_FILE_DTLS")
+public class ReconFileData {
+
+    @Id
+    @GeneratedValue(strategy = GenerationType.UUID)
+    private UUID rfdId;
+    private UUID rfsId;
+    private long  rowNumber;
+    private String  recordType;
+    private String  atrnNum;
+    private BigDecimal paymentAmount;
+    private long paymentDate;
+    private String bankReferenceNumber;
+    private String status;
+    private String reconStatus;
+    private TimeStamp reconTime;
+    private String settlementStatus;
+    private TimeStamp settlementTime;
+    private String remark;
+}
+------------------------------------------------------------
+Below is my Liquebase script for RECON_FILE_DTLS table
+
+--liquibase formatted sql
+--changeset shilpa :103
+
+CREATE TABLE RECON_FILE_DTLS(
+                  RFD_ID                  RAW(16) PRIMARY KEY,
+                  RFS_ID                  RAW(16),
+                  ROW_NUMBER              NUMBER,
+                  RECORD_TYPE             VARCHAR2(100),
+                  ATRN_NUM                VARCHAR2(100),
+                  PAYMENT_AMOUNT          NUMBER(15, 2),
+                  PAYMENT_DATE            NUMBER,
+                  BANK_REFERENCE_NUMBER   VARCHAR2(100),
+                  STATUS                  VARCHAR2(50),
+                  RECON_STATUS            VARCHAR2(50),
+                  RECON_TIME              TIMESTAMP,
+                  SETTLEMENT_STATUS       VARCHAR2(50),
+                  SETTLEMENT_TIME         TIMESTAMP,
+                  REMARK                  VARCHAR2(500));
+
+Below is my Lique base script for MERCHANT_ORDER_PAYMENTS
+
+--liquibase formatted sql
+--changeset RECON:108
+
+--CREATE table MERCHANT_ORDER_PAYMENTS
+CREATE TABLE MERCHANT_ORDER_PAYMENTS
+  (
+    MERCHANT_ID             VARCHAR2(20 BYTE) NOT NULL ENABLE,
+    ORDER_REF_NUMBER        VARCHAR2(50 BYTE),
+    SBI_ORDER_REF_NUMBER    VARCHAR2(50 BYTE) NOT NULL ENABLE,
+    ATRN_NUM                VARCHAR2(50 BYTE) PRIMARY KEY,
+    BANK_REFERENCE_NUMBER   VARCHAR2(255 BYTE),
+    CURRENCY_CODE           VARCHAR2(50 BYTE) NOT NULL ENABLE,
+    CHANNEL_BANK            VARCHAR2(100 BYTE),
+    PAY_MODE                VARCHAR2(50 BYTE),
+    GTW_MAP_ID              VARCHAR2(20 BYTE),
+    PAY_PROC_ID             VARCHAR2(20 BYTE),
+    PAY_PROC_TYPE           VARCHAR2(20 BYTE),
+    GTW_ISSUE_MECODE        VARCHAR2(50 BYTE),
+    ORDER_AMOUNT            NUMBER(20,2) NOT NULL ENABLE,
+    DEBIT_AMT               NUMBER(20,2),
+    AVAILABLE_REFUND_AMOUNT NUMBER(20,2),
+    CHARGEBACK_AMOUNT       NUMBER(20,2) DEFAULT 0,
+    TRANSACTION_STATUS      VARCHAR2(50 BYTE) NOT NULL ENABLE,
+    PAYMENT_STATUS          VARCHAR2(50 BYTE),
+    FAIL_REASON             VARCHAR2(255 BYTE),
+    SETTLEMENT_STATUS       VARCHAR2(50 BYTE),
+    REFUND_STATUS           VARCHAR2(50 BYTE),
+    CANCELLATION_STATUS     VARCHAR2(50 BYTE),
+    CHARGEBACK_STATUS       VARCHAR2(50 BYTE),
+    CIN                     VARCHAR2(50 BYTE),
+    GST_IN                  VARCHAR2(50 BYTE),
+    PUSH_STATUS             VARCHAR2(10 BYTE),
+    POOLING_STATUS          VARCHAR2(10 BYTE) DEFAULT 'P',
+    PUSH_RESPONSE CLOB,
+    PAYMENT_SUCCESS_DATE    DATE,
+    CREATED_DATE            NUMBER NOT NULL ENABLE,
+    CREATED_BY              VARCHAR2(100 BYTE) NOT NULL ENABLE,
+    UPDATED_BY              VARCHAR2(100 BYTE),
+    UPDATED_DATE            NUMBER,
+    PARTITION_DATE          DATE GENERATED ALWAYS AS (TO_DATE('1970-01-01 00:00:00', 'SYYYY-MM-DD HH24:MI:SS')+CREATED_DATE/1000/86400) VIRTUAL )
+    PARTITION BY RANGE (PARTITION_DATE) INTERVAL (NUMTOYMINTERVAL(1, 'MONTH')) (PARTITION P_START VALUES LESS THAN (TO_DATE('01-01-2020','DD-MM-YYYY'))
+  ) ;
+
+-- 	Index and constraint on table MERCHANT_ORDER_PAYMENTS
+CREATE INDEX SBI_REF_NUM_INDX ON MERCHANT_ORDER_PAYMENTS (SBI_ORDER_REF_NUMBER)  ;
+CREATE INDEX ORDER_REF_NUMBER_INDX ON MERCHANT_ORDER_PAYMENTS (ORDER_REF_NUMBER)  ;
+CREATE INDEX CREATED_DATEINDX ON MERCHANT_ORDER_PAYMENTS (CREATED_DATE)  ;
+CREATE INDEX TRANSACTION_STATUS_INDX ON MERCHANT_ORDER_PAYMENTS (TRANSACTION_STATUS)  ;
+-----------------------------------------
+Below is the service class
+
+package com.epay.rns.service;
+
+import com.epay.rns.dao.MerchantOrderPaymentDao;
+import com.epay.rns.dto.MerchantOrderPaymentDto;
+import com.epay.rns.dto.ResponseDto;
+import com.epay.rns.entity.ReconFileData;
+import com.epay.rns.repository.ReconDataRepository;
+import com.sbi.epay.logging.utility.LoggerFactoryUtility;
+import com.sbi.epay.logging.utility.LoggerUtility;
+import lombok.RequiredArgsConstructor;
+import org.springframework.stereotype.Service;
+
+import java.util.*;
+import java.util.function.Function;
+import java.util.stream.Collectors;
+
+@Service
+@RequiredArgsConstructor
+public class ProcessDataService {
+
+    private final LoggerUtility log = LoggerFactoryUtility.getLogger(this.getClass());
+    private final MerchantOrderPaymentDao merchantOrderPaymentDao;
+    private final ReconDataRepository reconDataRepository;
+
+    public ResponseDto process2(){
+        long startTime = System.currentTimeMillis();
+        ResponseDto result = new ResponseDto();
+
+
+        List<String> matchedATRNs= reconDataRepository.findMatchedATRNs();
+        List<ReconFileData> matchedRecords = matchedATRNs.isEmpty()? List.of():reconDataRepository.findByAtrnNumIn(matchedATRNs);
+        long frequency = startTime - System.currentTimeMillis();
+        System.out.println("Time to get the matched data from db : "+ frequency);
+        reconDataRepository.updateMatchedStatus("MATCHED",matchedATRNs);
+        result.setMatchedReconRecode(matchedRecords);
+        result.setMatchedCount(matchedRecords.size());
+
+        long startTime1 = System.currentTimeMillis();
+        List<String> unmatchedATRNs =reconDataRepository.findUnmatchedATRNs();
+        List<ReconFileData> unmatchedRecords= unmatchedATRNs.isEmpty()? List.of():reconDataRepository.findByAtrnNumIn(unmatchedATRNs);
+        long frequency1 = startTime1 - System.currentTimeMillis();
+        System.out.println("Time to get the unmatched data from db : "+ frequency1);
+        reconDataRepository.updateMatchedStatus("UNMATCHED",unmatchedATRNs);
+        result.setUnmatchedReconRecode(unmatchedRecords);
+        result.setUnMatchedCount(unmatchedRecords.size());
+
+
+
+        long startTime2 = System.currentTimeMillis();
+        List<String> duplicateATRNs =reconDataRepository.findDuplicateATRNs();
+        List<ReconFileData> duplicateRecords= duplicateATRNs.isEmpty() ? List.of(): reconDataRepository.findByAtrnNumIn(duplicateATRNs);
+        long frequency2 = startTime2 - System.currentTimeMillis();
+        System.out.println("Time to get the duplicate data from db : "+ frequency2);
+        reconDataRepository.updateMatchedStatus("DUPLICATE",duplicateATRNs);
+        result.setDuplicateReconRecode(duplicateRecords);
+        result.setDuplicateCount(duplicateRecords.size());
+
+        System.out.println("Time to run recon process :" +(startTime -System.currentTimeMillis()) );
+        return result;
+    }
+}
+-----------------------------------------------------------------
+below is Repository class
+
+package com.epay.rns.repository;
+import com.epay.rns.entity.ReconFileData;
+import jakarta.transaction.Transactional;
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
+import org.springframework.stereotype.Repository;
+import java.util.List;
+import java.util.UUID;
+
+@Repository
+public interface ReconDataRepository extends JpaRepository<ReconFileData, UUID> {
+
+    @Query(value = """
+        SELECT r.ATRN_NUM FROM RECON_FILE_DTLS r
+        INNER JOIN MERCHANT_ORDER_PAYMENTS m ON r.ATRN_NUM = m.ATRN_NUM
+    """, nativeQuery = true)
+    List<String> findMatchedATRNs();
+
+    @Query(value = """
+        SELECT r.ATRN_NUM FROM RECON_FILE_DTLS r
+        LEFT JOIN MERCHANT_ORDER_PAYMENTS m ON r.ATRN_NUM = m.ATRN_NUM
+        WHERE m.ATRN_NUM IS NULL
+    """, nativeQuery = true)
+    List<String> findUnmatchedATRNs();
+
+    @Query(value = """
+        SELECT r.ATRN_NUM FROM RECON_FILE_DTLS r
+        WHERE r.ATRN_NUM IN (
+            SELECT ATRN_NUM FROM RECON_FILE_DTLS GROUP BY ATRN_NUM HAVING COUNT(*) > 1
+        )
+    """, nativeQuery = true)
+    List<String> findDuplicateATRNs();
+
+    @Modifying
+    @Transactional
+    @Query(value = "UPDATE RECON_FILE_DTLS SET RECON_STATUS = :status WHERE ATRN_NUM IN (:ATRN_NUM)", nativeQuery = true)
+    int updateMatchedStatus(@Param("status") String status, @Param("ATRN_NUM") List<String> atrnNum);
+
+    List<ReconFileData> findByAtrnNumIn(List<String> atrnNum);
+}
+
+
+
