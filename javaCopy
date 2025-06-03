@@ -622,6 +622,134 @@ public interface ReconDataRepository extends JpaRepository<ReconFileData, UUID> 
 
     List<ReconFileData> findByAtrnNumIn(List<String> atrnNum);
 }
+-----------------++++++----------------------
 
+3/06/12
+
+@Entity
+@Table(name = "RECON_FILE_DTLS")
+public class ReconFileData {
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+
+    @Column(name = "ATRN_NUM")
+    private String atrnNum;
+
+    @Column(name = "RFS_ID")
+    private Long rfsId;
+
+    @Column(name = "RECON_STATUS")
+    private String reconStatus;
+
+    // Getters, Setters
+}
+
+
+@Entity
+@Table(name = "MERCHANT_ORDER_PAYMENT")
+public class MerchantOrderPayment {
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+
+    @Column(name = "ATRN_NUM")
+    private String atrnNum;
+
+    // Getters, Setters
+}
+
+
+@Repository
+public interface ReconDataRepository extends JpaRepository<ReconFileData, Long> {
+
+    @Query(value = "SELECT * FROM RECON_FILE_DTLS WHERE RFS_ID = :rfsId", nativeQuery = true)
+    List<ReconFileData> findAllByRfsId(@Param("rfsId") Long rfsId);
+
+    @Modifying
+    @Transactional
+    @Query(value = "UPDATE RECON_FILE_DTLS SET RECON_STATUS = :status WHERE ATRN_NUM IN :atrns AND RFS_ID = :rfsId", nativeQuery = true)
+    int updateStatusByAtrnsAndRfsId(@Param("status") String status,
+                                    @Param("atrns") List<String> atrns,
+                                    @Param("rfsId") Long rfsId);
+
+    @Query(value = """
+        SELECT r.* FROM RECON_FILE_DTLS r
+        INNER JOIN MERCHANT_ORDER_PAYMENT m ON r.ATRN_NUM = m.ATRN_NUM
+        WHERE r.RFS_ID = :rfsId
+        """, nativeQuery = true)
+    List<ReconFileData> findMatchedReconDataByRfsId(@Param("rfsId") Long rfsId);
+}
+
+
+
+@Service
+@RequiredArgsConstructor
+@Slf4j
+public class ReconService {
+
+    private final ReconDataRepository reconDataRepository;
+
+    @Transactional
+    public void reconcileData(Long rfsId) {
+        // 1. All recon file records for given RFS_ID
+        List<ReconFileData> allReconRecords = reconDataRepository.findAllByRfsId(rfsId);
+        Map<String, List<ReconFileData>> allReconMap = allReconRecords.stream()
+                .collect(Collectors.groupingBy(ReconFileData::getAtrnNum));
+
+        // 2. Matched recon data (joined with merchant payment)
+        List<ReconFileData> matchedReconRecords = reconDataRepository.findMatchedReconDataByRfsId(rfsId);
+        Map<String, List<ReconFileData>> matchedReconMap = matchedReconRecords.stream()
+                .collect(Collectors.groupingBy(ReconFileData::getAtrnNum));
+
+        // 3. Identify ATRNs
+        List<String> duplicateATRNs = matchedReconMap.entrySet().stream()
+                .filter(entry -> entry.getValue().size() > 1)
+                .map(Map.Entry::getKey)
+                .toList();
+
+        List<String> matchedATRNs = matchedReconMap.entrySet().stream()
+                .filter(entry -> entry.getValue().size() == 1)
+                .map(Map.Entry::getKey)
+                .filter(atrn -> !duplicateATRNs.contains(atrn)) // Exclude duplicates from matched
+                .toList();
+
+        List<String> unmatchedATRNs = allReconMap.keySet().stream()
+                .filter(atrn -> !matchedReconMap.containsKey(atrn))
+                .toList();
+
+        // 4. Update status in batches
+        updateStatusInBatch(matchedATRNs, "MATCHED", rfsId);
+        updateStatusInBatch(duplicateATRNs, "DUPLICATE", rfsId);
+        updateStatusInBatch(unmatchedATRNs, "UNMATCHED", rfsId);
+
+        log.info("Reconciliation complete for RFS_ID {} - Matched: {}, Duplicate: {}, Unmatched: {}",
+                rfsId, matchedATRNs.size(), duplicateATRNs.size(), unmatchedATRNs.size());
+    }
+
+    private void updateStatusInBatch(List<String> atrns, String status, Long rfsId) {
+        final int batchSize = 1000;
+        for (int i = 0; i < atrns.size(); i += batchSize) {
+            int end = Math.min(i + batchSize, atrns.size());
+            List<String> batch = atrns.subList(i, end);
+            reconDataRepository.updateStatusByAtrnsAndRfsId(status, batch, rfsId);
+        }
+    }
+}
+
+@RestController
+@RequestMapping("/api/recon")
+@RequiredArgsConstructor
+public class ReconController {
+
+    private final ReconService reconService;
+
+    @PostMapping("/reconcile/{rfsId}")
+    public ResponseEntity<String> reconcileByRfsId(@PathVariable Long rfsId) {
+        reconService.reconcileData(rfsId);
+        return ResponseEntity.ok("Reconciliation process completed for RFS_ID: " + rfsId);
+    }
+}
+-------------++-+++++++-------------
 
 
