@@ -753,3 +753,180 @@ public class ReconController {
 -------------++-+++++++-------------
 
 
+// --- Entity: ReconFileData.java ---
+
+package com.example.recon.entity;
+
+import jakarta.persistence.*; import lombok.Data; import java.math.BigDecimal; import java.util.Date; import java.util.UUID;
+
+@Data @Entity @Table(name = "RECON_FILE_DTLS") public class ReconFileData { @Id @GeneratedValue(strategy = GenerationType.UUID) private UUID rfdId;
+
+private UUID rfsId;
+private long rowNumber;
+private String recordType;
+private String atrnNum;
+private BigDecimal paymentAmount;
+private long paymentDate;
+private String bankReferenceNumber;
+private String status;
+private String reconStatus;
+private Date reconTime;
+private String settlementStatus;
+private Date settlementTime;
+private String remark;
+
+}
+
+// --- Entity: MerchantOrderPaymentEntity.java ---
+
+package com.example.recon.entity;
+
+import jakarta.persistence.*; import lombok.Data; import java.math.BigDecimal;
+
+@Data @Entity @Table(name = "MERCHANT_ORDER_PAYMENTS") public class MerchantOrderPaymentEntity { @Id @Column(name = "ATRN_NUM") private String atrnNumber;
+
+private BigDecimal debitAmount;
+private String bankReferenceNumber;
+// Add other fields as needed
+
+}
+
+// --- Repository: ReconFileDataRepository.java ---
+
+package com.example.recon.repository;
+
+import com.example.recon.entity.ReconFileData; import org.springframework.data.jpa.repository.JpaRepository; import org.springframework.data.jpa.repository.Modifying; import org.springframework.data.jpa.repository.Query; import org.springframework.data.repository.query.Param; import org.springframework.stereotype.Repository;
+
+import java.util.List; import java.util.UUID;
+
+@Repository public interface ReconFileDataRepository extends JpaRepository<ReconFileData, UUID> {
+
+List<ReconFileData> findByRfsId(UUID rfsId);
+
+@Modifying
+@Query("UPDATE ReconFileData r SET r.reconStatus = :status WHERE r.atrnNum IN :atrns")
+int updateStatus(@Param("status") String status, @Param("atrns") List<String> atrns);
+
+}
+
+// --- Repository: MerchantOrderPaymentRepository.java ---
+
+package com.example.recon.repository;
+
+import com.example.recon.entity.MerchantOrderPaymentEntity; import org.springframework.data.jpa.repository.Query; import org.springframework.data.repository.query.Param; import org.springframework.stereotype.Repository; import org.springframework.data.jpa.repository.JpaRepository;
+
+import java.util.List; import java.util.UUID;
+
+@Repository public interface MerchantOrderPaymentRepository extends JpaRepository<MerchantOrderPaymentEntity, String> {
+
+@Query(value = "SELECT mop.* FROM MERCHANT_ORDER_PAYMENTS mop \
+        INNER JOIN RECON_FILE_DTLS rfd ON mop.ATRN_NUM = rfd.ATRN_NUM \
+        WHERE rfd.RFS_ID = :rfsId", nativeQuery = true)
+List<MerchantOrderPaymentEntity> findMatchedRecords(@Param("rfsId") UUID rfsId);
+
+}
+
+// --- DTO: ReconResultDto.java ---
+
+package com.example.recon.dto;
+
+import com.example.recon.entity.ReconFileData; import lombok.AllArgsConstructor; import lombok.Data;
+
+import java.util.List;
+
+@Data @AllArgsConstructor public class ReconResultDto { private int matchedCount; private int unmatchedCount; private int duplicateCount; private List<ReconFileData> matched; private List<ReconFileData> unmatched; private List<ReconFileData> duplicate; }
+
+// --- Service: ReconService.java ---
+
+package com.example.recon.service;
+
+import com.example.recon.dto.ReconResultDto; import com.example.recon.entity.MerchantOrderPaymentEntity; import com.example.recon.entity.ReconFileData; import com.example.recon.repository.MerchantOrderPaymentRepository; import com.example.recon.repository.ReconFileDataRepository; import jakarta.transaction.Transactional; import lombok.RequiredArgsConstructor; import lombok.extern.slf4j.Slf4j; import org.springframework.stereotype.Service;
+
+import java.math.BigDecimal; import java.util.*; import java.util.stream.Collectors;
+
+@Slf4j @Service @RequiredArgsConstructor public class ReconService {
+
+private final ReconFileDataRepository reconRepo;
+private final MerchantOrderPaymentRepository merchantRepo;
+
+@Transactional
+public ReconResultDto performRecon(UUID rfsId) {
+    List<ReconFileData> reconData = reconRepo.findByRfsId(rfsId);
+    Map<String, List<ReconFileData>> reconMap = reconData.stream()
+            .collect(Collectors.groupingBy(ReconFileData::getAtrnNum));
+
+    List<MerchantOrderPaymentEntity> matchedPayments = merchantRepo.findMatchedRecords(rfsId);
+    Map<String, List<MerchantOrderPaymentEntity>> merchantMap = matchedPayments.stream()
+            .collect(Collectors.groupingBy(MerchantOrderPaymentEntity::getAtrnNumber));
+
+    List<ReconFileData> matched = new ArrayList<>();
+    List<ReconFileData> duplicate = new ArrayList<>();
+    List<ReconFileData> unmatched = new ArrayList<>();
+
+    for (Map.Entry<String, List<ReconFileData>> entry : reconMap.entrySet()) {
+        String atrn = entry.getKey();
+        List<ReconFileData> reconList = entry.getValue();
+
+        if (!merchantMap.containsKey(atrn)) {
+            unmatched.addAll(reconList);
+            continue;
+        }
+
+        MerchantOrderPaymentEntity payment = merchantMap.get(atrn).get(0);
+        boolean hasMatched = false;
+
+        for (ReconFileData rfd : reconList) {
+            if (!hasMatched && rfd.getPaymentAmount().compareTo(payment.getDebitAmount()) == 0) {
+                matched.add(rfd);
+                hasMatched = true;
+            } else {
+                duplicate.add(rfd);
+            }
+        }
+    }
+
+    batchUpdateStatus(matched, "MATCHED");
+    batchUpdateStatus(unmatched, "UNMATCHED");
+    batchUpdateStatus(duplicate, "DUPLICATE");
+
+    return new ReconResultDto(
+            matched.size(), unmatched.size(), duplicate.size(),
+            matched, unmatched, duplicate
+    );
+}
+
+private void batchUpdateStatus(List<ReconFileData> list, String status) {
+    final int batchSize = 1000;
+    for (int i = 0; i < list.size(); i += batchSize) {
+        int end = Math.min(i + batchSize, list.size());
+        List<String> batchAtrns = list.subList(i, end).stream()
+                .map(ReconFileData::getAtrnNum)
+                .collect(Collectors.toList());
+        reconRepo.updateStatus(status, batchAtrns);
+    }
+}
+
+}
+
+// --- Controller: ReconController.java ---
+
+package com.example.recon.controller;
+
+import com.example.recon.dto.ReconResultDto; import com.example.recon.service.ReconService; import lombok.RequiredArgsConstructor; import org.springframework.web.bind.annotation.*;
+
+import java.util.UUID;
+
+@RestController @RequestMapping("/api/recon") @RequiredArgsConstructor public class ReconController {
+
+private final ReconService reconService;
+
+@GetMapping("/match/{rfsId}")
+public ReconResultDto matchRecon(@PathVariable UUID rfsId) {
+    return reconService.performRecon(rfsId);
+}
+
+}
+
+
+
+
