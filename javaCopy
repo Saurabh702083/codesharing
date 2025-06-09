@@ -926,6 +926,181 @@ public ReconResultDto matchRecon(@PathVariable UUID rfsId) {
 }
 
 }
+------------------------------------------------------------------------
+9/6/
+
+package com.epay.rns.service;
+
+import com.epay.rns.dao.MerchantOrderPaymentDao;
+import com.epay.rns.dao.ReconFileDtlsDao;
+import com.epay.rns.entity.MerchantOrderPaymentEntity;
+import com.epay.rns.entity.ReconFileDtls;
+import com.sbi.epay.logging.utility.LoggerFactoryUtility;
+import com.sbi.epay.logging.utility.LoggerUtility;
+import lombok.RequiredArgsConstructor;
+import org.springframework.stereotype.Service;
+import java.util.*;
+import java.util.stream.Collectors;
+
+@Service
+@RequiredArgsConstructor
+public class ReconDataProcess {
+
+    private final LoggerUtility log = LoggerFactoryUtility.getLogger(this.getClass());
+    private final MerchantOrderPaymentDao merchantOrderPaymentDao;
+    private final ReconFileDtlsDao reconFileDtlsDao;
+    private static  final int BATCH_SIZE=900;
+
+    public void performRecon(UUID rfsId) {
+        log.info("Starting Recon file process at : "+ System.currentTimeMillis());
+        // 1. All recon file records for given RFS_ID
+        log.info("Getting Recon data from ReconFileDtls ");
+        List<ReconFileDtls> reconData = reconFileDtlsDao.getAllReconData(rfsId);
+        Map<String, List<ReconFileDtls>> reconMap = reconData.stream()
+                .collect(Collectors.groupingBy(ReconFileDtls::getAtrnNum));
+
+        // 2. Matched Merchant Order Payment.
+        log.info("Getting Matched ATRNs data from MerchantOrderPayment ");
+        List<MerchantOrderPaymentEntity> matchedPayments = merchantOrderPaymentDao.getMatchedRecords(rfsId);
+        Map<String, List<MerchantOrderPaymentEntity>> merchantMap = matchedPayments.stream()
+                .collect(Collectors.groupingBy(MerchantOrderPaymentEntity::getAtrnNumber));
+
+        List<ReconFileDtls> matched = new ArrayList<>();
+        List<ReconFileDtls> duplicate = new ArrayList<>();
+        List<ReconFileDtls> unmatched = new ArrayList<>();
+
+        for (Map.Entry<String, List<ReconFileDtls>> entry : reconMap.entrySet()) {
+            String atrn = entry.getKey();
+            List<ReconFileDtls> reconList = entry.getValue();
+
+            if (!merchantMap.containsKey(atrn)) {
+                unmatched.addAll(reconList);
+                continue;
+            }
+
+            MerchantOrderPaymentEntity payment = merchantMap.get(atrn).getFirst();
+            boolean hasMatched = false;
+
+            for (ReconFileDtls rfd : reconList) {
+                if (!hasMatched && rfd.getPaymentAmount().compareTo(payment.getDebitAmount()) == 0) {
+                    matched.add(rfd);
+                    hasMatched = true;
+                } else {
+                    duplicate.add(rfd);
+                }
+            }
+        }
+
+        // Update ReconStatus
+        log.info("Updating MATCHED status of ReconStatus");
+        batchUpdateStatus(matched, "MATCHED",rfsId);
+        log.info("Updating UNMATCHED status of ReconStatus");
+        batchUpdateStatus(unmatched, "UNMATCHED",rfsId);
+        log.info("Updating DUPLICATE status of ReconStatus");
+        batchUpdateStatus(duplicate, "DUPLICATE",rfsId);
+        log.info("Recon file process done at time :"+System.currentTimeMillis());
+
+    }
+
+    // Batch to update Status
+    private void batchUpdateStatus(List<ReconFileDtls> list, String status, UUID rfsId) {
+        final int batchSize = BATCH_SIZE;
+        for (int i = 0; i < list.size(); i += batchSize) {
+            int end = Math.min(i + batchSize, list.size());
+            List<String> batchAtrns = list.subList(i, end).stream()
+                    .map(ReconFileDtls::getAtrnNum)
+                    .collect(Collectors.toList());
+            reconFileDtlsDao.updateReconStatus(status,batchAtrns,rfsId);
+        }
+    }
+}
+------------------------------------------------------------
+package com.epay.rns.dao;
+
+import com.epay.rns.dto.ReconFileDtlsDto;
+import com.epay.rns.dto.ReconFileSummaryDto;
+import com.epay.rns.entity.ReconFileDtls;
+import com.epay.rns.mapper.ReconFileDtlsMapper;
+import com.epay.rns.repository.ReconFileDtlsRepository;
+import com.sbi.epay.logging.utility.LoggerFactoryUtility;
+import com.sbi.epay.logging.utility.LoggerUtility;
+import lombok.RequiredArgsConstructor;
+import org.springframework.stereotype.Component;
+
+import java.util.List;
+import java.util.UUID;
+
+
+/**
+ * Class Name:ReconFileDtlsDao
+ * *
+ * Description:
+ * *
+ * Author:NIRMAL GURJAR
+ * <p>
+ * Copyright (c) 2025 [State Bank of India]
+ * All right reserved
+ * *
+ * Version:1.0
+ */
+@Component
+@RequiredArgsConstructor
+public class ReconFileDtlsDao {
+
+    private final LoggerUtility logger = LoggerFactoryUtility.getLogger(this.getClass());
+    private final ReconFileDtlsRepository reconFileDtlsRepository;
+    private final ReconFileDtlsMapper reconFileDtlsMapper;
+
+    public void save(List<ReconFileDtlsDto> reconFileDtlsDtoList) {
+
+        reconFileDtlsRepository.saveAll(reconFileDtlsMapper.mapToEntityList(reconFileDtlsDtoList));
+    }
+
+    public void updateReconStatus(String status, List<String> atrnNums, UUID rfsId){
+        reconFileDtlsRepository.updateStatusByAtrnsAndRfsId(status,atrnNums,rfsId);
+    }
+
+    public List<ReconFileDtls> getAllReconData(UUID rfsId){
+        return reconFileDtlsRepository.findAllByRfsId(rfsId);
+    }
+}
+----------------------
+package com.epay.rns.dao;
+
+import com.epay.rns.dto.MerchantOrderPaymentDto;
+import com.epay.rns.entity.MerchantOrderPaymentEntity;
+import com.epay.rns.repository.MerchantOrderPaymentRepository;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import lombok.RequiredArgsConstructor;
+import org.apache.commons.collections.CollectionUtils;
+import org.springframework.stereotype.Component;
+
+import java.util.List;
+import java.util.UUID;
+
+@Component
+@RequiredArgsConstructor
+public class MerchantOrderPaymentDao {
+    private final MerchantOrderPaymentRepository merchantOrderPaymentRepository;
+    private final ObjectMapper objectMapper;
+
+//    public List<String> getListOfColumnName(String gatewayMapId){
+//        //TODO-get data from db based on gatewayMapId
+//        return switch (gatewayMapId) {
+//            case "12345" -> List.of("ORDER_REF_NUMBER", "SBI_ORDER_REF_NUMBER", "ATRN_NUM", "DEBIT_AMT","MID");
+//            case "54321" ->
+//                    List.of("MERCHANT_ID", "ORDER_REF_NUMBER", "SBI_ORDER_REF_NUMBER", "ATRN_NUMBER", "DEBIT_AMOUNT");
+//            default -> throw new RuntimeException("Data not found for the given gatewayMapId : " + gatewayMapId);
+//        };
+//    }
+
+
+    public List<MerchantOrderPaymentEntity> getMatchedRecords(UUID rfsId) {
+        return merchantOrderPaymentRepository.findMatchedRecords(rfsId);
+    }
+    
+}
+
 
 
 
