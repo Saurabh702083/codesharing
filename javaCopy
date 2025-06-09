@@ -1101,6 +1101,88 @@ public class MerchantOrderPaymentDao {
     
 }
 
+----++--+++-----
+package com.epay.rns.service;
+
+import com.epay.rns.dao.MerchantOrderPaymentDao;
+import com.epay.rns.dao.ReconFileDtlsDao;
+import com.epay.rns.entity.MerchantOrderPaymentEntity;
+import com.epay.rns.entity.ReconFileDtls;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.*;
+import org.springframework.test.util.ReflectionTestUtils;
+
+import java.math.BigDecimal;
+import java.util.*;
+
+import static org.mockito.Mockito.*;
+
+@ExtendWith(org.mockito.junit.jupiter.MockitoExtension.class)
+class ReconDataProcessTest {
+
+    @Mock
+    private MerchantOrderPaymentDao merchantOrderPaymentDao;
+
+    @Mock
+    private ReconFileDtlsDao reconFileDtlsDao;
+
+    @InjectMocks
+    private ReconDataProcess reconDataProcess;
+
+    private UUID rfsId;
+    private ReconFileDtls matchedRecon;
+    private ReconFileDtls unmatchedRecon;
+    private ReconFileDtls duplicateRecon;
+    private MerchantOrderPaymentEntity matchedPayment;
+
+    @BeforeEach
+    void setUp() {
+        rfsId = UUID.randomUUID();
+
+        matchedRecon = new ReconFileDtls();
+        matchedRecon.setAtrnNum("ATRN123");
+        matchedRecon.setPaymentAmount(BigDecimal.valueOf(100.00));
+
+        duplicateRecon = new ReconFileDtls();
+        duplicateRecon.setAtrnNum("ATRN123");
+        duplicateRecon.setPaymentAmount(BigDecimal.valueOf(150.00)); // does not match
+
+        unmatchedRecon = new ReconFileDtls();
+        unmatchedRecon.setAtrnNum("ATRN999");
+        unmatchedRecon.setPaymentAmount(BigDecimal.valueOf(300.00));
+
+        matchedPayment = new MerchantOrderPaymentEntity();
+        matchedPayment.setAtrnNumber("ATRN123");
+        matchedPayment.setDebitAmount(BigDecimal.valueOf(100.00));
+    }
+
+    @Test
+    void testPerformRecon_withMatchedUnmatchedAndDuplicate() {
+        // Prepare test data
+        List<ReconFileDtls> reconList = Arrays.asList(matchedRecon, duplicateRecon, unmatchedRecon);
+        List<MerchantOrderPaymentEntity> paymentList = List.of(matchedPayment);
+
+        // Mocking DAO methods
+        when(reconFileDtlsDao.getAllReconData(rfsId)).thenReturn(reconList);
+        when(merchantOrderPaymentDao.getMatchedRecords(rfsId)).thenReturn(paymentList);
+
+        // Execute
+        reconDataProcess.performRecon(rfsId);
+
+        // Verify updates
+        verify(reconFileDtlsDao, times(1))
+                .updateReconStatus(eq("MATCHED"), eq(List.of("ATRN123")), eq(rfsId));
+
+        verify(reconFileDtlsDao, times(1))
+                .updateReconStatus(eq("UNMATCHED"), eq(List.of("ATRN999")), eq(rfsId));
+
+        verify(reconFileDtlsDao, times(1))
+                .updateReconStatus(eq("DUPLICATE"), eq(List.of("ATRN123")), eq(rfsId));
+    }
+}
+
 
 
 
