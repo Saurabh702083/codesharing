@@ -1185,6 +1185,129 @@ class ReconDataProcessTest {
 
 ---------------------------------------------------------------------------------
 
+// Order.java (Recon Service Entity) @Entity @Table(name = "MERCHANT_ORDERS") public class Order {
+
+@Id
+@Column(name = "SBI_ORDER_REF_NUMBER", nullable = false, updatable = false)
+private String sbiOrderRefNumber;
+
+@Column(name = "MERCHANT_ID")
+private String mId;
+private String customerId;
+private String currencyCode;
+private BigDecimal orderAmount;
+private String orderRefNumber;
+private String status;
+private Long expiry;
+private String paymentMode;
+private String orderHash;
+private String returnUrl;
+private Integer orderRetryCount;
+
+}
+
+// OrderReconView.java (Synonym Read-Only Entity) @Entity @Table(name = "ORDER_RECON_VIEW") public class OrderReconView { @Id private String sbiOrderRefNumber; private String mId; private String customerId; private String currencyCode; private BigDecimal orderAmount; private String orderRefNumber; private String status; private Long expiry; private String paymentMode; private String orderHash; private String returnUrl; private Integer orderRetryCount; }
+
+// OrderReconViewRepository.java public interface OrderReconViewRepository extends JpaRepository<OrderReconView, String> {}
+
+// OrderJdbcInsertService.java @Service public class OrderJdbcInsertService {
+
+private static final Logger log = LoggerFactory.getLogger(OrderJdbcInsertService.class);
+
+@Autowired
+private NamedParameterJdbcTemplate jdbcTemplate;
+
+@Autowired
+private OrderReconViewRepository viewRepository;
+
+@Transactional
+public void bulkInsert() {
+    try {
+        List<OrderReconView> views = viewRepository.findAll();
+        log.info("Fetched {} records from ORDER_RECON_VIEW", views.size());
+
+        List<MapSqlParameterSource> parameters = views.stream().map(view -> {
+            MapSqlParameterSource param = new MapSqlParameterSource();
+            param.addValue("SBI_ORDER_REF_NUMBER", view.getSbiOrderRefNumber());
+            param.addValue("MERCHANT_ID", view.getMId());
+            param.addValue("CUSTOMER_ID", view.getCustomerId());
+            param.addValue("CURRENCY_CODE", view.getCurrencyCode());
+            param.addValue("ORDER_AMOUNT", view.getOrderAmount());
+            param.addValue("ORDER_REF_NUMBER", view.getOrderRefNumber());
+            param.addValue("STATUS", view.getStatus());
+            param.addValue("EXPIRY", view.getExpiry());
+            param.addValue("PAYMENT_MODE", view.getPaymentMode());
+            param.addValue("ORDER_HASH", view.getOrderHash());
+            param.addValue("RETURN_URL", view.getReturnUrl());
+            param.addValue("ORDER_RETRY_COUNT", view.getOrderRetryCount());
+            return param;
+        }).collect(Collectors.toList());
+
+        String sql = """
+            INSERT INTO MERCHANT_ORDERS (
+                SBI_ORDER_REF_NUMBER,
+                MERCHANT_ID,
+                CUSTOMER_ID,
+                CURRENCY_CODE,
+                ORDER_AMOUNT,
+                ORDER_REF_NUMBER,
+                STATUS,
+                EXPIRY,
+                PAYMENT_MODE,
+                ORDER_HASH,
+                RETURN_URL,
+                ORDER_RETRY_COUNT
+            ) VALUES (
+                :SBI_ORDER_REF_NUMBER,
+                :MERCHANT_ID,
+                :CUSTOMER_ID,
+                :CURRENCY_CODE,
+                :ORDER_AMOUNT,
+                :ORDER_REF_NUMBER,
+                :STATUS,
+                :EXPIRY,
+                :PAYMENT_MODE,
+                :ORDER_HASH,
+                :RETURN_URL,
+                :ORDER_RETRY_COUNT
+            )
+        """;
+
+        int[] updateCounts = jdbcTemplate.batchUpdate(sql, parameters.toArray(new MapSqlParameterSource[0]));
+        log.info("Inserted {} records into MERCHANT_ORDERS", Arrays.stream(updateCounts).sum());
+
+    } catch (Exception ex) {
+        log.error("Error during bulk insert to MERCHANT_ORDERS", ex);
+        throw new RuntimeException("Failed to insert orders", ex);
+    }
+}
+
+}
+
+// SchedulerConfig.java @Configuration @EnableScheduling public class SchedulerConfig {}
+
+// OrderDataScheduler.java @Component public class OrderDataScheduler {
+
+private static final Logger log = LoggerFactory.getLogger(OrderDataScheduler.class);
+
+@Autowired
+private OrderJdbcInsertService orderJdbcInsertService;
+
+@Scheduled(cron = "0 0 2 * * *") // Daily at 2 AM
+public void scheduleOrderSync() {
+    log.info("Starting scheduled job: Order Data Sync");
+    try {
+        orderJdbcInsertService.bulkInsert();
+        log.info("Scheduled job completed: Order Data Sync");
+    } catch (Exception e) {
+        log.error("Scheduled job failed: Order Data Sync", e);
+    }
+}
+
+}
+
+
+
 
 
 
