@@ -400,5 +400,49 @@ public class ReconFileDtls {
 above is my code for ReconDataProcess in this i have used native query to update the reconStatus weather it is Matched ,unmatched or duplicate 
 
 my team lead as asked to to enhave is performance so that he asked me to use Jdbc template to update these status , so how can we do this.
+_--------------------------------------------
 
+
+package com.epay.rns.mapper;
+
+import com.epay.rns.entity.ReconFileDtls;
+import org.springframework.jdbc.core.RowMapper;
+
+import java.nio.ByteBuffer;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.util.UUID;
+
+public class ReconFileDtlsRowMapper implements RowMapper<ReconFileDtls> {
+
+    @Override
+    public ReconFileDtls mapRow(ResultSet rs, int rowNum) throws SQLException {
+        ReconFileDtls dto = new ReconFileDtls();
+
+        // Convert RAW(16) to UUID
+        byte[] rfsIdBytes = rs.getBytes("RFS_ID");
+        UUID rfsId = bytesToUUID(rfsIdBytes);
+        dto.setRfsId(rfsId);
+
+        // Map other fields
+        dto.setAtrnNum(rs.getString("ATRN_NUM"));
+        dto.setPaymentAmount(rs.getBigDecimal("PAYMENT_AMOUNT"));
+        dto.setReconStatus(rs.getString("RECON_STATUS"));
+
+        // Add more fields as per your actual table/entity
+        // e.g., dto.setSomeDate(rs.getTimestamp("SOME_DATE_COLUMN").toInstant());
+
+        return dto;
+    }
+
+    private UUID bytesToUUID(byte[] bytes) {
+        if (bytes == null || bytes.length != 16) {
+            return null;
+        }
+        ByteBuffer bb = ByteBuffer.wrap(bytes);
+        long high = bb.getLong();
+        long low = bb.getLong();
+        return new UUID(high, low);
+    }
+}
 
