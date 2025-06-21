@@ -446,3 +446,135 @@ public class ReconFileDtlsRowMapper implements RowMapper<ReconFileDtls> {
     }
 }
 
+------------------------------------6-
+@Service
+@RequiredArgsConstructor
+@Slf4j
+public class ReconService {
+
+    private final ReconFileDataRepository reconRepo;
+    private final MerchantOrderPaymentRepository mopRepo;
+
+    public ReconResultDto reconcile(UUID rfsId) {
+        Map<String, List<ReconFileData>> reconMap = fetchAndGroupReconData(rfsId);
+        Map<String, MerchantOrderPaymentEntity> mopMap = fetchMerchantPayments(rfsId);
+
+        ReconciliationResult result = processReconciliation(reconMap, mopMap);
+        
+        updateStatuses(result);
+        return buildResultDto(result);
+    }
+
+    private Map<String, List<ReconFileData>> fetchAndGroupReconData(UUID rfsId) {
+        List<ReconFileData> reconList = reconRepo.findByRfsId(rfsId);
+        return reconList.stream()
+            .filter(r -> r.getAtrnNum() != null)
+            .collect(Collectors.groupingBy(ReconFileData::getAtrnNum));
+    }
+
+    private Map<String, MerchantOrderPaymentEntity> fetchMerchantPayments(UUID rfsId) {
+        List<MerchantOrderPaymentEntity> paymentList = mopRepo.findMatchedByRfsId(rfsId);
+        return paymentList.stream()
+            .collect(Collectors.toMap(
+                MerchantOrderPaymentEntity::getAtrnNumber,
+                Function.identity(),
+                (existing, replacement) -> {
+                    log.warn("Duplicate ATRN detected in application layer: {}", existing.getAtrnNumber());
+                    return existing; // Keep first occurrence
+                }
+            ));
+    }
+
+    private ReconciliationResult processReconciliation(
+            Map<String, List<ReconFileData>> reconMap,
+            Map<String, MerchantOrderPaymentEntity> mopMap) {
+        
+        ReconciliationResult result = new ReconciliationResult();
+        
+        reconMap.forEach((atrn, reconRows) -> {
+            if (!mopMap.containsKey(atrn)) {
+                result.addUnmatched(reconRows);
+                return;
+            }
+            processMatchingAtrn(atrn, reconRows, mopMap.get(atrn), result);
+        });
+        
+        return result;
+    }
+
+    private void processMatchingAtrn(String atrn, 
+                                   List<ReconFileData> reconRows,
+                                   MerchantOrderPaymentEntity payment,
+                                   ReconciliationResult result) {
+        boolean foundMatch = false;
+        List<ReconFileData> potentialDuplicates = new ArrayList<>();
+
+        for (ReconFileData rfd : reconRows) {
+            if (!foundMatch && amountsMatch(rfd, payment)) {
+                result.addMatched(rfd);
+                foundMatch = true;
+            } else {
+                potentialDuplicates.add(rfd);
+            }
+        }
+
+        if (foundMatch) {
+            result.addDuplicates(potentialDuplicates);
+        } else {
+            result.addUnmatched(reconRows);
+        }
+    }
+
+    private boolean amountsMatch(ReconFileData rfd, MerchantOrderPaymentEntity payment) {
+        return rfd.getPaymentAmount().compareTo(payment.getDebitAmount()) == 0;
+    }
+
+    private void updateStatuses(ReconciliationResult result) {
+        updateStatusForRecords(result.getMatched(), "MATCHED");
+        updateStatusForRecords(result.getUnmatched(), "UNMATCHED");
+        updateStatusForRecords(result.getDuplicate(), "DUPLICATE");
+    }
+
+    private void updateStatusForRecords(List<ReconFileData> records, String status) {
+        if (!records.isEmpty()) {
+            reconRepo.updateReconStatus(
+                records.stream().map(ReconFileData::getRfdId).toList(),
+                status
+            );
+        }
+    }
+
+    private ReconResultDto buildResultDto(ReconciliationResult result) {
+        return new ReconResultDto(
+            result.getMatched().size(),
+            result.getUnmatched().size(),
+            result.getDuplicate().size(),
+            result.getMatched(),
+            result.getUnmatched(),
+            result.getDuplicate()
+        );
+    }
+
+    /**
+     * Helper class to hold reconciliation results during processing
+     */
+    @Getter
+    private static class ReconciliationResult {
+        private final List<ReconFileData> matched = new ArrayList<>();
+        private final List<ReconFileData> unmatched = new ArrayList<>();
+        private final List<ReconFileData> duplicate = new ArrayList<>();
+
+        public void addMatched(ReconFileData record) {
+            matched.add(record);
+        }
+
+        public void addUnmatched(List<ReconFileData> records) {
+            unmatched.addAll(records);
+        }
+
+        public void addDuplicates(List<ReconFileData> records) {
+            duplicate.addAll(records);
+        }
+    }
+}
+
