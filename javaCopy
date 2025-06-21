@@ -473,3 +473,95 @@ public class ReconService {
     }
 }
 
+-----------------------------------------------------
+@Service
+@RequiredArgsConstructor
+public class JavaReconDataProcess {
+
+    private static final int BATCH_SIZE = 10000;
+    private final LoggerUtility log = LoggerFactoryUtility.getLogger(this.getClass());
+    private final MerchantOrderPaymentDao merchantOrderPaymentDao;
+    private final ReconFileDtlsDao reconFileDtlsDao;
+    private final ReconFileSummaryDao reconFileSummaryDao;
+    List<ReconFileDtls> matched = new LinkedList<>();
+    List<ReconFileDtls> duplicate = new LinkedList<>();
+    List<ReconFileDtls> unmatched = new LinkedList<>();
+
+
+    /**
+     * Performs Recon process based upon rfsId.
+     *
+     * @param rfsId UUID id
+     */
+    public void performRecon(UUID rfsId) {
+        log.info("Starting Recon file process at : " + System.currentTimeMillis());
+        // 1. All recon file records for given RFS_ID
+        log.info("Getting Recon data from ReconFileDtls. ");
+        List<ReconFileDtls> reconFileData = reconFileDtlsDao.getAllReconFileData(rfsId);
+        Map<String, List<ReconFileDtls>> reconPaymentMap = reconFileData.stream().collect(Collectors.groupingBy(ReconFileDtls::getAtrnNum));
+
+        // 2. Matched Merchant Order Payment.
+        log.info("Getting Matched ATRNs data from MerchantOrderPayment. ");
+        List<MerchantOrderPayment> merchantOrderPayments = merchantOrderPaymentDao.getMatchedData(rfsId);
+        Map<String, MerchantOrderPayment> systemPaymentMap = merchantOrderPayments.stream().collect(Collectors.toMap(MerchantOrderPayment::getAtrnNum, Function.identity()));
+
+
+       // 3. Process each ATRN for Recon Process
+        for (Map.Entry<String, List<ReconFileDtls>> entry : reconPaymentMap.entrySet()) {
+            String atrn = entry.getKey();
+            List<ReconFileDtls> reconList = entry.getValue();
+            if (!systemPaymentMap.containsKey(atrn)) {
+                unmatched.addAll(reconList);
+                continue;
+            }
+
+            MerchantOrderPayment payment = systemPaymentMap.get(atrn);
+            boolean hasMatched = false;
+
+            for (ReconFileDtls rfd : reconList) {
+                if (!hasMatched && rfd.getPaymentAmount().compareTo(payment.getDebitAmt()) == 0) {
+                    matched.add(rfd);
+                    hasMatched = true;
+                } else {
+                    duplicate.add(rfd);
+                }
+            }
+            if (!hasMatched) {
+                unmatched.addAll(reconList);
+                duplicate.removeAll(reconList);
+            }
+        }
+
+        // 3. Update ReconStatus
+        log.info("Update Recon Status");
+        updateStatus(matched, unmatched, duplicate);
+
+        // 4. Update matched records count in ReconFileDtls.
+        log.info("Updating ReconFileSummary count ");
+      reconFileSummaryDao.updateReconFileCount( matched, duplicate,unmatched, rfsId);
+        log.info("Recon file process done at time :" + System.currentTimeMillis());
+
+    }
+
+    /**
+     * Updating the ReconStatus by JDBC method
+     *
+     * @param list   List of ReconFileDtls
+     * @param status Recon status
+     */
+    private void updateReconStatus(List<ReconFileDtls> list, String status) {
+        List<String> batchAtrns = list.stream()
+                .map(ReconFileDtls::getAtrnNum)
+                .collect(Collectors.toList());
+        reconFileDtlsDao.updateReconStatus(status, batchAtrns);
+    }
+
+    private void updateStatus(List<ReconFileDtls> matched, List<ReconFileDtls> unmatched, List<ReconFileDtls> duplicate) {
+        log.info("Updating MATCHED status of ReconStatus.");
+        updateReconStatus(matched, "MATCHED");
+        log.info("Updating UNMATCHED status of ReconStatus.");
+        updateReconStatus(unmatched, "UNMATCHED");
+        log.info("Updating DUPLICATE status of ReconStatus.");
+        updateReconStatus(duplicate, "DUPLICATE");
+    }
+
