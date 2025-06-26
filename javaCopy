@@ -217,3 +217,571 @@ public class MerchantOrderPaymentDto implements Serializable {
 ------------------------------------------------------------------
 Above is my code for DatasyncService now i want to generate J unit 5 test case for the service and dao layer. 
 can you create J unit 5 test case for above code for service and dao class.
+------+++-------
+
+import static org.mockito.Mockito.*;
+import static org.junit.jupiter.api.Assertions.*;
+
+import com.sbi.epay.rns.service.DataSyncService;
+import com.sbi.epay.rns.dao.MerchantOrderDao;
+import com.sbi.epay.rns.dao.MerchantOrderPaymentDao;
+import com.sbi.epay.rns.entity.Order;
+import com.sbi.epay.rns.entity.MerchantOrderPayment;
+import com.sbi.epay.rns.entity.PaymentReconView;
+import com.sbi.epay.rns.dto.SettlementStatusDto;
+import com.sbi.epay.logging.utility.LoggerUtility;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.mockito.*;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.util.*;
+
+@SpringBootTest
+class DataSyncServiceTest {
+
+    @Mock private MerchantOrderDao merchantOrderDao;
+    @Mock private MerchantOrderPaymentDao merchantOrderPaymentDao;
+    @Mock private ReconStatusUpdatePublisher reconStatusUpdatePublisher;
+    @Mock private LoggerUtility log;
+    @Mock private MerchantOrderPaymentMapper paymentMapper;
+    @Mock private OrderMapper orderMapper;
+
+    @InjectMocks private DataSyncService dataSyncService;
+
+    @Value("${spring.jpa.properties.hibernate.jdbc.batch_size}")
+    private int batchSize;
+
+    @BeforeEach
+    void setUp() {
+        MockitoAnnotations.openMocks(this);
+    }
+
+    @Test
+    void syncTransactionData_shouldSyncData() {
+        // Arrange
+        List<PaymentReconView> mockPaymentData = Arrays.asList(new PaymentReconView());
+        when(merchantOrderDao.getAllOrderViewData()).thenReturn(Collections.singletonList(new Order()));
+        when(merchantOrderPaymentDao.getAllPaymentViewData()).thenReturn(mockPaymentData);
+
+        // Act
+        dataSyncService.syncTransactionData();
+
+        // Assert
+        verify(merchantOrderDao, times(1)).updateMerchantOrder(anyList());
+        verify(merchantOrderPaymentDao, times(1)).updateOrderPayment(anyList());
+        verify(reconStatusUpdatePublisher, times(1)).publish(anyString(), anyString(), any());
+    }
+
+    @Test
+    void syncOrderData_shouldUpdateOrders() {
+        // Arrange
+        List<Order> mockOrders = Arrays.asList(new Order());
+        when(merchantOrderDao.getAllOrderViewData()).thenReturn(Collections.singletonList(new Order()));
+
+        // Act
+        dataSyncService.syncOrderData();
+
+        // Assert
+        verify(merchantOrderDao, times(1)).updateMerchantOrder(anyList());
+    }
+
+    @Test
+    void syncPaymentData_shouldReturnPaymentReconViews() {
+        // Arrange
+        List<PaymentReconView> mockPaymentData = Arrays.asList(new PaymentReconView());
+        when(merchantOrderPaymentDao.getAllPaymentViewData()).thenReturn(mockPaymentData);
+
+        // Act
+        List<PaymentReconView> result = dataSyncService.syncPaymentData();
+
+        // Assert
+        assertEquals(mockPaymentData, result);
+        verify(merchantOrderPaymentDao, times(1)).updateOrderPayment(anyList());
+    }
+
+    @Test
+    void statusProducer_shouldPublishStatus() {
+        // Arrange
+        PaymentReconView paymentReconView = new PaymentReconView();
+        paymentReconView.setAtrnNum("ATRN123");
+        List<PaymentReconView> mockPaymentData = Arrays.asList(paymentReconView);
+
+        // Act
+        dataSyncService.statusProducer(mockPaymentData);
+
+        // Assert
+        verify(reconStatusUpdatePublisher, times(1)).publish(anyString(), anyString(), any());
+    }
+}
+
+import static org.mockito.Mockito.*;
+import static org.junit.jupiter.api.Assertions.*;
+
+import com.sbi.epay.rns.dao.MerchantOrderDao;
+import com.sbi.epay.rns.entity.Order;
+import com.sbi.epay.rns.entity.OrderReconView;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.mockito.*;
+
+import java.util.*;
+
+class MerchantOrderDaoTest {
+
+    @Mock private OrderReconViewRepository orderViewRepo;
+    @Mock private MerchantOrderRepository orderRepository;
+
+    @InjectMocks private MerchantOrderDao merchantOrderDao;
+
+    @BeforeEach
+    void setUp() {
+        MockitoAnnotations.openMocks(this);
+    }
+
+    @Test
+    void getAllOrderViewData_shouldReturnOrderViews() {
+        // Arrange
+        OrderReconView mockOrderReconView = new OrderReconView();
+        when(orderViewRepo.findAll()).thenReturn(Collections.singletonList(mockOrderReconView));
+
+        // Act
+        List<OrderReconView> result = merchantOrderDao.getAllOrderViewData();
+
+        // Assert
+        assertNotNull(result);
+        assertEquals(1, result.size());
+        verify(orderViewRepo, times(1)).findAll();
+    }
+
+    @Test
+    void updateMerchantOrder_shouldCallRepository() {
+        // Arrange
+        List<Order> mockOrders = Arrays.asList(new Order());
+
+        // Act
+        merchantOrderDao.updateMerchantOrder(mockOrders);
+
+        // Assert
+        verify(orderRepository, times(1)).updateOrder(mockOrders);
+    }
+}
+
+
+import static org.mockito.Mockito.*;
+import static org.junit.jupiter.api.Assertions.*;
+
+import com.sbi.epay.rns.dao.MerchantOrderPaymentDao;
+import com.sbi.epay.rns.entity.PaymentReconView;
+import com.sbi.epay.rns.entity.MerchantOrderPayment;
+import com.sbi.epay.rns.dto.MerchantOrderPaymentDto;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.mockito.*;
+
+import java.util.*;
+
+class MerchantOrderPaymentDaoTest {
+
+    @Mock private PaymentReconViewRepository paymentViewRepo;
+    @Mock private OrderPaymentRepository orderPaymentRepository;
+    @Mock private MerchantOrderPaymentMapper orderPaymentMapper;
+
+    @InjectMocks private MerchantOrderPaymentDao merchantOrderPaymentDao;
+
+    @BeforeEach
+    void setUp() {
+        MockitoAnnotations.openMocks(this);
+    }
+
+    @Test
+    void getAllPaymentViewData_shouldReturnPaymentReconViews() {
+        // Arrange
+        PaymentReconView mockPaymentReconView = new PaymentReconView();
+        when(paymentViewRepo.findAll()).thenReturn(Collections.singletonList(mockPaymentReconView));
+
+        // Act
+        List<PaymentReconView> result = merchantOrderPaymentDao.getAllPaymentViewData();
+
+        // Assert
+        assertNotNull(result);
+        assertEquals(1, result.size());
+        verify(paymentViewRepo, times(1)).findAll();
+    }
+
+    @Test
+    void updateOrderPayment_shouldCallRepository() {
+        // Arrange
+        List<MerchantOrderPayment> mockPayments = Arrays.asList(new MerchantOrderPayment());
+
+        // Act
+        merchantOrderPaymentDao.updateOrderPayment(mockPayments);
+
+        // Assert
+        verify(orderPaymentRepository, times(1)).updateMerchantOrderPayment(mockPayments);
+    }
+
+    @Test
+    void getMatchedData_shouldReturnPaymentDtos() {
+        // Arrange
+        UUID rfsId = UUID.randomUUID();
+        List<MerchantOrderPayment> mockPayments = Arrays.asList(new MerchantOrderPayment());
+        List<MerchantOrderPaymentDto> mockDtos = Arrays.asList(new MerchantOrderPaymentDto());
+        when(orderPaymentRepository.getAllbyRfsId(rfsId)).thenReturn(mockPayments);
+        when(orderPaymentMapper.toPaymentDtoList(mockPayments)).thenReturn(mockDtos);
+
+        // Act
+        List<MerchantOrderPaymentDto> result = merchantOrderPaymentDao.getMatchedData(rfsId);
+
+        // Assert
+        assertNotNull(result);
+        assertEquals(1, result.size());
+        verify(orderPaymentRepository, times(1)).getAllbyRfsId(rfsId);
+        verify(orderPaymentMapper, times(1)).toPaymentDtoList(mockPayments);
+    }
+}
+
+-----------------+-+
+deepsheek 
+
+import static org.mockito.Mockito.*;
+import static org.junit.jupiter.api.Assertions.*;
+
+import java.math.BigDecimal;
+import java.util.Arrays;
+import java.util.Date;
+import java.util.List;
+import java.util.UUID;
+
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+
+@ExtendWith(MockitoExtension.class)
+class DataSyncServiceTest {
+
+    @Mock
+    private MerchantOrderPaymentMapper paymentMapper;
+    
+    @Mock
+    private OrderMapper orderMapper;
+    
+    @Mock
+    private ReconStatusUpdatePublisher reconStatusUpdateProducer;
+    
+    @Mock
+    private MerchantOrderDao merchantOrderDao;
+    
+    @Mock
+    private MerchantOrderPaymentDao merchantOrderPaymentDao;
+    
+    @InjectMocks
+    private DataSyncService dataSyncService;
+    
+    private OrderReconView orderView;
+    private PaymentReconView paymentView;
+    private Order order;
+    private MerchantOrderPayment payment;
+    
+    @BeforeEach
+    void setUp() {
+        orderView = new OrderReconView();
+        orderView.setAtrnNum("ATRN123");
+        orderView.setSbiOrderRefNumber("SBI123");
+        orderView.setMultiAccounts("ACC1,ACC2");
+        
+        paymentView = new PaymentReconView();
+        paymentView.setAtrnNum("ATRN123");
+        paymentView.setMId("MID123");
+        paymentView.setSbiOrderRefNumber("SBI123");
+        paymentView.setOrderAmount(BigDecimal.valueOf(100.50));
+        paymentView.setDebitAmt(BigDecimal.valueOf(100.50));
+        paymentView.setPaymentStatus(PaymentStatus.SUCCESS);
+        paymentView.setTransactionStatus(TransactionStatus.SETTLED);
+        paymentView.setPaymentSuccessDate(new Date());
+        
+        order = new Order();
+        order.setAtrnNum("ATRN123");
+        order.setSbiOrderRefNumber("SBI123");
+        order.setMultiAccounts("ACC1,ACC2");
+        
+        payment = new MerchantOrderPayment();
+        payment.setAtrnNum("ATRN123");
+        payment.setMId("MID123");
+        payment.setSbiOrderRefNumber("SBI123");
+        payment.setOrderAmount(BigDecimal.valueOf(100.50));
+        payment.setDebitAmt(BigDecimal.valueOf(100.50));
+        payment.setPaymentStatus(PaymentStatus.SUCCESS);
+        payment.setTransactionStatus(TransactionStatus.SETTLED);
+        payment.setPaymentSuccessDate(new Date());
+    }
+    
+    @Test
+    void syncTransactionData_ShouldSyncOrderAndPaymentDataAndPublishStatus() {
+        // Arrange
+        List<OrderReconView> orderViews = Arrays.asList(orderView);
+        List<PaymentReconView> paymentViews = Arrays.asList(paymentView);
+        List<Order> orders = Arrays.asList(order);
+        List<MerchantOrderPayment> payments = Arrays.asList(payment);
+        
+        when(merchantOrderDao.getAllOrderViewData()).thenReturn(orderViews);
+        when(orderMapper.toOrderList(orderViews)).thenReturn(orders);
+        when(merchantOrderPaymentDao.getAllPaymentViewData()).thenReturn(paymentViews);
+        when(paymentMapper.toPaymentList(paymentViews)).thenReturn(payments);
+        
+        // Act
+        dataSyncService.syncTransactionData();
+        
+        // Assert
+        verify(merchantOrderDao).getAllOrderViewData();
+        verify(orderMapper).toOrderList(orderViews);
+        verify(merchantOrderDao).updateMerchantOrder(orders);
+        
+        verify(merchantOrderPaymentDao).getAllPaymentViewData();
+        verify(paymentMapper).toPaymentList(paymentViews);
+        verify(merchantOrderPaymentDao).updateOrderPayment(payments);
+        
+        verify(reconStatusUpdateProducer).publish(eq("UPDATE_STATUS"), eq("ATRN123"), any(SettlementStatusDto.class));
+    }
+    
+    @Test
+    void syncOrderData_ShouldFetchAndUpdateOrderData() {
+        // Arrange
+        List<OrderReconView> orderViews = Arrays.asList(orderView);
+        List<Order> orders = Arrays.asList(order);
+        
+        when(merchantOrderDao.getAllOrderViewData()).thenReturn(orderViews);
+        when(orderMapper.toOrderList(orderViews)).thenReturn(orders);
+        
+        // Act
+        dataSyncService.syncOrderData();
+        
+        // Assert
+        verify(merchantOrderDao).getAllOrderViewData();
+        verify(orderMapper).toOrderList(orderViews);
+        verify(merchantOrderDao).updateMerchantOrder(orders);
+    }
+    
+    @Test
+    void syncPaymentData_ShouldFetchAndUpdatePaymentData() {
+        // Arrange
+        List<PaymentReconView> paymentViews = Arrays.asList(paymentView);
+        List<MerchantOrderPayment> payments = Arrays.asList(payment);
+        
+        when(merchantOrderPaymentDao.getAllPaymentViewData()).thenReturn(paymentViews);
+        when(paymentMapper.toPaymentList(paymentViews)).thenReturn(payments);
+        
+        // Act
+        List<PaymentReconView> result = dataSyncService.syncPaymentData();
+        
+        // Assert
+        assertEquals(1, result.size());
+        assertEquals("ATRN123", result.get(0).getAtrnNum());
+        
+        verify(merchantOrderPaymentDao).getAllPaymentViewData();
+        verify(paymentMapper).toPaymentList(paymentViews);
+        verify(merchantOrderPaymentDao).updateOrderPayment(payments);
+    }
+    
+    @Test
+    void statusProducer_ShouldPublishStatusForEachPayment() {
+        // Arrange
+        List<PaymentReconView> paymentViews = Arrays.asList(paymentView);
+        
+        // Act
+        dataSyncService.statusProducer(paymentViews);
+        
+        // Assert
+        verify(reconStatusUpdateProducer).publish(eq("UPDATE_STATUS"), eq("ATRN123"), any(SettlementStatusDto.class));
+    }
+}
+
+import static org.mockito.Mockito.*;
+import static org.junit.jupiter.api.Assertions.*;
+
+import java.util.Arrays;
+import java.util.List;
+
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+
+@ExtendWith(MockitoExtension.class)
+class MerchantOrderDaoTest {
+
+    @Mock
+    private OrderReconViewRepository orderViewRepo;
+    
+    @Mock
+    private MerchantOrderRepository orderRepository;
+    
+    @InjectMocks
+    private MerchantOrderDao merchantOrderDao;
+    
+    private OrderReconView orderView;
+    private Order order;
+    
+    @BeforeEach
+    void setUp() {
+        orderView = new OrderReconView();
+        orderView.setAtrnNum("ATRN123");
+        orderView.setSbiOrderRefNumber("SBI123");
+        orderView.setMultiAccounts("ACC1,ACC2");
+        
+        order = new Order();
+        order.setAtrnNum("ATRN123");
+        order.setSbiOrderRefNumber("SBI123");
+        order.setMultiAccounts("ACC1,ACC2");
+    }
+    
+    @Test
+    void getAllOrderViewData_ShouldReturnAllOrderViews() {
+        // Arrange
+        List<OrderReconView> expected = Arrays.asList(orderView);
+        when(orderViewRepo.findAll()).thenReturn(expected);
+        
+        // Act
+        List<OrderReconView> result = merchantOrderDao.getAllOrderViewData();
+        
+        // Assert
+        assertEquals(1, result.size());
+        assertEquals("ATRN123", result.get(0).getAtrnNum());
+        verify(orderViewRepo).findAll();
+    }
+    
+    @Test
+    void updateMerchantOrder_ShouldUpdateOrders() {
+        // Arrange
+        List<Order> orders = Arrays.asList(order);
+        
+        // Act
+        merchantOrderDao.updateMerchantOrder(orders);
+        
+        // Assert
+        verify(orderRepository).updateOrder(orders);
+    }
+}
+
+import static org.mockito.Mockito.*;
+import static org.junit.jupiter.api.Assertions.*;
+
+import java.math.BigDecimal;
+import java.util.Arrays;
+import java.util.Date;
+import java.util.List;
+import java.util.UUID;
+
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+
+@ExtendWith(MockitoExtension.class)
+class MerchantOrderPaymentDaoTest {
+
+    @Mock
+    private PaymentReconViewRepository paymentViewRepo;
+    
+    @Mock
+    private OrderPaymentRepository orderPaymentRepository;
+    
+    @Mock
+    private MerchantOrderPaymentMapper orderPaymentMapper;
+    
+    @InjectMocks
+    private MerchantOrderPaymentDao merchantOrderPaymentDao;
+    
+    private PaymentReconView paymentView;
+    private MerchantOrderPayment payment;
+    private MerchantOrderPaymentDto paymentDto;
+    
+    @BeforeEach
+    void setUp() {
+        paymentView = new PaymentReconView();
+        paymentView.setAtrnNum("ATRN123");
+        paymentView.setMId("MID123");
+        paymentView.setSbiOrderRefNumber("SBI123");
+        paymentView.setOrderAmount(BigDecimal.valueOf(100.50));
+        paymentView.setDebitAmt(BigDecimal.valueOf(100.50));
+        paymentView.setPaymentStatus(PaymentStatus.SUCCESS);
+        paymentView.setTransactionStatus(TransactionStatus.SETTLED);
+        paymentView.setPaymentSuccessDate(new Date());
+        
+        payment = new MerchantOrderPayment();
+        payment.setAtrnNum("ATRN123");
+        payment.setMId("MID123");
+        payment.setSbiOrderRefNumber("SBI123");
+        payment.setOrderAmount(BigDecimal.valueOf(100.50));
+        payment.setDebitAmt(BigDecimal.valueOf(100.50));
+        payment.setPaymentStatus(PaymentStatus.SUCCESS);
+        payment.setTransactionStatus(TransactionStatus.SETTLED);
+        payment.setPaymentSuccessDate(new Date());
+        
+        paymentDto = new MerchantOrderPaymentDto();
+        paymentDto.setAtrnNum("ATRN123");
+        paymentDto.setMId("MID123");
+        paymentDto.setSbiOrderRefNumber("SBI123");
+        paymentDto.setOrderAmount(BigDecimal.valueOf(100.50));
+        paymentDto.setDebitAmt(BigDecimal.valueOf(100.50));
+        paymentDto.setPaymentStatus(PaymentStatus.SUCCESS);
+        paymentDto.setTransactionStatus(TransactionStatus.SETTLED);
+        paymentDto.setPaymentSuccessDate(new Date());
+    }
+    
+    @Test
+    void getAllPaymentViewData_ShouldReturnAllPaymentViews() {
+        // Arrange
+        List<PaymentReconView> expected = Arrays.asList(paymentView);
+        when(paymentViewRepo.findAll()).thenReturn(expected);
+        
+        // Act
+        List<PaymentReconView> result = merchantOrderPaymentDao.getAllPaymentViewData();
+        
+        // Assert
+        assertEquals(1, result.size());
+        assertEquals("ATRN123", result.get(0).getAtrnNum());
+        verify(paymentViewRepo).findAll();
+    }
+    
+    @Test
+    void updateOrderPayment_ShouldUpdatePayments() {
+        // Arrange
+        List<MerchantOrderPayment> payments = Arrays.asList(payment);
+        
+        // Act
+        merchantOrderPaymentDao.updateOrderPayment(payments);
+        
+        // Assert
+        verify(orderPaymentRepository).updateMerchantOrderPayment(payments);
+    }
+    
+    @Test
+    void getMatchedData_ShouldReturnPaymentDtosForRfsId() {
+        // Arrange
+        UUID rfsId = UUID.randomUUID();
+        List<MerchantOrderPayment> payments = Arrays.asList(payment);
+        List<MerchantOrderPaymentDto> expected = Arrays.asList(paymentDto);
+        
+        when(orderPaymentRepository.getAllbyRfsId(rfsId)).thenReturn(payments);
+        when(orderPaymentMapper.toPaymentDtoList(payments)).thenReturn(expected);
+        
+        // Act
+        List<MerchantOrderPaymentDto> result = merchantOrderPaymentDao.getMatchedData(rfsId);
+        
+        // Assert
+        assertEquals(1, result.size());
+        assertEquals("ATRN123", result.get(0).getAtrnNum());
+        verify(orderPaymentRepository).getAllbyRfsId(rfsId);
+        verify(orderPaymentMapper).toPaymentDtoList(payments);
+    }
+}
