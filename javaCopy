@@ -1,4 +1,4 @@
-@Service
+  @Service
 @RequiredArgsConstructor
 public class DataSyncService {
 
@@ -73,130 +73,263 @@ public class DataSyncService {
     }
 }
 
+@ExtendWith(MockitoExtension.class)
+class DataSyncServiceTest {
 
-@Component
-@RequiredArgsConstructor
-public class MerchantOrderDao {
-    private final OrderReconViewRepository orderViewRepo;
-    private final MerchantOrderRepository orderRepository;
+    @Mock
+    private MerchantOrderPaymentMapper paymentMapper;
 
-    public List<OrderReconView> getAllOrderViewData() {
-        return orderViewRepo.findAll();
-    }
+    @Mock
+    private OrderMapper orderMapper;
 
-    public void updateMerchantOrder (List<Order> orders){
-        orderRepository.updateOrder(orders);
+    @Mock
+    private ReconStatusUpdatePublisher reconStatusUpdateProducer;
+
+    @Mock
+    private MerchantOrderDao merchantOrderDao;
+
+    @Mock
+    private MerchantOrderPaymentDao merchantOrderPaymentDao;
+
+    @InjectMocks
+    private DataSyncService dataSyncService;
+
+
+    @Test
+    void syncTransactionDataTest() {
+        List<PaymentReconView> allPaymentViewDataList = new ArrayList<>();
+        PaymentReconView paymentReconView = PaymentReconView.builder().atrnNum("ATRN123").build();
+        allPaymentViewDataList.add(paymentReconView);
+
+        List<MerchantOrderPayment> merchantPaymentsList = new ArrayList<>();
+        MerchantOrderPayment merchantOrderPayment = new MerchantOrderPayment();
+        merchantOrderPayment.setAtrnNum("ATRN123");
+        merchantPaymentsList.add(merchantOrderPayment);
+
+
+        when(merchantOrderPaymentDao.getAllPaymentViewData()).thenReturn(allPaymentViewDataList);
+        when(spy(paymentMapper.toPaymentList(allPaymentViewDataList))).thenReturn(merchantPaymentsList);
+        doNothing().when(merchantOrderPaymentDao).updateOrderPayment(merchantPaymentsList);
+        dataSyncService.syncTransactionData();
+        verify(merchantOrderPaymentDao, times(1)).updateOrderPayment(merchantPaymentsList);
+
     }
 
 
 }
+-------------------------------------
 
-@Component
+Above is my service class and its test case in junit 5.
+
+now i want to write test case for my other service in  similar way i worte it above .
+
+so below is my service class for which i want to write test casse in junit 5
+
+
+@Service
 @RequiredArgsConstructor
-public class MerchantOrderPaymentDao {
-    private final PaymentReconViewRepository paymentViewRepo;
-    private final OrderPaymentRepository orderPaymentRepository;
-    private final MerchantOrderPaymentMapper orderPaymentMapper;
+public class JavaReconciliationService {
 
-    public List<PaymentReconView> getAllPaymentViewData() {
-        return paymentViewRepo.findAll();
-    }
-
-    public void updateOrderPayment(List<MerchantOrderPayment> orderPayments){
-        orderPaymentRepository.updateMerchantOrderPayment(orderPayments);
-    }
-
-    public List<MerchantOrderPaymentDto>  getMatchedData(UUID rfsId){
-         return orderPaymentMapper.toPaymentDtoList(orderPaymentRepository.getAllbyRfsId(rfsId));
-    }
-}
-
-@Component
-@RequiredArgsConstructor
-public class ReconStatusUpdatePublisher extends ReconProducer<SettlementStatusDto>{
+    private static final int BATCH_SIZE = 20000;
     private final LoggerUtility log = LoggerFactoryUtility.getLogger(this.getClass());
-    private final ObjectMapper objectMapper;
+    private final MerchantOrderPaymentDao merchantOrderPaymentDao;
+    private final ReconFileDtlsDao reconFileDtlsDao;
+    private final ReconFileSummaryDao reconFileSummaryDao;
+    private final ReconResultProcessorService reconResultProcessorService;
 
-    /**
-     * @param requestType String
-     * @param routingKey  String
-     * @param settlementStatusDto  SettlementStatusDto
-     */
-    @Override
-    public void publish(String requestType, String routingKey, SettlementStatusDto settlementStatusDto) {
+    public void performRecon(UUID rfsId) {
+        ReconFileSummaryDto reconFileSummaryDto= reconFileSummaryDao.findByFileSummaryId(rfsId);
+        log.info("Starting Recon file process at: {}", System.currentTimeMillis());
         try {
-            log.debug("Recon update Settlement for requestType : {}, routingKey : {} and value : {}", requestType, routingKey, settlementStatusDto);
-            kafkaMessagePublisher.publish(topics.getReconStatusUpdateTopic(), getRoutingKey("recon", requestType, routingKey), objectMapper.writeValueAsString(settlementStatusDto));
-        } catch (Exception e) {
-            log.error("Error in Recon Status update , SettlementStatusDto {}", settlementStatusDto, e.getMessage());
+            // Step 1. Process Reconciliation to get Matched , Unmatched and Duplicate record.
+            ReconResultDto reconResultDto = processReconciliation(rfsId);
+            // Step 2. Update ReconStatus in ReconFileDtls Table
+            updateReconStatuses(reconResultDto);
+            // Step 3. Update Matched , Unmatched and Duplicate count in ReconFileSummary table
+            updateReconSummaryCount(reconFileSummaryDto, reconResultDto);
+            log.info("Recon file process completed at: {}", System.currentTimeMillis());
+            log.info("Publishing Recon result for Transaction Service");
+            // Step 4. Publish Matched record to Transaction Service
+            reconResultProcessorService.reconStatusPublisher(reconResultDto);
+        } catch (Exception ex) {
+            log.error("Error during recon process for rfsId {}: {}", rfsId, ex.getMessage(), ex);
+            reconFileSummaryDto.setReconStatus(Status.FAIL);
+            reconFileSummaryDao.save(reconFileSummaryDto);
         }
     }
+
+    private ReconResultDto processReconciliation(UUID rfsId) {
+
+        Map<String, List<ReconFileDtlsDto>> reconPaymentMap = fetchAndGroupReconData(rfsId);
+        Map<String, MerchantOrderPaymentDto> systemPaymentMap = fetchMerchantPayments(rfsId);
+
+        return categorizeRecords(reconPaymentMap, systemPaymentMap);
+    }
+
+    private Map<String, List<ReconFileDtlsDto>> fetchAndGroupReconData(UUID rfsId) {
+        log.info("Fetching Recon data from ReconFileDtls");
+        List<ReconFileDtlsDto> reconFileData = reconFileDtlsDao.getAllReconFileData(rfsId);
+        return reconFileData.stream().collect(Collectors.groupingBy(ReconFileDtlsDto::getAtrnNum));
+    }
+
+    private Map<String, MerchantOrderPaymentDto> fetchMerchantPayments(UUID rfsId) {
+        log.info("Fetching matched ATRNs data from MerchantOrderPayment");
+        List<MerchantOrderPaymentDto> payments = merchantOrderPaymentDao.getMatchedData(rfsId);
+        return payments.stream().collect(Collectors.toMap(MerchantOrderPaymentDto::getAtrnNum, Function.identity(), (existing, replacement) -> {
+            log.warn("Duplicate ATRN detected: {}", existing.getAtrnNum());
+            return existing;
+        }));
+    }
+
+    private ReconResultDto categorizeRecords(Map<String, List<ReconFileDtlsDto>> reconPaymentMap, Map<String, MerchantOrderPaymentDto> systemPaymentMap) {
+
+        ReconResultDto result = new ReconResultDto();
+
+        reconPaymentMap.forEach((atrn, reconList) -> {
+
+            if (systemPaymentMap.containsKey((atrn))) {
+                processMatchingAtrn(reconList, systemPaymentMap.get(atrn), result);
+            } else {
+                result.addUnmatched(reconList);
+            }
+
+        });
+
+        return result;
+    }
+
+    private void processMatchingAtrn(List<ReconFileDtlsDto> reconFileDtlsList, MerchantOrderPaymentDto payment, ReconResultDto result) {
+
+        //Step-1 Duplicate checking
+        if (reconFileDtlsList.size() > 1) {
+
+            boolean oneMatched = false;
+
+            for (ReconFileDtlsDto rfd : reconFileDtlsList) {
+
+                if (!oneMatched && rfd.getPaymentAmount().compareTo(payment.getDebitAmt()) == 0) {
+                    result.addMatched(rfd);
+                    oneMatched = true;
+                } else {
+                    result.addDuplicate(rfd);
+                }
+            }
+
+            //Step-2 Single record checking
+        } else if (reconFileDtlsList.size() == 1) {
+
+            if (reconFileDtlsList.getFirst().getPaymentAmount().compareTo(payment.getDebitAmt()) == 0) {
+                result.addMatched(reconFileDtlsList.getFirst());
+            } else {
+                result.addUnmatched(reconFileDtlsList);
+            }
+
+        } else {
+            log.error("Invalid reconFileDtlsList: {} with blank size.", reconFileDtlsList);
+        }
+
+    }
+
+    private void updateReconStatuses(ReconResultDto result) {
+        batchUpdateStatus(result.getMatched(), "MATCHED");
+        batchUpdateStatus(result.getUnmatched(), "UNMATCHED");
+        batchUpdateStatus(result.getDuplicate(), "DUPLICATE");
+    }
+
+    @Transactional
+    private void batchUpdateStatus(List<ReconFileDtlsDto> list, String status) {
+        final int batchSize = BATCH_SIZE;
+        for (int i = 0; i < list.size(); i += batchSize) {
+            int end = Math.min(i + batchSize, list.size());
+            List<String> batchAtrns = list.subList(i, end).stream().map(ReconFileDtlsDto::getAtrnNum).collect(Collectors.toList());
+            reconFileDtlsDao.updateReconStatus(status, batchAtrns);
+        }
+    }
+
+    private void updateReconSummaryCount(ReconFileSummaryDto reconFileSummaryDto, ReconResultDto reconResultDto) {
+        reconFileSummaryDto.setMatchedRecords(reconResultDto.getMatched().size());
+        reconFileSummaryDto.setUnmatchedRecords(reconResultDto.getUnmatched().size());
+        reconFileSummaryDto.setDuplicateRecords(reconResultDto.getDuplicate().size());
+        reconFileSummaryDao.save(reconFileSummaryDto);
+    }
+}
+
+@Data
+@Builder
+@AllArgsConstructor
+@NoArgsConstructor
+public class ReconFileSummaryDto {
+
+    private UUID rfsId;
+    private UUID rfcId;
+    private String sftpPath;
+    private String s3Path;
+    private String fileName;
+    private String bankCode;
+    private Long fileReceivedTime;
+    private Long fileUploadTime;
+    private BigDecimal totalAmount;
+    private Status parsingStatus;
+    private Integer totalRecords;
+    private Integer passedRecords;
+    private Integer failedRecords;
+    private Status reconStatus;
+    private Long reconTime;
+    private Status settlementStatus;
+    private Long settlementTime;
+    private String remark;
+    private Status fileUploadStatus;
+    private Integer matchedRecords;
+    private Integer unmatchedRecords;
+    private Integer duplicateRecords;
 }
 
 @Getter
-@Setter
-@Entity
-@Table(name = "ORDER_RECON_VIEW")
-public class OrderReconView {
+public  class ReconResultDto {
+    private final List<ReconFileDtlsDto> matched = new LinkedList<>();
+    private final List<ReconFileDtlsDto> duplicate = new LinkedList<>();
+    private final List<ReconFileDtlsDto> unmatched = new LinkedList<>();
 
-    private String sbiOrderRefNumber;
-    @Id
+    public void addMatched(ReconFileDtlsDto record) {
+        matched.add(record);
+    }
+
+    public void addUnmatched(List<ReconFileDtlsDto> records) {
+        unmatched.addAll(records);
+    }
+
+    public void removeDuplicates(List<ReconFileDtlsDto> records) {
+        duplicate.removeAll(records);
+    }
+
+    public void addDuplicate(ReconFileDtlsDto record){
+        duplicate.add(record);
+    }
+}
+
+@Data
+@Builder
+@AllArgsConstructor
+@NoArgsConstructor
+public class ReconFileDtlsDto {
+
+    private UUID rfdId;
+    private UUID rfsId;
+    private int rowNumber;
+    private String recordType;
     private String atrnNum;
-    @Lob
-    private String multiAccounts;
+    private BigDecimal paymentAmount;
+    private Date paymentDate;
+    private String bankRefNumber;
+    private String paymentStatus;
+    private String reconStatus;
+    private String settlementStatus;
+    private String remark;
 
-}
+    public String getAtrnDtls(){
+        return getAtrnNum()+":"+getBankRefNumber();
+    }
 
-@Getter
-@Setter
-@Entity
-@Table(name = "MERCHANT_ORDERS")
-public class Order  {
-
-        @Id
-        private String atrnNum;
-        private String sbiOrderRefNumber;
-        @Lob
-        private String multiAccounts;
-}
-
-@Getter
-@Setter
-@Entity
-@Table(name = "PAYMENT_RECON_VIEW")
-public class PaymentReconView {
-    @Id
-    private String atrnNum;
-    @Column(name="MERCHANT_ID")
-    private String mId;
-    private String sbiOrderRefNumber;
-    private BigDecimal orderAmount;
-    private BigDecimal debitAmt;
-    @Enumerated(EnumType.STRING)
-    private PaymentStatus paymentStatus;
-    @Enumerated(EnumType.STRING)
-    private TransactionStatus transactionStatus;
-    private Date paymentSuccessDate;
-}
-
-@Getter
-@Setter
-@Entity
-@Table(name = "MERCHANT_ORDER_PAYMENTS")
-@EqualsAndHashCode
-public class MerchantOrderPayment {
-        @Id
-        private String atrnNum;
-        @Column(name="MERCHANT_ID")
-        private String mId;
-        private String sbiOrderRefNumber;
-        private BigDecimal orderAmount;
-        private BigDecimal debitAmt;
-        @Enumerated(EnumType.STRING)
-        private PaymentStatus paymentStatus;
-        @Enumerated(EnumType.STRING)
-        private TransactionStatus transactionStatus;
-        private Date paymentSuccessDate;
 }
 
 @Data
@@ -213,575 +346,4 @@ public class MerchantOrderPaymentDto implements Serializable {
     private PaymentStatus paymentStatus;
     private TransactionStatus transactionStatus;
     private Date paymentSuccessDate;
-}
-------------------------------------------------------------------
-Above is my code for DatasyncService now i want to generate J unit 5 test case for the service and dao layer. 
-can you create J unit 5 test case for above code for service and dao class.
-------+++-------
-
-import static org.mockito.Mockito.*;
-import static org.junit.jupiter.api.Assertions.*;
-
-import com.sbi.epay.rns.service.DataSyncService;
-import com.sbi.epay.rns.dao.MerchantOrderDao;
-import com.sbi.epay.rns.dao.MerchantOrderPaymentDao;
-import com.sbi.epay.rns.entity.Order;
-import com.sbi.epay.rns.entity.MerchantOrderPayment;
-import com.sbi.epay.rns.entity.PaymentReconView;
-import com.sbi.epay.rns.dto.SettlementStatusDto;
-import com.sbi.epay.logging.utility.LoggerUtility;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
-import org.mockito.*;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.transaction.annotation.Transactional;
-
-import java.util.*;
-
-@SpringBootTest
-class DataSyncServiceTest {
-
-    @Mock private MerchantOrderDao merchantOrderDao;
-    @Mock private MerchantOrderPaymentDao merchantOrderPaymentDao;
-    @Mock private ReconStatusUpdatePublisher reconStatusUpdatePublisher;
-    @Mock private LoggerUtility log;
-    @Mock private MerchantOrderPaymentMapper paymentMapper;
-    @Mock private OrderMapper orderMapper;
-
-    @InjectMocks private DataSyncService dataSyncService;
-
-    @Value("${spring.jpa.properties.hibernate.jdbc.batch_size}")
-    private int batchSize;
-
-    @BeforeEach
-    void setUp() {
-        MockitoAnnotations.openMocks(this);
-    }
-
-    @Test
-    void syncTransactionData_shouldSyncData() {
-        // Arrange
-        List<PaymentReconView> mockPaymentData = Arrays.asList(new PaymentReconView());
-        when(merchantOrderDao.getAllOrderViewData()).thenReturn(Collections.singletonList(new Order()));
-        when(merchantOrderPaymentDao.getAllPaymentViewData()).thenReturn(mockPaymentData);
-
-        // Act
-        dataSyncService.syncTransactionData();
-
-        // Assert
-        verify(merchantOrderDao, times(1)).updateMerchantOrder(anyList());
-        verify(merchantOrderPaymentDao, times(1)).updateOrderPayment(anyList());
-        verify(reconStatusUpdatePublisher, times(1)).publish(anyString(), anyString(), any());
-    }
-
-    @Test
-    void syncOrderData_shouldUpdateOrders() {
-        // Arrange
-        List<Order> mockOrders = Arrays.asList(new Order());
-        when(merchantOrderDao.getAllOrderViewData()).thenReturn(Collections.singletonList(new Order()));
-
-        // Act
-        dataSyncService.syncOrderData();
-
-        // Assert
-        verify(merchantOrderDao, times(1)).updateMerchantOrder(anyList());
-    }
-
-    @Test
-    void syncPaymentData_shouldReturnPaymentReconViews() {
-        // Arrange
-        List<PaymentReconView> mockPaymentData = Arrays.asList(new PaymentReconView());
-        when(merchantOrderPaymentDao.getAllPaymentViewData()).thenReturn(mockPaymentData);
-
-        // Act
-        List<PaymentReconView> result = dataSyncService.syncPaymentData();
-
-        // Assert
-        assertEquals(mockPaymentData, result);
-        verify(merchantOrderPaymentDao, times(1)).updateOrderPayment(anyList());
-    }
-
-    @Test
-    void statusProducer_shouldPublishStatus() {
-        // Arrange
-        PaymentReconView paymentReconView = new PaymentReconView();
-        paymentReconView.setAtrnNum("ATRN123");
-        List<PaymentReconView> mockPaymentData = Arrays.asList(paymentReconView);
-
-        // Act
-        dataSyncService.statusProducer(mockPaymentData);
-
-        // Assert
-        verify(reconStatusUpdatePublisher, times(1)).publish(anyString(), anyString(), any());
-    }
-}
-
-import static org.mockito.Mockito.*;
-import static org.junit.jupiter.api.Assertions.*;
-
-import com.sbi.epay.rns.dao.MerchantOrderDao;
-import com.sbi.epay.rns.entity.Order;
-import com.sbi.epay.rns.entity.OrderReconView;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
-import org.mockito.*;
-
-import java.util.*;
-
-class MerchantOrderDaoTest {
-
-    @Mock private OrderReconViewRepository orderViewRepo;
-    @Mock private MerchantOrderRepository orderRepository;
-
-    @InjectMocks private MerchantOrderDao merchantOrderDao;
-
-    @BeforeEach
-    void setUp() {
-        MockitoAnnotations.openMocks(this);
-    }
-
-    @Test
-    void getAllOrderViewData_shouldReturnOrderViews() {
-        // Arrange
-        OrderReconView mockOrderReconView = new OrderReconView();
-        when(orderViewRepo.findAll()).thenReturn(Collections.singletonList(mockOrderReconView));
-
-        // Act
-        List<OrderReconView> result = merchantOrderDao.getAllOrderViewData();
-
-        // Assert
-        assertNotNull(result);
-        assertEquals(1, result.size());
-        verify(orderViewRepo, times(1)).findAll();
-    }
-
-    @Test
-    void updateMerchantOrder_shouldCallRepository() {
-        // Arrange
-        List<Order> mockOrders = Arrays.asList(new Order());
-
-        // Act
-        merchantOrderDao.updateMerchantOrder(mockOrders);
-
-        // Assert
-        verify(orderRepository, times(1)).updateOrder(mockOrders);
-    }
-}
-
-
-import static org.mockito.Mockito.*;
-import static org.junit.jupiter.api.Assertions.*;
-
-import com.sbi.epay.rns.dao.MerchantOrderPaymentDao;
-import com.sbi.epay.rns.entity.PaymentReconView;
-import com.sbi.epay.rns.entity.MerchantOrderPayment;
-import com.sbi.epay.rns.dto.MerchantOrderPaymentDto;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
-import org.mockito.*;
-
-import java.util.*;
-
-class MerchantOrderPaymentDaoTest {
-
-    @Mock private PaymentReconViewRepository paymentViewRepo;
-    @Mock private OrderPaymentRepository orderPaymentRepository;
-    @Mock private MerchantOrderPaymentMapper orderPaymentMapper;
-
-    @InjectMocks private MerchantOrderPaymentDao merchantOrderPaymentDao;
-
-    @BeforeEach
-    void setUp() {
-        MockitoAnnotations.openMocks(this);
-    }
-
-    @Test
-    void getAllPaymentViewData_shouldReturnPaymentReconViews() {
-        // Arrange
-        PaymentReconView mockPaymentReconView = new PaymentReconView();
-        when(paymentViewRepo.findAll()).thenReturn(Collections.singletonList(mockPaymentReconView));
-
-        // Act
-        List<PaymentReconView> result = merchantOrderPaymentDao.getAllPaymentViewData();
-
-        // Assert
-        assertNotNull(result);
-        assertEquals(1, result.size());
-        verify(paymentViewRepo, times(1)).findAll();
-    }
-
-    @Test
-    void updateOrderPayment_shouldCallRepository() {
-        // Arrange
-        List<MerchantOrderPayment> mockPayments = Arrays.asList(new MerchantOrderPayment());
-
-        // Act
-        merchantOrderPaymentDao.updateOrderPayment(mockPayments);
-
-        // Assert
-        verify(orderPaymentRepository, times(1)).updateMerchantOrderPayment(mockPayments);
-    }
-
-    @Test
-    void getMatchedData_shouldReturnPaymentDtos() {
-        // Arrange
-        UUID rfsId = UUID.randomUUID();
-        List<MerchantOrderPayment> mockPayments = Arrays.asList(new MerchantOrderPayment());
-        List<MerchantOrderPaymentDto> mockDtos = Arrays.asList(new MerchantOrderPaymentDto());
-        when(orderPaymentRepository.getAllbyRfsId(rfsId)).thenReturn(mockPayments);
-        when(orderPaymentMapper.toPaymentDtoList(mockPayments)).thenReturn(mockDtos);
-
-        // Act
-        List<MerchantOrderPaymentDto> result = merchantOrderPaymentDao.getMatchedData(rfsId);
-
-        // Assert
-        assertNotNull(result);
-        assertEquals(1, result.size());
-        verify(orderPaymentRepository, times(1)).getAllbyRfsId(rfsId);
-        verify(orderPaymentMapper, times(1)).toPaymentDtoList(mockPayments);
-    }
-}
-
------------------+-+
-deepsheek 
-
-import static org.mockito.Mockito.*;
-import static org.junit.jupiter.api.Assertions.*;
-
-import java.math.BigDecimal;
-import java.util.Arrays;
-import java.util.Date;
-import java.util.List;
-import java.util.UUID;
-
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
-import org.mockito.Mock;
-import org.mockito.junit.jupiter.MockitoExtension;
-
-@ExtendWith(MockitoExtension.class)
-class DataSyncServiceTest {
-
-    @Mock
-    private MerchantOrderPaymentMapper paymentMapper;
-    
-    @Mock
-    private OrderMapper orderMapper;
-    
-    @Mock
-    private ReconStatusUpdatePublisher reconStatusUpdateProducer;
-    
-    @Mock
-    private MerchantOrderDao merchantOrderDao;
-    
-    @Mock
-    private MerchantOrderPaymentDao merchantOrderPaymentDao;
-    
-    @InjectMocks
-    private DataSyncService dataSyncService;
-    
-    private OrderReconView orderView;
-    private PaymentReconView paymentView;
-    private Order order;
-    private MerchantOrderPayment payment;
-    
-    @BeforeEach
-    void setUp() {
-        orderView = new OrderReconView();
-        orderView.setAtrnNum("ATRN123");
-        orderView.setSbiOrderRefNumber("SBI123");
-        orderView.setMultiAccounts("ACC1,ACC2");
-        
-        paymentView = new PaymentReconView();
-        paymentView.setAtrnNum("ATRN123");
-        paymentView.setMId("MID123");
-        paymentView.setSbiOrderRefNumber("SBI123");
-        paymentView.setOrderAmount(BigDecimal.valueOf(100.50));
-        paymentView.setDebitAmt(BigDecimal.valueOf(100.50));
-        paymentView.setPaymentStatus(PaymentStatus.SUCCESS);
-        paymentView.setTransactionStatus(TransactionStatus.SETTLED);
-        paymentView.setPaymentSuccessDate(new Date());
-        
-        order = new Order();
-        order.setAtrnNum("ATRN123");
-        order.setSbiOrderRefNumber("SBI123");
-        order.setMultiAccounts("ACC1,ACC2");
-        
-        payment = new MerchantOrderPayment();
-        payment.setAtrnNum("ATRN123");
-        payment.setMId("MID123");
-        payment.setSbiOrderRefNumber("SBI123");
-        payment.setOrderAmount(BigDecimal.valueOf(100.50));
-        payment.setDebitAmt(BigDecimal.valueOf(100.50));
-        payment.setPaymentStatus(PaymentStatus.SUCCESS);
-        payment.setTransactionStatus(TransactionStatus.SETTLED);
-        payment.setPaymentSuccessDate(new Date());
-    }
-    
-    @Test
-    void syncTransactionData_ShouldSyncOrderAndPaymentDataAndPublishStatus() {
-        // Arrange
-        List<OrderReconView> orderViews = Arrays.asList(orderView);
-        List<PaymentReconView> paymentViews = Arrays.asList(paymentView);
-        List<Order> orders = Arrays.asList(order);
-        List<MerchantOrderPayment> payments = Arrays.asList(payment);
-        
-        when(merchantOrderDao.getAllOrderViewData()).thenReturn(orderViews);
-        when(orderMapper.toOrderList(orderViews)).thenReturn(orders);
-        when(merchantOrderPaymentDao.getAllPaymentViewData()).thenReturn(paymentViews);
-        when(paymentMapper.toPaymentList(paymentViews)).thenReturn(payments);
-        
-        // Act
-        dataSyncService.syncTransactionData();
-        
-        // Assert
-        verify(merchantOrderDao).getAllOrderViewData();
-        verify(orderMapper).toOrderList(orderViews);
-        verify(merchantOrderDao).updateMerchantOrder(orders);
-        
-        verify(merchantOrderPaymentDao).getAllPaymentViewData();
-        verify(paymentMapper).toPaymentList(paymentViews);
-        verify(merchantOrderPaymentDao).updateOrderPayment(payments);
-        
-        verify(reconStatusUpdateProducer).publish(eq("UPDATE_STATUS"), eq("ATRN123"), any(SettlementStatusDto.class));
-    }
-    
-    @Test
-    void syncOrderData_ShouldFetchAndUpdateOrderData() {
-        // Arrange
-        List<OrderReconView> orderViews = Arrays.asList(orderView);
-        List<Order> orders = Arrays.asList(order);
-        
-        when(merchantOrderDao.getAllOrderViewData()).thenReturn(orderViews);
-        when(orderMapper.toOrderList(orderViews)).thenReturn(orders);
-        
-        // Act
-        dataSyncService.syncOrderData();
-        
-        // Assert
-        verify(merchantOrderDao).getAllOrderViewData();
-        verify(orderMapper).toOrderList(orderViews);
-        verify(merchantOrderDao).updateMerchantOrder(orders);
-    }
-    
-    @Test
-    void syncPaymentData_ShouldFetchAndUpdatePaymentData() {
-        // Arrange
-        List<PaymentReconView> paymentViews = Arrays.asList(paymentView);
-        List<MerchantOrderPayment> payments = Arrays.asList(payment);
-        
-        when(merchantOrderPaymentDao.getAllPaymentViewData()).thenReturn(paymentViews);
-        when(paymentMapper.toPaymentList(paymentViews)).thenReturn(payments);
-        
-        // Act
-        List<PaymentReconView> result = dataSyncService.syncPaymentData();
-        
-        // Assert
-        assertEquals(1, result.size());
-        assertEquals("ATRN123", result.get(0).getAtrnNum());
-        
-        verify(merchantOrderPaymentDao).getAllPaymentViewData();
-        verify(paymentMapper).toPaymentList(paymentViews);
-        verify(merchantOrderPaymentDao).updateOrderPayment(payments);
-    }
-    
-    @Test
-    void statusProducer_ShouldPublishStatusForEachPayment() {
-        // Arrange
-        List<PaymentReconView> paymentViews = Arrays.asList(paymentView);
-        
-        // Act
-        dataSyncService.statusProducer(paymentViews);
-        
-        // Assert
-        verify(reconStatusUpdateProducer).publish(eq("UPDATE_STATUS"), eq("ATRN123"), any(SettlementStatusDto.class));
-    }
-}
-
-import static org.mockito.Mockito.*;
-import static org.junit.jupiter.api.Assertions.*;
-
-import java.util.Arrays;
-import java.util.List;
-
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
-import org.mockito.Mock;
-import org.mockito.junit.jupiter.MockitoExtension;
-
-@ExtendWith(MockitoExtension.class)
-class MerchantOrderDaoTest {
-
-    @Mock
-    private OrderReconViewRepository orderViewRepo;
-    
-    @Mock
-    private MerchantOrderRepository orderRepository;
-    
-    @InjectMocks
-    private MerchantOrderDao merchantOrderDao;
-    
-    private OrderReconView orderView;
-    private Order order;
-    
-    @BeforeEach
-    void setUp() {
-        orderView = new OrderReconView();
-        orderView.setAtrnNum("ATRN123");
-        orderView.setSbiOrderRefNumber("SBI123");
-        orderView.setMultiAccounts("ACC1,ACC2");
-        
-        order = new Order();
-        order.setAtrnNum("ATRN123");
-        order.setSbiOrderRefNumber("SBI123");
-        order.setMultiAccounts("ACC1,ACC2");
-    }
-    
-    @Test
-    void getAllOrderViewData_ShouldReturnAllOrderViews() {
-        // Arrange
-        List<OrderReconView> expected = Arrays.asList(orderView);
-        when(orderViewRepo.findAll()).thenReturn(expected);
-        
-        // Act
-        List<OrderReconView> result = merchantOrderDao.getAllOrderViewData();
-        
-        // Assert
-        assertEquals(1, result.size());
-        assertEquals("ATRN123", result.get(0).getAtrnNum());
-        verify(orderViewRepo).findAll();
-    }
-    
-    @Test
-    void updateMerchantOrder_ShouldUpdateOrders() {
-        // Arrange
-        List<Order> orders = Arrays.asList(order);
-        
-        // Act
-        merchantOrderDao.updateMerchantOrder(orders);
-        
-        // Assert
-        verify(orderRepository).updateOrder(orders);
-    }
-}
-
-import static org.mockito.Mockito.*;
-import static org.junit.jupiter.api.Assertions.*;
-
-import java.math.BigDecimal;
-import java.util.Arrays;
-import java.util.Date;
-import java.util.List;
-import java.util.UUID;
-
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
-import org.mockito.Mock;
-import org.mockito.junit.jupiter.MockitoExtension;
-
-@ExtendWith(MockitoExtension.class)
-class MerchantOrderPaymentDaoTest {
-
-    @Mock
-    private PaymentReconViewRepository paymentViewRepo;
-    
-    @Mock
-    private OrderPaymentRepository orderPaymentRepository;
-    
-    @Mock
-    private MerchantOrderPaymentMapper orderPaymentMapper;
-    
-    @InjectMocks
-    private MerchantOrderPaymentDao merchantOrderPaymentDao;
-    
-    private PaymentReconView paymentView;
-    private MerchantOrderPayment payment;
-    private MerchantOrderPaymentDto paymentDto;
-    
-    @BeforeEach
-    void setUp() {
-        paymentView = new PaymentReconView();
-        paymentView.setAtrnNum("ATRN123");
-        paymentView.setMId("MID123");
-        paymentView.setSbiOrderRefNumber("SBI123");
-        paymentView.setOrderAmount(BigDecimal.valueOf(100.50));
-        paymentView.setDebitAmt(BigDecimal.valueOf(100.50));
-        paymentView.setPaymentStatus(PaymentStatus.SUCCESS);
-        paymentView.setTransactionStatus(TransactionStatus.SETTLED);
-        paymentView.setPaymentSuccessDate(new Date());
-        
-        payment = new MerchantOrderPayment();
-        payment.setAtrnNum("ATRN123");
-        payment.setMId("MID123");
-        payment.setSbiOrderRefNumber("SBI123");
-        payment.setOrderAmount(BigDecimal.valueOf(100.50));
-        payment.setDebitAmt(BigDecimal.valueOf(100.50));
-        payment.setPaymentStatus(PaymentStatus.SUCCESS);
-        payment.setTransactionStatus(TransactionStatus.SETTLED);
-        payment.setPaymentSuccessDate(new Date());
-        
-        paymentDto = new MerchantOrderPaymentDto();
-        paymentDto.setAtrnNum("ATRN123");
-        paymentDto.setMId("MID123");
-        paymentDto.setSbiOrderRefNumber("SBI123");
-        paymentDto.setOrderAmount(BigDecimal.valueOf(100.50));
-        paymentDto.setDebitAmt(BigDecimal.valueOf(100.50));
-        paymentDto.setPaymentStatus(PaymentStatus.SUCCESS);
-        paymentDto.setTransactionStatus(TransactionStatus.SETTLED);
-        paymentDto.setPaymentSuccessDate(new Date());
-    }
-    
-    @Test
-    void getAllPaymentViewData_ShouldReturnAllPaymentViews() {
-        // Arrange
-        List<PaymentReconView> expected = Arrays.asList(paymentView);
-        when(paymentViewRepo.findAll()).thenReturn(expected);
-        
-        // Act
-        List<PaymentReconView> result = merchantOrderPaymentDao.getAllPaymentViewData();
-        
-        // Assert
-        assertEquals(1, result.size());
-        assertEquals("ATRN123", result.get(0).getAtrnNum());
-        verify(paymentViewRepo).findAll();
-    }
-    
-    @Test
-    void updateOrderPayment_ShouldUpdatePayments() {
-        // Arrange
-        List<MerchantOrderPayment> payments = Arrays.asList(payment);
-        
-        // Act
-        merchantOrderPaymentDao.updateOrderPayment(payments);
-        
-        // Assert
-        verify(orderPaymentRepository).updateMerchantOrderPayment(payments);
-    }
-    
-    @Test
-    void getMatchedData_ShouldReturnPaymentDtosForRfsId() {
-        // Arrange
-        UUID rfsId = UUID.randomUUID();
-        List<MerchantOrderPayment> payments = Arrays.asList(payment);
-        List<MerchantOrderPaymentDto> expected = Arrays.asList(paymentDto);
-        
-        when(orderPaymentRepository.getAllbyRfsId(rfsId)).thenReturn(payments);
-        when(orderPaymentMapper.toPaymentDtoList(payments)).thenReturn(expected);
-        
-        // Act
-        List<MerchantOrderPaymentDto> result = merchantOrderPaymentDao.getMatchedData(rfsId);
-        
-        // Assert
-        assertEquals(1, result.size());
-        assertEquals("ATRN123", result.get(0).getAtrnNum());
-        verify(orderPaymentRepository).getAllbyRfsId(rfsId);
-        verify(orderPaymentMapper).toPaymentDtoList(payments);
-    }
 }
