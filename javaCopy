@@ -347,3 +347,102 @@ public class MerchantOrderPaymentDto implements Serializable {
     private TransactionStatus transactionStatus;
     private Date paymentSuccessDate;
 }
+
+------++++++----
+@ExtendWith(MockitoExtension.class)
+class JavaReconciliationServiceTest {
+
+    @Mock
+    private MerchantOrderPaymentDao merchantOrderPaymentDao;
+
+    @Mock
+    private ReconFileDtlsDao reconFileDtlsDao;
+
+    @Mock
+    private ReconFileSummaryDao reconFileSummaryDao;
+
+    @Mock
+    private ReconResultProcessorService reconResultProcessorService;
+
+    @InjectMocks
+    private JavaReconciliationService reconciliationService;
+
+    @Test
+    void performRecon_shouldProcessMatchedAndUnmatchedAndDuplicateRecords() {
+        UUID rfsId = UUID.randomUUID();
+
+        // Prepare dummy ReconFileSummaryDto
+        ReconFileSummaryDto fileSummary = new ReconFileSummaryDto();
+        fileSummary.setRfsId(rfsId);
+        fileSummary.setReconStatus(Status.PENDING);
+
+        // Prepare Recon data
+        ReconFileDtlsDto matchedDto = ReconFileDtlsDto.builder()
+                .atrnNum("ATRN001")
+                .paymentAmount(new BigDecimal("100.00"))
+                .build();
+
+        ReconFileDtlsDto unmatchedDto = ReconFileDtlsDto.builder()
+                .atrnNum("ATRN002")
+                .paymentAmount(new BigDecimal("150.00"))
+                .build();
+
+        ReconFileDtlsDto duplicateDto1 = ReconFileDtlsDto.builder()
+                .atrnNum("ATRN003")
+                .paymentAmount(new BigDecimal("200.00"))
+                .build();
+
+        ReconFileDtlsDto duplicateDto2 = ReconFileDtlsDto.builder()
+                .atrnNum("ATRN003")
+                .paymentAmount(new BigDecimal("250.00"))
+                .build();
+
+        // All records from ReconFileDtls
+        List<ReconFileDtlsDto> reconList = List.of(matchedDto, unmatchedDto, duplicateDto1, duplicateDto2);
+
+        // System payment records
+        MerchantOrderPaymentDto matchedPayment = new MerchantOrderPaymentDto();
+        matchedPayment.setAtrnNum("ATRN001");
+        matchedPayment.setDebitAmt(new BigDecimal("100.00"));
+
+        MerchantOrderPaymentDto duplicatePayment = new MerchantOrderPaymentDto();
+        duplicatePayment.setAtrnNum("ATRN003");
+        duplicatePayment.setDebitAmt(new BigDecimal("200.00"));
+
+        List<MerchantOrderPaymentDto> paymentList = List.of(matchedPayment, duplicatePayment);
+
+        // Mocking
+        when(reconFileSummaryDao.findByFileSummaryId(rfsId)).thenReturn(fileSummary);
+        when(reconFileDtlsDao.getAllReconFileData(rfsId)).thenReturn(reconList);
+        when(merchantOrderPaymentDao.getMatchedData(rfsId)).thenReturn(paymentList);
+
+        doNothing().when(reconFileDtlsDao).updateReconStatus(anyString(), anyList());
+        doNothing().when(reconFileSummaryDao).save(any(ReconFileSummaryDto.class));
+        doNothing().when(reconResultProcessorService).reconStatusPublisher(any(ReconResultDto.class));
+
+        // Run
+        reconciliationService.performRecon(rfsId);
+
+        // Verify
+        verify(reconFileSummaryDao).findByFileSummaryId(rfsId);
+        verify(reconFileDtlsDao).getAllReconFileData(rfsId);
+        verify(merchantOrderPaymentDao).getMatchedData(rfsId);
+        verify(reconFileDtlsDao, atLeastOnce()).updateReconStatus(anyString(), anyList());
+        verify(reconFileSummaryDao).save(any(ReconFileSummaryDto.class));
+        verify(reconResultProcessorService).reconStatusPublisher(any(ReconResultDto.class));
+    }
+
+    @Test
+    void performRecon_shouldHandleExceptionAndUpdateStatusAsFail() {
+        UUID rfsId = UUID.randomUUID();
+        ReconFileSummaryDto summaryDto = new ReconFileSummaryDto();
+        summaryDto.setRfsId(rfsId);
+
+        when(reconFileSummaryDao.findByFileSummaryId(rfsId)).thenReturn(summaryDto);
+        when(reconFileDtlsDao.getAllReconFileData(rfsId)).thenThrow(new RuntimeException("DB failure"));
+
+        reconciliationService.performRecon(rfsId);
+
+        verify(reconFileSummaryDao).save(argThat(dto -> dto.getReconStatus() == Status.FAIL));
+    }
+}
