@@ -446,20 +446,3 @@ class JavaReconciliationServiceTest {
         verify(reconFileSummaryDao).save(argThat(dto -> dto.getReconStatus() == Status.FAIL));
     }
 }
--------------6
-Dear [Manager's Name],
-
-I hope you're doing well.
-
-I would like to share my thoughts regarding the proposed change in my seating position. I’ve been working on my current system for the past six months. Initially, the PC had several performance issues, including slowness and hardware glitches. However, after multiple follow-ups and coordination with the SBI IT support team, those issues have been resolved, and the system is now functioning smoothly and efficiently.
-
-The proposed new location, as I have observed, currently faces several technical challenges such as system glitches and network instability. I’m concerned that moving to that setup may impact my productivity and delay deliverables. If the case management team can assist in shifting my current system to the new location, I would be happy to cooperate and make the move as smooth as possible, without affecting my work setup.
-
-I believe the team can fairly assess my performance from my current location. If at any point there are concerns or issues related to my performance or deliverables, I will be more than happy to shift my position as required. My intention is to ensure that my work remains consistent and aligned with the team's expectations.
-
-I hope you understand my perspective. I’m open to any suggestions you may have and happy to discuss this further.
-
-Warm regards,
-[Your Full Name]
-[Your Employee ID, if applicable]
-[Your Designation]
