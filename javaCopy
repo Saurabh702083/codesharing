@@ -446,3 +446,240 @@ class JavaReconciliationServiceTest {
         verify(reconFileSummaryDao).save(argThat(dto -> dto.getReconStatus() == Status.FAIL));
     }
 }
++++++++++++++++++++
+@ExtendWith(MockitoExtension.class)
+class JavaReconciliationServiceTest {
+
+    @Mock
+    private MerchantOrderPaymentDao merchantOrderPaymentDao;
+
+    @Mock
+    private ReconFileDtlsDao reconFileDtlsDao;
+
+    @Mock
+    private ReconFileSummaryDao reconFileSummaryDao;
+
+    @Mock
+    private ReconResultProcessorService reconResultProcessorService;
+
+    @InjectMocks
+    private JavaReconciliationService javaReconciliationService;
+
+    private final UUID testRfsId = UUID.randomUUID();
+
+    @Test
+    void performRecon_SuccessFlow() {
+        // Setup test data
+        ReconFileSummaryDto summaryDto = new ReconFileSummaryDto();
+        summaryDto.setRfsId(testRfsId);
+        
+        ReconFileDtlsDto matchedRecord = ReconFileDtlsDto.builder()
+                .rfdId(UUID.randomUUID())
+                .rfsId(testRfsId)
+                .atrnNum("ATRN123")
+                .paymentAmount(new BigDecimal("100.00"))
+                .build();
+        
+        MerchantOrderPaymentDto paymentDto = new MerchantOrderPaymentDto();
+        paymentDto.setAtrnNum("ATRN123");
+        paymentDto.setDebitAmt(new BigDecimal("100.00"));
+        
+        // Mock dependencies
+        when(reconFileSummaryDao.findByFileSummaryId(testRfsId)).thenReturn(summaryDto);
+        when(reconFileDtlsDao.getAllReconFileData(testRfsId))
+            .thenReturn(List.of(matchedRecord));
+        when(merchantOrderPaymentDao.getMatchedData(testRfsId))
+            .thenReturn(List.of(paymentDto));
+        doNothing().when(reconFileDtlsDao).updateReconStatus(anyString(), anyList());
+        doNothing().when(reconResultProcessorService).reconStatusPublisher(any());
+        
+        // Execute
+        javaReconciliationService.performRecon(testRfsId);
+        
+        // Verify
+        verify(reconFileSummaryDao).findByFileSummaryId(testRfsId);
+        verify(reconFileDtlsDao).getAllReconFileData(testRfsId);
+        verify(merchantOrderPaymentDao).getMatchedData(testRfsId);
+        verify(reconFileDtlsDao).updateReconStatus(eq("MATCHED"), anyList());
+        verify(reconFileSummaryDao).save(argThat(dto -> 
+            dto.getMatchedRecords() == 1 && 
+            dto.getUnmatchedRecords() == 0 && 
+            dto.getDuplicateRecords() == 0));
+        verify(reconResultProcessorService).reconStatusPublisher(any());
+    }
+
+    @Test
+    void performRecon_WithUnmatchedRecords() {
+        // Setup test data
+        ReconFileSummaryDto summaryDto = new ReconFileSummaryDto();
+        summaryDto.setRfsId(testRfsId);
+        
+        ReconFileDtlsDto unmatchedRecord = ReconFileDtlsDto.builder()
+                .rfdId(UUID.randomUUID())
+                .rfsId(testRfsId)
+                .atrnNum("ATRN456")
+                .paymentAmount(new BigDecimal("200.00"))
+                .build();
+        
+        MerchantOrderPaymentDto paymentDto = new MerchantOrderPaymentDto();
+        paymentDto.setAtrnNum("ATRN123");
+        paymentDto.setDebitAmt(new BigDecimal("100.00"));
+        
+        // Mock dependencies
+        when(reconFileSummaryDao.findByFileSummaryId(testRfsId)).thenReturn(summaryDto);
+        when(reconFileDtlsDao.getAllReconFileData(testRfsId))
+            .thenReturn(List.of(unmatchedRecord));
+        when(merchantOrderPaymentDao.getMatchedData(testRfsId))
+            .thenReturn(List.of(paymentDto));
+        
+        // Execute
+        javaReconciliationService.performRecon(testRfsId);
+        
+        // Verify
+        verify(reconFileDtlsDao).updateReconStatus(eq("UNMATCHED"), anyList());
+        verify(reconFileSummaryDao).save(argThat(dto -> 
+            dto.getMatchedRecords() == 0 && 
+            dto.getUnmatchedRecords() == 1 && 
+            dto.getDuplicateRecords() == 0));
+    }
+
+    @Test
+    void performRecon_WithDuplicateRecords() {
+        // Setup test data
+        ReconFileSummaryDto summaryDto = new ReconFileSummaryDto();
+        summaryDto.setRfsId(testRfsId);
+        
+        ReconFileDtlsDto duplicateRecord1 = ReconFileDtlsDto.builder()
+                .rfdId(UUID.randomUUID())
+                .rfsId(testRfsId)
+                .atrnNum("ATRN123")
+                .paymentAmount(new BigDecimal("100.00"))
+                .build();
+                
+        ReconFileDtlsDto duplicateRecord2 = ReconFileDtlsDto.builder()
+                .rfdId(UUID.randomUUID())
+                .rfsId(testRfsId)
+                .atrnNum("ATRN123")
+                .paymentAmount(new BigDecimal("150.00"))
+                .build();
+        
+        MerchantOrderPaymentDto paymentDto = new MerchantOrderPaymentDto();
+        paymentDto.setAtrnNum("ATRN123");
+        paymentDto.setDebitAmt(new BigDecimal("100.00"));
+        
+        // Mock dependencies
+        when(reconFileSummaryDao.findByFileSummaryId(testRfsId)).thenReturn(summaryDto);
+        when(reconFileDtlsDao.getAllReconFileData(testRfsId))
+            .thenReturn(List.of(duplicateRecord1, duplicateRecord2));
+        when(merchantOrderPaymentDao.getMatchedData(testRfsId))
+            .thenReturn(List.of(paymentDto));
+        
+        // Execute
+        javaReconciliationService.performRecon(testRfsId);
+        
+        // Verify
+        verify(reconFileDtlsDao).updateReconStatus(eq("MATCHED"), anyList());
+        verify(reconFileDtlsDao).updateReconStatus(eq("DUPLICATE"), anyList());
+        verify(reconFileSummaryDao).save(argThat(dto -> 
+            dto.getMatchedRecords() == 1 && 
+            dto.getDuplicateRecords() == 1));
+    }
+
+    @Test
+    void performRecon_WithException() {
+        // Setup test data
+        ReconFileSummaryDto summaryDto = new ReconFileSummaryDto();
+        summaryDto.setRfsId(testRfsId);
+        
+        // Mock dependencies to throw exception
+        when(reconFileSummaryDao.findByFileSummaryId(testRfsId)).thenReturn(summaryDto);
+        when(reconFileDtlsDao.getAllReconFileData(testRfsId))
+            .thenThrow(new RuntimeException("Test exception"));
+        
+        // Execute
+        javaReconciliationService.performRecon(testRfsId);
+        
+        // Verify
+        verify(reconFileSummaryDao).save(argThat(dto -> 
+            dto.getReconStatus() == Status.FAIL));
+        verify(reconResultProcessorService, never()).reconStatusPublisher(any());
+    }
+
+    @Test
+    void processReconciliation_ShouldCategorizeRecordsCorrectly() {
+        // Setup test data
+        ReconFileDtlsDto matchedRecord = ReconFileDtlsDto.builder()
+                .atrnNum("ATRN123")
+                .paymentAmount(new BigDecimal("100.00"))
+                .build();
+                
+        ReconFileDtlsDto unmatchedRecord = ReconFileDtlsDto.builder()
+                .atrnNum("ATRN456")
+                .paymentAmount(new BigDecimal("200.00"))
+                .build();
+                
+        ReconFileDtlsDto duplicateRecord = ReconFileDtlsDto.builder()
+                .atrnNum("ATRN123")
+                .paymentAmount(new BigDecimal("150.00"))
+                .build();
+        
+        MerchantOrderPaymentDto paymentDto = new MerchantOrderPaymentDto();
+        paymentDto.setAtrnNum("ATRN123");
+        paymentDto.setDebitAmt(new BigDecimal("100.00"));
+        
+        // Mock dependencies
+        when(reconFileDtlsDao.getAllReconFileData(testRfsId))
+            .thenReturn(List.of(matchedRecord, unmatchedRecord, duplicateRecord));
+        when(merchantOrderPaymentDao.getMatchedData(testRfsId))
+            .thenReturn(List.of(paymentDto));
+        
+        // Execute
+        ReconResultDto result = javaReconciliationService.processReconciliation(testRfsId);
+        
+        // Verify
+        assertEquals(1, result.getMatched().size());
+        assertEquals(1, result.getUnmatched().size());
+        assertEquals(1, result.getDuplicate().size());
+    }
+
+    @Test
+    void updateReconStatuses_ShouldUpdateInBatches() {
+        // Setup test data
+        List<ReconFileDtlsDto> records = new ArrayList<>();
+        for (int i = 0; i < 25000; i++) {
+            records.add(ReconFileDtlsDto.builder()
+                .atrnNum("ATRN" + i)
+                .build());
+        }
+        
+        ReconResultDto result = new ReconResultDto();
+        result.getMatched().addAll(records);
+        
+        // Execute
+        javaReconciliationService.updateReconStatuses(result);
+        
+        // Verify batch processing (2 batches expected for 25000 records with batch size 20000)
+        verify(reconFileDtlsDao, times(2)).updateReconStatus(eq("MATCHED"), anyList());
+    }
+
+    @Test
+    void updateReconSummaryCount_ShouldUpdateCounts() {
+        // Setup test data
+        ReconFileSummaryDto summaryDto = new ReconFileSummaryDto();
+        summaryDto.setRfsId(testRfsId);
+        
+        ReconResultDto result = new ReconResultDto();
+        result.addMatched(ReconFileDtlsDto.builder().build());
+        result.addUnmatched(List.of(ReconFileDtlsDto.builder().build()));
+        result.addDuplicate(ReconFileDtlsDto.builder().build());
+        
+        // Execute
+        javaReconciliationService.updateReconSummaryCount(summaryDto, result);
+        
+        // Verify
+        assertEquals(1, summaryDto.getMatchedRecords());
+        assertEquals(1, summaryDto.getUnmatchedRecords());
+        assertEquals(1, summaryDto.getDuplicateRecords());
+        verify(reconFileSummaryDao).save(summaryDto);
+    }
+}
