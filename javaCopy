@@ -447,239 +447,151 @@ class JavaReconciliationServiceTest {
     }
 }
 +++++++++++++++++++
-@ExtendWith(MockitoExtension.class)
-class JavaReconciliationServiceTest {
+@Service
+@RequiredArgsConstructor
+public class DataSyncService {
 
-    @Mock
-    private MerchantOrderPaymentDao merchantOrderPaymentDao;
+    private final LoggerUtility log = LoggerFactoryUtility.getLogger(this.getClass());
 
-    @Mock
-    private ReconFileDtlsDao reconFileDtlsDao;
+    private final MerchantOrderPaymentMapper paymentMapper;
+    private final OrderMapper orderMapper;
+    private final ReconStatusUpdatePublisher reconStatusUpdateProducer;
+    private final MerchantOrderDao merchantOrderDao;
+    private final MerchantOrderPaymentDao merchantOrderPaymentDao;
 
-    @Mock
-    private ReconFileSummaryDao reconFileSummaryDao;
+    @Value("${spring.jpa.properties.hibernate.jdbc.batch_size}")
+    private int batchSize;
 
-    @Mock
-    private ReconResultProcessorService reconResultProcessorService;
-
-    @InjectMocks
-    private JavaReconciliationService javaReconciliationService;
-
-    private final UUID testRfsId = UUID.randomUUID();
-
-    @Test
-    void performRecon_SuccessFlow() {
-        // Setup test data
-        ReconFileSummaryDto summaryDto = new ReconFileSummaryDto();
-        summaryDto.setRfsId(testRfsId);
-        
-        ReconFileDtlsDto matchedRecord = ReconFileDtlsDto.builder()
-                .rfdId(UUID.randomUUID())
-                .rfsId(testRfsId)
-                .atrnNum("ATRN123")
-                .paymentAmount(new BigDecimal("100.00"))
-                .build();
-        
-        MerchantOrderPaymentDto paymentDto = new MerchantOrderPaymentDto();
-        paymentDto.setAtrnNum("ATRN123");
-        paymentDto.setDebitAmt(new BigDecimal("100.00"));
-        
-        // Mock dependencies
-        when(reconFileSummaryDao.findByFileSummaryId(testRfsId)).thenReturn(summaryDto);
-        when(reconFileDtlsDao.getAllReconFileData(testRfsId))
-            .thenReturn(List.of(matchedRecord));
-        when(merchantOrderPaymentDao.getMatchedData(testRfsId))
-            .thenReturn(List.of(paymentDto));
-        doNothing().when(reconFileDtlsDao).updateReconStatus(anyString(), anyList());
-        doNothing().when(reconResultProcessorService).reconStatusPublisher(any());
-        
-        // Execute
-        javaReconciliationService.performRecon(testRfsId);
-        
-        // Verify
-        verify(reconFileSummaryDao).findByFileSummaryId(testRfsId);
-        verify(reconFileDtlsDao).getAllReconFileData(testRfsId);
-        verify(merchantOrderPaymentDao).getMatchedData(testRfsId);
-        verify(reconFileDtlsDao).updateReconStatus(eq("MATCHED"), anyList());
-        verify(reconFileSummaryDao).save(argThat(dto -> 
-            dto.getMatchedRecords() == 1 && 
-            dto.getUnmatchedRecords() == 0 && 
-            dto.getDuplicateRecords() == 0));
-        verify(reconResultProcessorService).reconStatusPublisher(any());
+    /**
+     * Syncing of data from view tables to Operation DB by Schedular and publishing the ATRN to
+     * the Transaction service for updating its status
+     */
+    public void syncTransactionData() {
+        //Step 1. Syncing Data from OrderReconView to MerchantOrder Table
+        log.info("Syncing data to MerchantOrder table at : {}", System.currentTimeMillis());
+        syncOrderData();
+        //Step 2. Syncing Data from PaymentReconView to MerchantOrderPayment Table.
+        log.info("Syncing data to MerchantOrderPayment table at : {}", System.currentTimeMillis());
+        List<PaymentReconView> paymentReconViews = syncPaymentData();
+        //Step 3. Kafka producer for updating Transaction status
+        log.info("Kafka producer for updating Status  ");
+        statusProducer(paymentReconViews);
     }
 
-    @Test
-    void performRecon_WithUnmatchedRecords() {
-        // Setup test data
-        ReconFileSummaryDto summaryDto = new ReconFileSummaryDto();
-        summaryDto.setRfsId(testRfsId);
-        
-        ReconFileDtlsDto unmatchedRecord = ReconFileDtlsDto.builder()
-                .rfdId(UUID.randomUUID())
-                .rfsId(testRfsId)
-                .atrnNum("ATRN456")
-                .paymentAmount(new BigDecimal("200.00"))
-                .build();
-        
-        MerchantOrderPaymentDto paymentDto = new MerchantOrderPaymentDto();
-        paymentDto.setAtrnNum("ATRN123");
-        paymentDto.setDebitAmt(new BigDecimal("100.00"));
-        
-        // Mock dependencies
-        when(reconFileSummaryDao.findByFileSummaryId(testRfsId)).thenReturn(summaryDto);
-        when(reconFileDtlsDao.getAllReconFileData(testRfsId))
-            .thenReturn(List.of(unmatchedRecord));
-        when(merchantOrderPaymentDao.getMatchedData(testRfsId))
-            .thenReturn(List.of(paymentDto));
-        
-        // Execute
-        javaReconciliationService.performRecon(testRfsId);
-        
-        // Verify
-        verify(reconFileDtlsDao).updateReconStatus(eq("UNMATCHED"), anyList());
-        verify(reconFileSummaryDao).save(argThat(dto -> 
-            dto.getMatchedRecords() == 0 && 
-            dto.getUnmatchedRecords() == 1 && 
-            dto.getDuplicateRecords() == 0));
+    /**
+     * Syncing or data from OrderReconView to MerchantOrder Table
+     */
+    @Transactional
+    public void syncOrderData() {
+
+        log.info("Getting data from merchant order View ");
+        List<OrderReconView> allOrderViewData = merchantOrderDao.getAllOrderViewData();
+        List<Order> orders = orderMapper.toOrderList(allOrderViewData);
+        log.info("updating the Merchant order table");
+        merchantOrderDao.updateMerchantOrder(orders);
     }
 
-    @Test
-    void performRecon_WithDuplicateRecords() {
-        // Setup test data
-        ReconFileSummaryDto summaryDto = new ReconFileSummaryDto();
-        summaryDto.setRfsId(testRfsId);
-        
-        ReconFileDtlsDto duplicateRecord1 = ReconFileDtlsDto.builder()
-                .rfdId(UUID.randomUUID())
-                .rfsId(testRfsId)
-                .atrnNum("ATRN123")
-                .paymentAmount(new BigDecimal("100.00"))
-                .build();
-                
-        ReconFileDtlsDto duplicateRecord2 = ReconFileDtlsDto.builder()
-                .rfdId(UUID.randomUUID())
-                .rfsId(testRfsId)
-                .atrnNum("ATRN123")
-                .paymentAmount(new BigDecimal("150.00"))
-                .build();
-        
-        MerchantOrderPaymentDto paymentDto = new MerchantOrderPaymentDto();
-        paymentDto.setAtrnNum("ATRN123");
-        paymentDto.setDebitAmt(new BigDecimal("100.00"));
-        
-        // Mock dependencies
-        when(reconFileSummaryDao.findByFileSummaryId(testRfsId)).thenReturn(summaryDto);
-        when(reconFileDtlsDao.getAllReconFileData(testRfsId))
-            .thenReturn(List.of(duplicateRecord1, duplicateRecord2));
-        when(merchantOrderPaymentDao.getMatchedData(testRfsId))
-            .thenReturn(List.of(paymentDto));
-        
-        // Execute
-        javaReconciliationService.performRecon(testRfsId);
-        
-        // Verify
-        verify(reconFileDtlsDao).updateReconStatus(eq("MATCHED"), anyList());
-        verify(reconFileDtlsDao).updateReconStatus(eq("DUPLICATE"), anyList());
-        verify(reconFileSummaryDao).save(argThat(dto -> 
-            dto.getMatchedRecords() == 1 && 
-            dto.getDuplicateRecords() == 1));
+    /**
+     * Syncing or data from OrderPaymentReconView to MerchantOrderPayment  Table
+     *
+     * @return List of PaymentReconView
+     */
+    @Transactional
+    public List<PaymentReconView> syncPaymentData() {
+        log.info("Getting data from merchant order payment View ");
+        List<PaymentReconView> allPaymentViewData = merchantOrderPaymentDao.getAllPaymentViewData();
+        List<MerchantOrderPayment> merchantPayments = paymentMapper.toPaymentList(allPaymentViewData);
+        log.info("updating the Merchant order payment table ");
+        merchantOrderPaymentDao.updateOrderPayment(merchantPayments);
+        return allPaymentViewData;
     }
 
-    @Test
-    void performRecon_WithException() {
-        // Setup test data
-        ReconFileSummaryDto summaryDto = new ReconFileSummaryDto();
-        summaryDto.setRfsId(testRfsId);
-        
-        // Mock dependencies to throw exception
-        when(reconFileSummaryDao.findByFileSummaryId(testRfsId)).thenReturn(summaryDto);
-        when(reconFileDtlsDao.getAllReconFileData(testRfsId))
-            .thenThrow(new RuntimeException("Test exception"));
-        
-        // Execute
-        javaReconciliationService.performRecon(testRfsId);
-        
-        // Verify
-        verify(reconFileSummaryDao).save(argThat(dto -> 
-            dto.getReconStatus() == Status.FAIL));
-        verify(reconResultProcessorService, never()).reconStatusPublisher(any());
+    /**
+     * Publishing ATRN to Transaction service by Kafka
+     *
+     * @param paymentReconViews List of PaymentReconView
+     */
+    public void statusProducer(List<PaymentReconView> paymentReconViews) {
+        log.info("Publishing the ATRN ");
+        paymentReconViews.forEach(paymentReconView -> {
+            String atrnNumber = paymentReconView.getAtrnNum();
+            SettlementStatusDto settlementStatusDto = SettlementStatusDto.builder().status(SETTLED).atrn(atrnNumber).build();
+            reconStatusUpdateProducer.publish(UPDATE_STATUS, atrnNumber, settlementStatusDto);
+        });
+        log.info("Finished pushing ATRN to Transaction service");
+    }
+}
+
+@Component
+@RequiredArgsConstructor
+public class MerchantOrderPaymentDao {
+    private final PaymentReconViewRepository paymentViewRepo;
+    private final OrderPaymentRepository orderPaymentRepository;
+    private final MerchantOrderPaymentMapper orderPaymentMapper;
+
+    public List<PaymentReconView> getAllPaymentViewData() {
+        return paymentViewRepo.findAll();
     }
 
-    @Test
-    void processReconciliation_ShouldCategorizeRecordsCorrectly() {
-        // Setup test data
-        ReconFileDtlsDto matchedRecord = ReconFileDtlsDto.builder()
-                .atrnNum("ATRN123")
-                .paymentAmount(new BigDecimal("100.00"))
-                .build();
-                
-        ReconFileDtlsDto unmatchedRecord = ReconFileDtlsDto.builder()
-                .atrnNum("ATRN456")
-                .paymentAmount(new BigDecimal("200.00"))
-                .build();
-                
-        ReconFileDtlsDto duplicateRecord = ReconFileDtlsDto.builder()
-                .atrnNum("ATRN123")
-                .paymentAmount(new BigDecimal("150.00"))
-                .build();
-        
-        MerchantOrderPaymentDto paymentDto = new MerchantOrderPaymentDto();
-        paymentDto.setAtrnNum("ATRN123");
-        paymentDto.setDebitAmt(new BigDecimal("100.00"));
-        
-        // Mock dependencies
-        when(reconFileDtlsDao.getAllReconFileData(testRfsId))
-            .thenReturn(List.of(matchedRecord, unmatchedRecord, duplicateRecord));
-        when(merchantOrderPaymentDao.getMatchedData(testRfsId))
-            .thenReturn(List.of(paymentDto));
-        
-        // Execute
-        ReconResultDto result = javaReconciliationService.processReconciliation(testRfsId);
-        
-        // Verify
-        assertEquals(1, result.getMatched().size());
-        assertEquals(1, result.getUnmatched().size());
-        assertEquals(1, result.getDuplicate().size());
+    public void updateOrderPayment(List<MerchantOrderPayment> orderPayments){
+        orderPaymentRepository.updateMerchantOrderPayment(orderPayments);
     }
 
-    @Test
-    void updateReconStatuses_ShouldUpdateInBatches() {
-        // Setup test data
-        List<ReconFileDtlsDto> records = new ArrayList<>();
-        for (int i = 0; i < 25000; i++) {
-            records.add(ReconFileDtlsDto.builder()
-                .atrnNum("ATRN" + i)
-                .build());
+    public List<MerchantOrderPaymentDto>  getMatchedData(UUID rfsId){
+         return orderPaymentMapper.toPaymentDtoList(orderPaymentRepository.getAllbyRfsId(rfsId));
+    }
+}
+
+
+@Mapper(builder = @Builder(disableBuilder = true), componentModel = "spring")
+public interface MerchantOrderPaymentMapper {
+    MerchantOrderPayment toPayment(PaymentReconView paymentReconView);
+
+    List<MerchantOrderPayment> toPaymentList(List<PaymentReconView> paymentReconViews);
+
+    MerchantOrderPaymentDto toPaymentDto(MerchantOrderPayment merchantOrderPayment);
+
+    List<MerchantOrderPaymentDto> toPaymentDtoList(List<MerchantOrderPayment> merchantOrderPayments);
+}
+
+@Component
+@RequiredArgsConstructor
+public class MerchantOrderPaymentDao {
+    private final PaymentReconViewRepository paymentViewRepo;
+    private final OrderPaymentRepository orderPaymentRepository;
+    private final MerchantOrderPaymentMapper orderPaymentMapper;
+
+    public List<PaymentReconView> getAllPaymentViewData() {
+        return paymentViewRepo.findAll();
+    }
+
+    public void updateOrderPayment(List<MerchantOrderPayment> orderPayments){
+        orderPaymentRepository.updateMerchantOrderPayment(orderPayments);
+    }
+
+    public List<MerchantOrderPaymentDto>  getMatchedData(UUID rfsId){
+         return orderPaymentMapper.toPaymentDtoList(orderPaymentRepository.getAllbyRfsId(rfsId));
+    }
+}
+
+@Component
+@RequiredArgsConstructor
+public class ReconStatusUpdatePublisher extends ReconProducer<SettlementStatusDto>{
+    private final LoggerUtility log = LoggerFactoryUtility.getLogger(this.getClass());
+    private final ObjectMapper objectMapper;
+
+    /**
+     * @param requestType String
+     * @param routingKey  String
+     * @param settlementStatusDto  SettlementStatusDto
+     */
+    @Override
+    public void publish(String requestType, String routingKey, SettlementStatusDto settlementStatusDto) {
+        try {
+            log.debug("Recon update Settlement for requestType : {}, routingKey : {} and value : {}", requestType, routingKey, settlementStatusDto);
+            kafkaMessagePublisher.publish(topics.getReconStatusUpdateTopic(), getRoutingKey("recon", requestType, routingKey), objectMapper.writeValueAsString(settlementStatusDto));
+        } catch (Exception e) {
+            log.error("Error in Recon Status update , SettlementStatusDto {}", settlementStatusDto, e.getMessage());
         }
-        
-        ReconResultDto result = new ReconResultDto();
-        result.getMatched().addAll(records);
-        
-        // Execute
-        javaReconciliationService.updateReconStatuses(result);
-        
-        // Verify batch processing (2 batches expected for 25000 records with batch size 20000)
-        verify(reconFileDtlsDao, times(2)).updateReconStatus(eq("MATCHED"), anyList());
-    }
-
-    @Test
-    void updateReconSummaryCount_ShouldUpdateCounts() {
-        // Setup test data
-        ReconFileSummaryDto summaryDto = new ReconFileSummaryDto();
-        summaryDto.setRfsId(testRfsId);
-        
-        ReconResultDto result = new ReconResultDto();
-        result.addMatched(ReconFileDtlsDto.builder().build());
-        result.addUnmatched(List.of(ReconFileDtlsDto.builder().build()));
-        result.addDuplicate(ReconFileDtlsDto.builder().build());
-        
-        // Execute
-        javaReconciliationService.updateReconSummaryCount(summaryDto, result);
-        
-        // Verify
-        assertEquals(1, summaryDto.getMatchedRecords());
-        assertEquals(1, summaryDto.getUnmatchedRecords());
-        assertEquals(1, summaryDto.getDuplicateRecords());
-        verify(reconFileSummaryDao).save(summaryDto);
     }
 }
