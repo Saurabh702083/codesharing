@@ -1,121 +1,83 @@
-  @Service
+@Service
 @RequiredArgsConstructor
-public class DataSyncService {
-
+public class ReconResultProcessorService {
     private final LoggerUtility log = LoggerFactoryUtility.getLogger(this.getClass());
+    private final ObjectMapper objectMapper;
+    private final ReconFileDtlsStatusPublisher fileDtlsStatusPublisher;
 
-    private final MerchantOrderPaymentMapper paymentMapper;
-    private final OrderMapper orderMapper;
-    private final ReconStatusUpdatePublisher reconStatusUpdateProducer;
-    private final MerchantOrderDao merchantOrderDao;
-    private final MerchantOrderPaymentDao merchantOrderPaymentDao;
-
-    @Value("${spring.jpa.properties.hibernate.jdbc.batch_size}")
-    private int batchSize;
-
-    /**
-     * Syncing of data from view tables to Operation DB by Schedular and publishing the ATRN to
-     * the Transaction service for updating its status
-     */
-    public void syncTransactionData() {
-        //Step 1. Syncing Data from OrderReconView to MerchantOrder Table
-        log.info("Syncing data to MerchantOrder table at : {}", System.currentTimeMillis());
-        syncOrderData();
-        //Step 2. Syncing Data from PaymentReconView to MerchantOrderPayment Table.
-        log.info("Syncing data to MerchantOrderPayment table at : {}", System.currentTimeMillis());
-        List<PaymentReconView> paymentReconViews = syncPaymentData();
-        //Step 3. Kafka producer for updating Transaction status
-        log.info("Kafka producer for updating Status  ");
-        statusProducer(paymentReconViews);
+    public void reconStatusPublisher(ReconResultDto reconResultDto) {
+        log.info("Publishing Matched record of size : {}", reconResultDto.getMatched().size());
+        matchedResultPublisher(reconResultDto.getMatched());
+        log.info("Publishing Unmatched record of size : {}", reconResultDto.getUnmatched().size());
+        unmatchedResultPublisher(reconResultDto.getUnmatched());
+        log.info("Publishing Duplicate record of size : {}", reconResultDto.getDuplicate().size());
+        duplicateResultPublisher(reconResultDto.getUnmatched());
     }
 
     /**
-     * Syncing or data from OrderReconView to MerchantOrder Table
-     */
-    @Transactional
-    public void syncOrderData() {
-
-        log.info("Getting data from merchant order View ");
-        List<OrderReconView> allOrderViewData = merchantOrderDao.getAllOrderViewData();
-        List<Order> orders = orderMapper.toOrderList(allOrderViewData);
-        log.info("updating the Merchant order table");
-        merchantOrderDao.updateMerchantOrder(orders);
-    }
-
-    /**
-     * Syncing or data from OrderPaymentReconView to MerchantOrderPayment  Table
+     * List matched ATRN publisher
      *
-     * @return List of PaymentReconView
+     * @param matchedRecord List of ReconFileDtls
      */
-    @Transactional
-    public List<PaymentReconView> syncPaymentData() {
-        log.info("Getting data from merchant order payment View ");
-        List<PaymentReconView> allPaymentViewData = merchantOrderPaymentDao.getAllPaymentViewData();
-        List<MerchantOrderPayment> merchantPayments = paymentMapper.toPaymentList(allPaymentViewData);
-        log.info("updating the Merchant order payment table ");
-        merchantOrderPaymentDao.updateOrderPayment(merchantPayments);
-        return allPaymentViewData;
+    public void matchedResultPublisher(List<ReconFileDtlsDto> matchedRecord) {
+        log.info("Publishing List of Matched ATRN at  :- {}", System.currentTimeMillis());
+        List<String> allMatchedAtrns = matchedRecord.stream().map(ReconFileDtlsDto::getAtrnDtls).toList();
+        String key= null;
+        for (int i = 0; i < allMatchedAtrns.size(); i += MATCHED_UNMATCHED_BATCH_SIZE) {
+            int end = Math.min(allMatchedAtrns.size(), i + MATCHED_UNMATCHED_BATCH_SIZE);
+            List<String> batch = allMatchedAtrns.subList(i, end);
+             key = ATRN_BATCH + UUID.randomUUID();
+            try {
+                String matchedString = objectMapper.writeValueAsString(batch);
+                fileDtlsStatusPublisher.matchedStatusProducer(key, matchedString);
+            } catch (JsonProcessingException e) {
+                log.error("Error in Publishing matched ATRN", e.getMessage());
+            }
+        }
     }
 
     /**
-     * Publishing ATRN to Transaction service by Kafka
+     * List matched ATRN publisher
      *
-     * @param paymentReconViews List of PaymentReconView
+     * @param unmatchedRecord List of ReconFileDtls
      */
-    public void statusProducer(List<PaymentReconView> paymentReconViews) {
-        log.info("Publishing the ATRN ");
-        paymentReconViews.forEach(paymentReconView -> {
-            String atrnNumber = paymentReconView.getAtrnNum();
-            SettlementStatusDto settlementStatusDto = SettlementStatusDto.builder().status(SETTLED).atrn(atrnNumber).build();
-            reconStatusUpdateProducer.publish(UPDATE_STATUS, atrnNumber, settlementStatusDto);
-        });
-        log.info("Finished pushing ATRN to Transaction service");
-    }
-}
-
-@ExtendWith(MockitoExtension.class)
-class DataSyncServiceTest {
-
-    @Mock
-    private MerchantOrderPaymentMapper paymentMapper;
-
-    @Mock
-    private OrderMapper orderMapper;
-
-    @Mock
-    private ReconStatusUpdatePublisher reconStatusUpdateProducer;
-
-    @Mock
-    private MerchantOrderDao merchantOrderDao;
-
-    @Mock
-    private MerchantOrderPaymentDao merchantOrderPaymentDao;
-
-    @InjectMocks
-    private DataSyncService dataSyncService;
-
-
-    @Test
-    void syncTransactionDataTest() {
-        List<PaymentReconView> allPaymentViewDataList = new ArrayList<>();
-        PaymentReconView paymentReconView = PaymentReconView.builder().atrnNum("ATRN123").build();
-        allPaymentViewDataList.add(paymentReconView);
-
-        List<MerchantOrderPayment> merchantPaymentsList = new ArrayList<>();
-        MerchantOrderPayment merchantOrderPayment = new MerchantOrderPayment();
-        merchantOrderPayment.setAtrnNum("ATRN123");
-        merchantPaymentsList.add(merchantOrderPayment);
-
-
-        when(merchantOrderPaymentDao.getAllPaymentViewData()).thenReturn(allPaymentViewDataList);
-        when(spy(paymentMapper.toPaymentList(allPaymentViewDataList))).thenReturn(merchantPaymentsList);
-        doNothing().when(merchantOrderPaymentDao).updateOrderPayment(merchantPaymentsList);
-        dataSyncService.syncTransactionData();
-        verify(merchantOrderPaymentDao, times(1)).updateOrderPayment(merchantPaymentsList);
-
+    public void unmatchedResultPublisher(List<ReconFileDtlsDto> unmatchedRecord) {
+        log.info("Publishing List of Unmatched ATRN at  :- {}", System.currentTimeMillis());
+        List<String> allUnmatchedAtrn = unmatchedRecord.stream().map(ReconFileDtlsDto::getAtrnDtls).toList();
+        String key = null;
+        for (int i = 0; i < allUnmatchedAtrn.size(); i += MATCHED_UNMATCHED_BATCH_SIZE) {
+            int end = Math.min(allUnmatchedAtrn.size(), i + MATCHED_UNMATCHED_BATCH_SIZE);
+            List<String> batch = allUnmatchedAtrn.subList(i, end);
+            key = ATRN_BATCH + UUID.randomUUID();
+            try {
+                String matchedString = objectMapper.writeValueAsString(batch);
+                fileDtlsStatusPublisher.unmatchedStatusProducer(key, matchedString);
+            } catch (JsonProcessingException e) {
+                log.error("Error in Publishing matched ATRN ", e.getMessage());
+            }
+        }
     }
 
-
+    /**
+     * List matched ATRN publisher
+     *
+     * @param duplicateRecord List of ReconFileDtls
+     */
+    public void duplicateResultPublisher(List<ReconFileDtlsDto> duplicateRecord) {
+        String key= null;
+        for (int i = 0; i < duplicateRecord.size(); i += DUPLICATE_BATCH_SIZE) {
+            log.info("Publishing List of Duplicate record  :- {}", System.currentTimeMillis());
+            int end = Math.min(duplicateRecord.size(), i + DUPLICATE_BATCH_SIZE);
+            List<ReconFileDtlsDto> batchRecord = duplicateRecord.subList(i, end);
+            key=DUPLICATE + UUID.randomUUID();
+            try {
+                String duplicateString = objectMapper.writeValueAsString(batchRecord);
+                fileDtlsStatusPublisher.duplicateStatusProducer(key, duplicateString);
+            } catch (JsonProcessingException e) {
+                log.error("Error in Publishing Duplicate record ", e.getMessage());
+            }
+        }
+    }
 }
 -------------------------------------
 
