@@ -79,6 +79,29 @@ public class ReconResultProcessorService {
         }
     }
 }
+
+@Getter
+public  class ReconResultDto {
+    private final List<ReconFileDtlsDto> matched = new LinkedList<>();
+    private final List<ReconFileDtlsDto> duplicate = new LinkedList<>();
+    private final List<ReconFileDtlsDto> unmatched = new LinkedList<>();
+
+    public void addMatched(ReconFileDtlsDto record) {
+        matched.add(record);
+    }
+
+    public void addUnmatched(List<ReconFileDtlsDto> records) {
+        unmatched.addAll(records);
+    }
+
+    public void removeDuplicates(List<ReconFileDtlsDto> records) {
+        duplicate.removeAll(records);
+    }
+
+    public void addDuplicate(ReconFileDtlsDto record){
+        duplicate.add(record);
+    }
+}
 -------------------------------------
 
 Above is my service class and its test case in junit 5.
