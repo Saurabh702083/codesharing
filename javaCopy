@@ -1,118 +1,5 @@
 @Service
 @RequiredArgsConstructor
-public class ReconResultProcessorService {
-    private final LoggerUtility log = LoggerFactoryUtility.getLogger(this.getClass());
-    private final ObjectMapper objectMapper;
-    private final ReconFileDtlsStatusPublisher fileDtlsStatusPublisher;
-
-    public void reconStatusPublisher(ReconResultDto reconResultDto) {
-        log.info("Publishing Matched record of size : {}", reconResultDto.getMatched().size());
-        matchedResultPublisher(reconResultDto.getMatched());
-        log.info("Publishing Unmatched record of size : {}", reconResultDto.getUnmatched().size());
-        unmatchedResultPublisher(reconResultDto.getUnmatched());
-        log.info("Publishing Duplicate record of size : {}", reconResultDto.getDuplicate().size());
-        duplicateResultPublisher(reconResultDto.getUnmatched());
-    }
-
-    /**
-     * List matched ATRN publisher
-     *
-     * @param matchedRecord List of ReconFileDtls
-     */
-    public void matchedResultPublisher(List<ReconFileDtlsDto> matchedRecord) {
-        log.info("Publishing List of Matched ATRN at  :- {}", System.currentTimeMillis());
-        List<String> allMatchedAtrns = matchedRecord.stream().map(ReconFileDtlsDto::getAtrnDtls).toList();
-        String key= null;
-        for (int i = 0; i < allMatchedAtrns.size(); i += MATCHED_UNMATCHED_BATCH_SIZE) {
-            int end = Math.min(allMatchedAtrns.size(), i + MATCHED_UNMATCHED_BATCH_SIZE);
-            List<String> batch = allMatchedAtrns.subList(i, end);
-             key = ATRN_BATCH + UUID.randomUUID();
-            try {
-                String matchedString = objectMapper.writeValueAsString(batch);
-                fileDtlsStatusPublisher.matchedStatusProducer(key, matchedString);
-            } catch (JsonProcessingException e) {
-                log.error("Error in Publishing matched ATRN", e.getMessage());
-            }
-        }
-    }
-
-    /**
-     * List matched ATRN publisher
-     *
-     * @param unmatchedRecord List of ReconFileDtls
-     */
-    public void unmatchedResultPublisher(List<ReconFileDtlsDto> unmatchedRecord) {
-        log.info("Publishing List of Unmatched ATRN at  :- {}", System.currentTimeMillis());
-        List<String> allUnmatchedAtrn = unmatchedRecord.stream().map(ReconFileDtlsDto::getAtrnDtls).toList();
-        String key = null;
-        for (int i = 0; i < allUnmatchedAtrn.size(); i += MATCHED_UNMATCHED_BATCH_SIZE) {
-            int end = Math.min(allUnmatchedAtrn.size(), i + MATCHED_UNMATCHED_BATCH_SIZE);
-            List<String> batch = allUnmatchedAtrn.subList(i, end);
-            key = ATRN_BATCH + UUID.randomUUID();
-            try {
-                String matchedString = objectMapper.writeValueAsString(batch);
-                fileDtlsStatusPublisher.unmatchedStatusProducer(key, matchedString);
-            } catch (JsonProcessingException e) {
-                log.error("Error in Publishing matched ATRN ", e.getMessage());
-            }
-        }
-    }
-
-    /**
-     * List matched ATRN publisher
-     *
-     * @param duplicateRecord List of ReconFileDtls
-     */
-    public void duplicateResultPublisher(List<ReconFileDtlsDto> duplicateRecord) {
-        String key= null;
-        for (int i = 0; i < duplicateRecord.size(); i += DUPLICATE_BATCH_SIZE) {
-            log.info("Publishing List of Duplicate record  :- {}", System.currentTimeMillis());
-            int end = Math.min(duplicateRecord.size(), i + DUPLICATE_BATCH_SIZE);
-            List<ReconFileDtlsDto> batchRecord = duplicateRecord.subList(i, end);
-            key=DUPLICATE + UUID.randomUUID();
-            try {
-                String duplicateString = objectMapper.writeValueAsString(batchRecord);
-                fileDtlsStatusPublisher.duplicateStatusProducer(key, duplicateString);
-            } catch (JsonProcessingException e) {
-                log.error("Error in Publishing Duplicate record ", e.getMessage());
-            }
-        }
-    }
-}
-
-@Getter
-public  class ReconResultDto {
-    private final List<ReconFileDtlsDto> matched = new LinkedList<>();
-    private final List<ReconFileDtlsDto> duplicate = new LinkedList<>();
-    private final List<ReconFileDtlsDto> unmatched = new LinkedList<>();
-
-    public void addMatched(ReconFileDtlsDto record) {
-        matched.add(record);
-    }
-
-    public void addUnmatched(List<ReconFileDtlsDto> records) {
-        unmatched.addAll(records);
-    }
-
-    public void removeDuplicates(List<ReconFileDtlsDto> records) {
-        duplicate.removeAll(records);
-    }
-
-    public void addDuplicate(ReconFileDtlsDto record){
-        duplicate.add(record);
-    }
-}
--------------------------------------
-
-Above is my service class and its test case in junit 5.
-
-now i want to write test case for my other service in  similar way i worte it above .
-
-so below is my service class for which i want to write test casse in junit 5
-
-
-@Service
-@RequiredArgsConstructor
 public class JavaReconciliationService {
 
     private static final int BATCH_SIZE = 20000;
@@ -221,6 +108,15 @@ public class JavaReconciliationService {
         batchUpdateStatus(result.getDuplicate(), "DUPLICATE");
     }
 
+
+
+    /**
+     * * Updating Recon Status in batch.
+     * *
+     * * @param list   of ReconFileDtls
+     * * @param status Recon_Status
+     */
+    // Batch to update Status
     @Transactional
     private void batchUpdateStatus(List<ReconFileDtlsDto> list, String status) {
         final int batchSize = BATCH_SIZE;
@@ -239,57 +135,75 @@ public class JavaReconciliationService {
     }
 }
 
-@Data
-@Builder
-@AllArgsConstructor
-@NoArgsConstructor
-public class ReconFileSummaryDto {
 
-    private UUID rfsId;
-    private UUID rfcId;
-    private String sftpPath;
-    private String s3Path;
-    private String fileName;
-    private String bankCode;
-    private Long fileReceivedTime;
-    private Long fileUploadTime;
-    private BigDecimal totalAmount;
-    private Status parsingStatus;
-    private Integer totalRecords;
-    private Integer passedRecords;
-    private Integer failedRecords;
-    private Status reconStatus;
-    private Long reconTime;
-    private Status settlementStatus;
-    private Long settlementTime;
-    private String remark;
-    private Status fileUploadStatus;
-    private Integer matchedRecords;
-    private Integer unmatchedRecords;
-    private Integer duplicateRecords;
+@Component
+@RequiredArgsConstructor
+public class ReconFileDtlsDao {
+
+    private final LoggerUtility log = LoggerFactoryUtility.getLogger(this.getClass());
+    private final ReconFileDtlsRepository reconFileDtlsRepository;
+    private final ReconFileDtlsMapper reconFileDtlsMapper;
+    private final ReconFileRepository fileDtlsRepository;
+
+    public void save(List<ReconFileDtlsDto> reconFileDtlsDtoList) {
+
+        reconFileDtlsRepository.saveAll(reconFileDtlsMapper.mapToEntityList(reconFileDtlsDtoList));
+    }
+
+    /**
+     * This will update the ReconStatus
+     * @param status String
+     * @param atrnNums List of atrn
+     */
+    @Transactional
+    public void updateReconStatus(String status, List<String> atrnNums) {
+        fileDtlsRepository.updateReconStatus(status,atrnNums);
+    }
+
+    public List<ReconFileDtlsDto> getAllReconFileData(UUID rfsId){
+         return reconFileDtlsMapper.mapToDtoList(fileDtlsRepository.getAllByRfsId(rfsId));
+    }
+
+    public List<ReconStatusCountProjection> getReconStatusCount(UUID rfdId) {
+        return reconFileDtlsRepository.findReconStatusCountByRfsId(rfdId);
+    }
+
+    public List<ReconFileDtlsDto> getReconFileDataByRfsIdAndReconStatus(UUID rfsId, String reconStatus){
+        return reconFileDtlsMapper.mapToDtoList(reconFileDtlsRepository.findByRfsIdAndReconStatus(rfsId, reconStatus));
+    }
 }
 
-@Getter
-public  class ReconResultDto {
-    private final List<ReconFileDtlsDto> matched = new LinkedList<>();
-    private final List<ReconFileDtlsDto> duplicate = new LinkedList<>();
-    private final List<ReconFileDtlsDto> unmatched = new LinkedList<>();
+@Repository
+@RequiredArgsConstructor
+public class ReconFileRepository {
 
-    public void addMatched(ReconFileDtlsDto record) {
-        matched.add(record);
+    private final NamedParameterJdbcTemplate jdbcTemplate;
+    private final LoggerUtility log = LoggerFactoryUtility.getLogger(this.getClass());
+
+    /**
+     * This will update the ReconStatus
+     *
+     * @param status   String
+     * @param atrnNums List of atrn
+     */
+    @Transactional
+    public void updateReconStatus(String status, List<String> atrnNums) {
+
+        log.info("Updating {} status.", status);
+        MapSqlParameterSource[] batchParams = atrnNums.stream().map(atrn -> new MapSqlParameterSource().addValue("status", status).addValue("atrnNum", atrn)).toArray(MapSqlParameterSource[]::new);
+
+        jdbcTemplate.batchUpdate(UPDATE_RECON_STATUS, batchParams);
     }
 
-    public void addUnmatched(List<ReconFileDtlsDto> records) {
-        unmatched.addAll(records);
-    }
+@UtilityClass
+public class JdbcQuery {
 
-    public void removeDuplicates(List<ReconFileDtlsDto> records) {
-        duplicate.removeAll(records);
-    }
 
-    public void addDuplicate(ReconFileDtlsDto record){
-        duplicate.add(record);
-    }
+public static final String UPDATE_RECON_STATUS="""
+                UPDATE RECON_FILE_DTLS rfd
+                SET rfd.RECON_STATUS = :status
+                WHERE rfd.ATRN_NUM = :atrnNum
+                """;
 }
 
 @Data
@@ -311,272 +225,11 @@ public class ReconFileDtlsDto {
     private String settlementStatus;
     private String remark;
 
-    public String getAtrnDtls(){
-        return getAtrnNum()+":"+getBankRefNumber();
-    }
-
-}
-
-@Data
-@AllArgsConstructor
-@NoArgsConstructor
-public class MerchantOrderPaymentDto implements Serializable {
-
-    private String mId;
-    private String orderRefNumber;
-    private String sbiOrderRefNumber;
-    private String atrnNum;
-    private BigDecimal debitAmt;
-    private BigDecimal orderAmount;
-    private PaymentStatus paymentStatus;
-    private TransactionStatus transactionStatus;
-    private Date paymentSuccessDate;
-}
-
-------++++++----
-@ExtendWith(MockitoExtension.class)
-class JavaReconciliationServiceTest {
-
-    @Mock
-    private MerchantOrderPaymentDao merchantOrderPaymentDao;
-
-    @Mock
-    private ReconFileDtlsDao reconFileDtlsDao;
-
-    @Mock
-    private ReconFileSummaryDao reconFileSummaryDao;
-
-    @Mock
-    private ReconResultProcessorService reconResultProcessorService;
-
-    @InjectMocks
-    private JavaReconciliationService reconciliationService;
-
-    @Test
-    void performRecon_shouldProcessMatchedAndUnmatchedAndDuplicateRecords() {
-        UUID rfsId = UUID.randomUUID();
-
-        // Prepare dummy ReconFileSummaryDto
-        ReconFileSummaryDto fileSummary = new ReconFileSummaryDto();
-        fileSummary.setRfsId(rfsId);
-        fileSummary.setReconStatus(Status.PENDING);
-
-        // Prepare Recon data
-        ReconFileDtlsDto matchedDto = ReconFileDtlsDto.builder()
-                .atrnNum("ATRN001")
-                .paymentAmount(new BigDecimal("100.00"))
-                .build();
-
-        ReconFileDtlsDto unmatchedDto = ReconFileDtlsDto.builder()
-                .atrnNum("ATRN002")
-                .paymentAmount(new BigDecimal("150.00"))
-                .build();
-
-        ReconFileDtlsDto duplicateDto1 = ReconFileDtlsDto.builder()
-                .atrnNum("ATRN003")
-                .paymentAmount(new BigDecimal("200.00"))
-                .build();
-
-        ReconFileDtlsDto duplicateDto2 = ReconFileDtlsDto.builder()
-                .atrnNum("ATRN003")
-                .paymentAmount(new BigDecimal("250.00"))
-                .build();
-
-        // All records from ReconFileDtls
-        List<ReconFileDtlsDto> reconList = List.of(matchedDto, unmatchedDto, duplicateDto1, duplicateDto2);
-
-        // System payment records
-        MerchantOrderPaymentDto matchedPayment = new MerchantOrderPaymentDto();
-        matchedPayment.setAtrnNum("ATRN001");
-        matchedPayment.setDebitAmt(new BigDecimal("100.00"));
-
-        MerchantOrderPaymentDto duplicatePayment = new MerchantOrderPaymentDto();
-        duplicatePayment.setAtrnNum("ATRN003");
-        duplicatePayment.setDebitAmt(new BigDecimal("200.00"));
-
-        List<MerchantOrderPaymentDto> paymentList = List.of(matchedPayment, duplicatePayment);
-
-        // Mocking
-        when(reconFileSummaryDao.findByFileSummaryId(rfsId)).thenReturn(fileSummary);
-        when(reconFileDtlsDao.getAllReconFileData(rfsId)).thenReturn(reconList);
-        when(merchantOrderPaymentDao.getMatchedData(rfsId)).thenReturn(paymentList);
-
-        doNothing().when(reconFileDtlsDao).updateReconStatus(anyString(), anyList());
-        doNothing().when(reconFileSummaryDao).save(any(ReconFileSummaryDto.class));
-        doNothing().when(reconResultProcessorService).reconStatusPublisher(any(ReconResultDto.class));
-
-        // Run
-        reconciliationService.performRecon(rfsId);
-
-        // Verify
-        verify(reconFileSummaryDao).findByFileSummaryId(rfsId);
-        verify(reconFileDtlsDao).getAllReconFileData(rfsId);
-        verify(merchantOrderPaymentDao).getMatchedData(rfsId);
-        verify(reconFileDtlsDao, atLeastOnce()).updateReconStatus(anyString(), anyList());
-        verify(reconFileSummaryDao).save(any(ReconFileSummaryDto.class));
-        verify(reconResultProcessorService).reconStatusPublisher(any(ReconResultDto.class));
-    }
-
-    @Test
-    void performRecon_shouldHandleExceptionAndUpdateStatusAsFail() {
-        UUID rfsId = UUID.randomUUID();
-        ReconFileSummaryDto summaryDto = new ReconFileSummaryDto();
-        summaryDto.setRfsId(rfsId);
-
-        when(reconFileSummaryDao.findByFileSummaryId(rfsId)).thenReturn(summaryDto);
-        when(reconFileDtlsDao.getAllReconFileData(rfsId)).thenThrow(new RuntimeException("DB failure"));
-
-        reconciliationService.performRecon(rfsId);
-
-        verify(reconFileSummaryDao).save(argThat(dto -> dto.getReconStatus() == Status.FAIL));
-    }
-}
-+++++++++++++++++++
-@Service
-@RequiredArgsConstructor
-public class DataSyncService {
-
-    private final LoggerUtility log = LoggerFactoryUtility.getLogger(this.getClass());
-
-    private final MerchantOrderPaymentMapper paymentMapper;
-    private final OrderMapper orderMapper;
-    private final ReconStatusUpdatePublisher reconStatusUpdateProducer;
-    private final MerchantOrderDao merchantOrderDao;
-    private final MerchantOrderPaymentDao merchantOrderPaymentDao;
-
-    @Value("${spring.jpa.properties.hibernate.jdbc.batch_size}")
-    private int batchSize;
-
     /**
-     * Syncing of data from view tables to Operation DB by Schedular and publishing the ATRN to
-     * the Transaction service for updating its status
+     * @return String in-format of [atrnNum]:[bankRefNumber]
      */
-    public void syncTransactionData() {
-        //Step 1. Syncing Data from OrderReconView to MerchantOrder Table
-        log.info("Syncing data to MerchantOrder table at : {}", System.currentTimeMillis());
-        syncOrderData();
-        //Step 2. Syncing Data from PaymentReconView to MerchantOrderPayment Table.
-        log.info("Syncing data to MerchantOrderPayment table at : {}", System.currentTimeMillis());
-        List<PaymentReconView> paymentReconViews = syncPaymentData();
-        //Step 3. Kafka producer for updating Transaction status
-        log.info("Kafka producer for updating Status  ");
-        statusProducer(paymentReconViews);
+    public String getAtrnDtls() {
+        return String.format("%s:%s:%s", getAtrnNum(), getBankRefNumber(),getRfsId());
     }
 
-    /**
-     * Syncing or data from OrderReconView to MerchantOrder Table
-     */
-    @Transactional
-    public void syncOrderData() {
-
-        log.info("Getting data from merchant order View ");
-        List<OrderReconView> allOrderViewData = merchantOrderDao.getAllOrderViewData();
-        List<Order> orders = orderMapper.toOrderList(allOrderViewData);
-        log.info("updating the Merchant order table");
-        merchantOrderDao.updateMerchantOrder(orders);
-    }
-
-    /**
-     * Syncing or data from OrderPaymentReconView to MerchantOrderPayment  Table
-     *
-     * @return List of PaymentReconView
-     */
-    @Transactional
-    public List<PaymentReconView> syncPaymentData() {
-        log.info("Getting data from merchant order payment View ");
-        List<PaymentReconView> allPaymentViewData = merchantOrderPaymentDao.getAllPaymentViewData();
-        List<MerchantOrderPayment> merchantPayments = paymentMapper.toPaymentList(allPaymentViewData);
-        log.info("updating the Merchant order payment table ");
-        merchantOrderPaymentDao.updateOrderPayment(merchantPayments);
-        return allPaymentViewData;
-    }
-
-    /**
-     * Publishing ATRN to Transaction service by Kafka
-     *
-     * @param paymentReconViews List of PaymentReconView
-     */
-    public void statusProducer(List<PaymentReconView> paymentReconViews) {
-        log.info("Publishing the ATRN ");
-        paymentReconViews.forEach(paymentReconView -> {
-            String atrnNumber = paymentReconView.getAtrnNum();
-            SettlementStatusDto settlementStatusDto = SettlementStatusDto.builder().status(SETTLED).atrn(atrnNumber).build();
-            reconStatusUpdateProducer.publish(UPDATE_STATUS, atrnNumber, settlementStatusDto);
-        });
-        log.info("Finished pushing ATRN to Transaction service");
-    }
-}
-
-@Component
-@RequiredArgsConstructor
-public class MerchantOrderPaymentDao {
-    private final PaymentReconViewRepository paymentViewRepo;
-    private final OrderPaymentRepository orderPaymentRepository;
-    private final MerchantOrderPaymentMapper orderPaymentMapper;
-
-    public List<PaymentReconView> getAllPaymentViewData() {
-        return paymentViewRepo.findAll();
-    }
-
-    public void updateOrderPayment(List<MerchantOrderPayment> orderPayments){
-        orderPaymentRepository.updateMerchantOrderPayment(orderPayments);
-    }
-
-    public List<MerchantOrderPaymentDto>  getMatchedData(UUID rfsId){
-         return orderPaymentMapper.toPaymentDtoList(orderPaymentRepository.getAllbyRfsId(rfsId));
-    }
-}
-
-
-@Mapper(builder = @Builder(disableBuilder = true), componentModel = "spring")
-public interface MerchantOrderPaymentMapper {
-    MerchantOrderPayment toPayment(PaymentReconView paymentReconView);
-
-    List<MerchantOrderPayment> toPaymentList(List<PaymentReconView> paymentReconViews);
-
-    MerchantOrderPaymentDto toPaymentDto(MerchantOrderPayment merchantOrderPayment);
-
-    List<MerchantOrderPaymentDto> toPaymentDtoList(List<MerchantOrderPayment> merchantOrderPayments);
-}
-
-@Component
-@RequiredArgsConstructor
-public class MerchantOrderPaymentDao {
-    private final PaymentReconViewRepository paymentViewRepo;
-    private final OrderPaymentRepository orderPaymentRepository;
-    private final MerchantOrderPaymentMapper orderPaymentMapper;
-
-    public List<PaymentReconView> getAllPaymentViewData() {
-        return paymentViewRepo.findAll();
-    }
-
-    public void updateOrderPayment(List<MerchantOrderPayment> orderPayments){
-        orderPaymentRepository.updateMerchantOrderPayment(orderPayments);
-    }
-
-    public List<MerchantOrderPaymentDto>  getMatchedData(UUID rfsId){
-         return orderPaymentMapper.toPaymentDtoList(orderPaymentRepository.getAllbyRfsId(rfsId));
-    }
-}
-
-@Component
-@RequiredArgsConstructor
-public class ReconStatusUpdatePublisher extends ReconProducer<SettlementStatusDto>{
-    private final LoggerUtility log = LoggerFactoryUtility.getLogger(this.getClass());
-    private final ObjectMapper objectMapper;
-
-    /**
-     * @param requestType String
-     * @param routingKey  String
-     * @param settlementStatusDto  SettlementStatusDto
-     */
-    @Override
-    public void publish(String requestType, String routingKey, SettlementStatusDto settlementStatusDto) {
-        try {
-            log.debug("Recon update Settlement for requestType : {}, routingKey : {} and value : {}", requestType, routingKey, settlementStatusDto);
-            kafkaMessagePublisher.publish(topics.getReconStatusUpdateTopic(), getRoutingKey("recon", requestType, routingKey), objectMapper.writeValueAsString(settlementStatusDto));
-        } catch (Exception e) {
-            log.error("Error in Recon Status update , SettlementStatusDto {}", settlementStatusDto, e.getMessage());
-        }
-    }
 }
