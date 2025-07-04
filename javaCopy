@@ -351,3 +351,255 @@ this is code in which i am first geting data from ReconFileDtls and MerchantOrde
 now i want to process all thes by SpringBatch. As a i know in Spring Batch step we have reader, processer and writer so i want to get data from the Db in Reader then process the record in Processer and then update the status of recorded data in writer.So that we i lonch the job this will call the step and that step will read , process and write . and we have to store these data in ReconResultDto as well because i need this Dto to other methods.
 
 
+--------------++-----
+@Configuration
+@RequiredArgsConstructor
+public class ReconciliationBatchConfig {
+
+    private final JobBuilderFactory jobBuilderFactory;
+    private final StepBuilderFactory stepBuilderFactory;
+    private final MerchantOrderPaymentDao merchantOrderPaymentDao;
+    private final ReconFileDtlsDao reconFileDtlsDao;
+    private final ReconFileSummaryDao reconFileSummaryDao;
+    private final ReconResultProcessorService reconResultProcessorService;
+    
+    private static final int CHUNK_SIZE = 20000;
+
+    @Bean
+    public Job reconciliationJob() {
+        return jobBuilderFactory.get("reconciliationJob")
+                .start(reconciliationStep())
+                .build();
+    }
+
+    @Bean
+    public Step reconciliationStep() {
+        return stepBuilderFactory.get("reconciliationStep")
+                .<ReconFileDtlsDto, ReconFileDtlsDto>chunk(CHUNK_SIZE)
+                .reader(reconciliationReader(null))
+                .processor(reconciliationProcessor())
+                .writer(reconciliationWriter())
+                .listener(reconciliationCompletionListener())
+                .build();
+    }
+
+    @Bean
+    @StepScope
+    public ItemReader<ReconFileDtlsDto> reconciliationReader(
+            @Value("#{jobParameters['rfsId']}") UUID rfsId) {
+        return new ReconciliationReader(rfsId, reconFileDtlsDao);
+    }
+
+    @Bean
+    public ItemProcessor<ReconFileDtlsDto, ReconFileDtlsDto> reconciliationProcessor() {
+        return new ReconciliationProcessor(merchantOrderPaymentDao);
+    }
+
+    @Bean
+    public ItemWriter<ReconFileDtlsDto> reconciliationWriter() {
+        return new ReconciliationWriter(reconFileDtlsDao);
+    }
+
+    @Bean
+    public StepExecutionListener reconciliationCompletionListener() {
+        return new ReconciliationCompletionListener(reconFileSummaryDao, reconResultProcessorService);
+    }
+}
+
+
+@RequiredArgsConstructor
+public class ReconciliationReader implements ItemReader<ReconFileDtlsDto> {
+
+    private final UUID rfsId;
+    private final ReconFileDtlsDao reconFileDtlsDao;
+    private Iterator<ReconFileDtlsDto> reconDataIterator;
+
+    @Override
+    public ReconFileDtlsDto read() throws Exception {
+        if (reconDataIterator == null) {
+            List<ReconFileDtlsDto> reconFileData = reconFileDtlsDao.getAllReconFileData(rfsId);
+            reconDataIterator = reconFileData.iterator();
+        }
+        
+        return reconDataIterator.hasNext() ? reconDataIterator.next() : null;
+    }
+}
+
+@RequiredArgsConstructor
+public class ReconciliationProcessor implements ItemProcessor<ReconFileDtlsDto, ReconFileDtlsDto> {
+
+    private final MerchantOrderPaymentDao merchantOrderPaymentDao;
+    private Map<String, MerchantOrderPaymentDto> systemPaymentMap;
+    private Map<String, List<ReconFileDtlsDto>> reconPaymentMap = new HashMap<>();
+    private ReconResultDto reconResultDto = new ReconResultDto();
+
+    @Override
+    public ReconFileDtlsDto process(ReconFileDtlsDto item) throws Exception {
+        // Initialize systemPaymentMap on first call
+        if (systemPaymentMap == null) {
+            systemPaymentMap = fetchMerchantPayments(item.getRfsId());
+        }
+        
+        // Group recon data by ATRN
+        reconPaymentMap.computeIfAbsent(item.getAtrnNum(), k -> new ArrayList<>()).add(item);
+        
+        // Return the item as we'll process all records in the completion listener
+        return item;
+    }
+
+    private Map<String, MerchantOrderPaymentDto> fetchMerchantPayments(UUID rfsId) {
+        List<MerchantOrderPaymentDto> payments = merchantOrderPaymentDao.getMatchedData(rfsId);
+        return payments.stream().collect(Collectors.toMap(
+            MerchantOrderPaymentDto::getAtrnNum, 
+            Function.identity(), 
+            (existing, replacement) -> existing
+        ));
+    }
+
+    public ReconResultDto getReconResult() {
+        // Process all records once reading is complete
+        reconPaymentMap.forEach((atrn, reconList) -> {
+            if (systemPaymentMap.containsKey(atrn)) {
+                processMatchingAtrn(reconList, systemPaymentMap.get(atrn));
+            } else {
+                reconResultDto.addUnmatched(reconList);
+            }
+        });
+        return reconResultDto;
+    }
+
+    private void processMatchingAtrn(List<ReconFileDtlsDto> reconFileDtlsList, MerchantOrderPaymentDto payment) {
+        if (reconFileDtlsList.size() > 1) {
+            boolean oneMatched = false;
+            for (ReconFileDtlsDto rfd : reconFileDtlsList) {
+                if (!oneMatched && rfd.getPaymentAmount().compareTo(payment.getDebitAmt()) == 0) {
+                    reconResultDto.addMatched(rfd);
+                    oneMatched = true;
+                } else {
+                    reconResultDto.addDuplicate(rfd);
+                }
+            }
+        } else if (reconFileDtlsList.size() == 1) {
+            if (reconFileDtlsList.get(0).getPaymentAmount().compareTo(payment.getDebitAmt()) == 0) {
+                reconResultDto.addMatched(reconFileDtlsList.get(0));
+            } else {
+                reconResultDto.addUnmatched(reconFileDtlsList);
+            }
+        }
+    }
+}
+
+@RequiredArgsConstructor
+public class ReconciliationWriter implements ItemWriter<ReconFileDtlsDto> {
+
+    private final ReconFileDtlsDao reconFileDtlsDao;
+
+    @Override
+    public void write(List<? extends ReconFileDtlsDto> items) throws Exception {
+        // This writer doesn't actually write items as we process them,
+        // but we need it for the chunk processing to work
+    }
+
+    public void updateReconStatuses(ReconResultDto result) {
+        batchUpdateStatus(result.getMatched(), "MATCHED");
+        batchUpdateStatus(result.getUnmatched(), "UNMATCHED");
+        batchUpdateStatus(result.getDuplicate(), "DUPLICATE");
+    }
+
+    private void batchUpdateStatus(List<ReconFileDtlsDto> list, String status) {
+        final int batchSize = 20000;
+        for (int i = 0; i < list.size(); i += batchSize) {
+            int end = Math.min(i + batchSize, list.size());
+            List<String> batchAtrns = list.subList(i, end).stream()
+                .map(ReconFileDtlsDto::getAtrnNum)
+                .collect(Collectors.toList());
+            reconFileDtlsDao.updateReconStatus(status, batchAtrns);
+        }
+    }
+}
+
+
+@RequiredArgsConstructor
+public class ReconciliationCompletionListener implements StepExecutionListener {
+
+    private final ReconFileSummaryDao reconFileSummaryDao;
+    private final ReconResultProcessorService reconResultProcessorService;
+    private ReconFileSummaryDto reconFileSummaryDto;
+
+    @Override
+    public void beforeStep(StepExecution stepExecution) {
+        JobParameters jobParameters = stepExecution.getJobParameters();
+        UUID rfsId = UUID.fromString(jobParameters.getString("rfsId"));
+        reconFileSummaryDto = reconFileSummaryDao.findByFileSummaryId(rfsId);
+    }
+
+    @Override
+    public ExitStatus afterStep(StepExecution stepExecution) {
+        ReconciliationProcessor processor = (ReconciliationProcessor) stepExecution.getStepExecution()
+            .getJobExecution()
+            .getExecutionContext()
+            .get("reconciliationProcessor");
+        
+        ReconciliationWriter writer = (ReconciliationWriter) stepExecution.getStepExecution()
+            .getJobExecution()
+            .getExecutionContext()
+            .get("reconciliationWriter");
+
+        try {
+            // Get the processed result
+            ReconResultDto reconResultDto = processor.getReconResult();
+            
+            // Update statuses
+            writer.updateReconStatuses(reconResultDto);
+            
+            // Update summary counts
+            updateReconSummaryCount(reconFileSummaryDto, reconResultDto);
+            
+            // Publish results
+            reconResultProcessorService.reconStatusPublisher(reconResultDto);
+            
+            return ExitStatus.COMPLETED;
+        } catch (Exception ex) {
+            reconFileSummaryDto.setReconStatus(Status.FAIL);
+            reconFileSummaryDao.save(reconFileSummaryDto);
+            return ExitStatus.FAILED;
+        }
+    }
+
+    private void updateReconSummaryCount(ReconFileSummaryDto reconFileSummaryDto, ReconResultDto reconResultDto) {
+        reconFileSummaryDto.setMatchedRecords(reconResultDto.getMatched().size());
+        reconFileSummaryDto.setUnmatchedRecords(reconResultDto.getUnmatched().size());
+        reconFileSummaryDto.setDuplicateRecords(reconResultDto.getDuplicate().size());
+        reconFileSummaryDao.save(reconFileSummaryDto);
+    }
+}
+
+@Service
+@RequiredArgsConstructor
+public class JavaReconciliationService {
+
+    private final JobLauncher jobLauncher;
+    private final Job reconciliationJob;
+    private final LoggerUtility log = LoggerFactoryUtility.getLogger(this.getClass());
+
+    public void performRecon(UUID rfsId) {
+        log.info("Starting Recon file process at: {}", System.currentTimeMillis());
+        
+        JobParameters jobParameters = new JobParametersBuilder()
+                .addString("rfsId", rfsId.toString())
+                .addLong("time", System.currentTimeMillis())
+                .toJobParameters();
+
+        try {
+            jobLauncher.run(reconciliationJob, jobParameters);
+            log.info("Recon file process completed at: {}", System.currentTimeMillis());
+        } catch (Exception ex) {
+            log.error("Error during recon process for rfsId {}: {}", rfsId, ex.getMessage(), ex);
+            throw new RuntimeException("Reconciliation job failed", ex);
+        }
+    }
+}
+
+
+
+
