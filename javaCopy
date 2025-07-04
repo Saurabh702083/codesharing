@@ -1,3 +1,85 @@
+@Data
+@Builder
+@AllArgsConstructor
+@NoArgsConstructor
+public class ReconFileSummaryDto {
+
+    private UUID rfsId;
+    private UUID rfcId;
+    private String sftpPath;
+    private String s3Path;
+    private String fileName;
+    private String bankCode;
+    private Long fileReceivedTime;
+    private Long fileUploadTime;
+    private BigDecimal totalAmount;
+    private Status parsingStatus;
+    private Integer totalRecords;
+    private Integer passedRecords;
+    private Integer failedRecords;
+    private Status reconStatus;
+    private Long reconTime;
+    private Status settlementStatus;
+    private Long settlementTime;
+    private String remark;
+    private Status fileUploadStatus;
+    private Integer matchedRecords;
+    private Integer unmatchedRecords;
+    private Integer duplicateRecords;
+}
+
+
+@Getter
+public  class ReconResultDto {
+    private final List<ReconFileDtlsDto> matched = new LinkedList<>();
+    private final List<ReconFileDtlsDto> duplicate = new LinkedList<>();
+    private final List<ReconFileDtlsDto> unmatched = new LinkedList<>();
+
+    public void addMatched(ReconFileDtlsDto record) {
+        matched.add(record);
+    }
+
+    public void addUnmatched(List<ReconFileDtlsDto> records) {
+        unmatched.addAll(records);
+    }
+
+    public void removeDuplicates(List<ReconFileDtlsDto> records) {
+        duplicate.removeAll(records);
+    }
+
+    public void addDuplicate(ReconFileDtlsDto record){
+        duplicate.add(record);
+    }
+}
+
+@Data
+@Builder
+@AllArgsConstructor
+@NoArgsConstructor
+public class ReconFileDtlsDto {
+
+    private UUID rfdId;
+    private UUID rfsId;
+    private int rowNumber;
+    private String recordType;
+    private String atrnNum;
+    private BigDecimal paymentAmount;
+    private Date paymentDate;
+    private String bankRefNumber;
+    private String paymentStatus;
+    private String reconStatus;
+    private String settlementStatus;
+    private String remark;
+
+    /**
+     * @return String in-format of [atrnNum]:[bankRefNumber]:[rfsId]
+     */
+    public String getAtrnDtls() {
+        return String.format("%s:%s:%s", getAtrnNum(), getBankRefNumber(),getRfsId());
+    }
+
+}
+
 @Service
 @RequiredArgsConstructor
 public class JavaReconciliationService {
@@ -150,12 +232,7 @@ public class ReconFileDtlsDao {
         reconFileDtlsRepository.saveAll(reconFileDtlsMapper.mapToEntityList(reconFileDtlsDtoList));
     }
 
-    /**
-     * This will update the ReconStatus
-     * @param status String
-     * @param atrnNums List of atrn
-     */
-    @Transactional
+   @Transactional
     public void updateReconStatus(String status, List<String> atrnNums) {
         fileDtlsRepository.updateReconStatus(status,atrnNums);
     }
@@ -163,13 +240,25 @@ public class ReconFileDtlsDao {
     public List<ReconFileDtlsDto> getAllReconFileData(UUID rfsId){
          return reconFileDtlsMapper.mapToDtoList(fileDtlsRepository.getAllByRfsId(rfsId));
     }
+}
 
-    public List<ReconStatusCountProjection> getReconStatusCount(UUID rfdId) {
-        return reconFileDtlsRepository.findReconStatusCountByRfsId(rfdId);
+@Component
+@RequiredArgsConstructor
+public class MerchantOrderPaymentDao {
+    private final PaymentReconViewRepository paymentViewRepo;
+    private final OrderPaymentRepository orderPaymentRepository;
+    private final MerchantOrderPaymentMapper orderPaymentMapper;
+
+    public List<PaymentReconView> getAllPaymentViewData() {
+        return paymentViewRepo.findAll();
     }
 
-    public List<ReconFileDtlsDto> getReconFileDataByRfsIdAndReconStatus(UUID rfsId, String reconStatus){
-        return reconFileDtlsMapper.mapToDtoList(reconFileDtlsRepository.findByRfsIdAndReconStatus(rfsId, reconStatus));
+    public void updateOrderPayment(List<MerchantOrderPayment> orderPayments){
+        orderPaymentRepository.updateMerchantOrderPayment(orderPayments);
+    }
+
+    public List<MerchantOrderPaymentDto>  getMatchedData(UUID rfsId){
+         return orderPaymentMapper.toPaymentDtoList(orderPaymentRepository.getAllbyRfsId(rfsId));
     }
 }
 
@@ -180,12 +269,7 @@ public class ReconFileRepository {
     private final NamedParameterJdbcTemplate jdbcTemplate;
     private final LoggerUtility log = LoggerFactoryUtility.getLogger(this.getClass());
 
-    /**
-     * This will update the ReconStatus
-     *
-     * @param status   String
-     * @param atrnNums List of atrn
-     */
+  
     @Transactional
     public void updateReconStatus(String status, List<String> atrnNums) {
 
@@ -194,9 +278,46 @@ public class ReconFileRepository {
 
         jdbcTemplate.batchUpdate(UPDATE_RECON_STATUS, batchParams);
     }
+    
+    public List<ReconFileDtls> getAllByRfsId(UUID rfsId) {
+        log.info("Getting data for {} rfsId.", rfsId);
+        MapSqlParameterSource params = new MapSqlParameterSource().addValue("rfsId", rfsId.toString());
+        return jdbcTemplate.query(GET_ALL_RECON_FILE_DTLS, params, new ReconFileDtlsRowMapper());
+
+    }
+}
+
+@Repository
+@RequiredArgsConstructor
+public class OrderPaymentRepository {
+    private final NamedParameterJdbcTemplate jdbcTemplate;
+    private final LoggerUtility log = LoggerFactoryUtility.getLogger(this.getClass());
+
+    public List<MerchantOrderPayment> getAllbyRfsId(UUID rfsId){
+        String sql = JdbcQuery.MATCHED_ORDER_PAYMENT_DATA;
+        MapSqlParameterSource param= new MapSqlParameterSource().addValue("rfsId",rfsId.toString());
+        return jdbcTemplate.query(sql,param,new BeanPropertyRowMapper<>(MerchantOrderPayment.class));
+    }
+}
 
 @UtilityClass
 public class JdbcQuery {
+
+    //Table Name
+    public static final String MERCHANT_ORDER_PAYMENTS = "MERCHANT_ORDER_PAYMENTS";
+    public static final String RECON_FILE_DTLS = "RECON_FILE_DTLS";
+    public static final String RECON_STATUS_STAGE = "RECON_STATUS_STAGE";
+
+    public static final String SELECT_YESTERDAY_BY_MILLIS_TEMPLATE = """
+        (SELECT * FROM %s
+         WHERE CREATED_DATE BETWEEN %d AND %d)
+        """;
+
+    public static String getYesterdayQuery(String table, long currentMillis) {
+        long oneDayBefore = currentMillis - 24 * 60 * 60 * 1000;
+        return String.format(SELECT_YESTERDAY_BY_MILLIS_TEMPLATE, table, oneDayBefore, currentMillis);
+    }
+
 
 
 public static final String UPDATE_RECON_STATUS="""
@@ -204,32 +325,29 @@ public static final String UPDATE_RECON_STATUS="""
                 SET rfd.RECON_STATUS = :status
                 WHERE rfd.ATRN_NUM = :atrnNum
                 """;
-}
 
-@Data
-@Builder
-@AllArgsConstructor
-@NoArgsConstructor
-public class ReconFileDtlsDto {
+public static final String MATCHED_ORDER_PAYMENT_DATA="""
+        SELECT m.*,r.RFS_ID FROM MERCHANT_ORDER_PAYMENTS m, RECON_FILE_DTLS r
+        WHERE m.ATRN_NUM=r.ATRN_NUM AND r.RFS_ID= HEXTORAW(REPLACE(:rfsId, '-', ''))
+        """;
 
-    private UUID rfdId;
-    private UUID rfsId;
-    private int rowNumber;
-    private String recordType;
-    private String atrnNum;
-    private BigDecimal paymentAmount;
-    private Date paymentDate;
-    private String bankRefNumber;
-    private String paymentStatus;
-    private String reconStatus;
-    private String settlementStatus;
-    private String remark;
+public static final String GET_ALL_RECON_FILE_DTLS=  "SELECT * FROM RECON_FILE_DTLS WHERE RFS_ID = HEXTORAW(REPLACE(:rfsId, '-', ''))";
 
-    /**
-     * @return String in-format of [atrnNum]:[bankRefNumber]
-     */
-    public String getAtrnDtls() {
-        return String.format("%s:%s:%s", getAtrnNum(), getBankRefNumber(),getRfsId());
+    public static String buildQueryForRecon(UUID rfsId) {
+        String hexUUID = rfsId.toString().replace("-", "").toUpperCase();
+        return String.format("(SELECT r.* FROM RECON_FILE_DTLS r WHERE r.RFS_ID = HEXTORAW('%s'))", hexUUID);
+    }
+
+    public static String buildQueryForTransaction(UUID rfsId){
+        String hexUUID = rfsId.toString().replace("-", "").toUpperCase();
+        return String.format("(SELECT m.* FROM MERCHANT_ORDER_PAYMENTS m, RECON_FILE_DTLS r WHERE r.ATRN_NUM = m.ATRN_NUM AND r.RFS_ID = HEXTORAW('%s'))", hexUUID);
     }
 
 }
+
+
+this is code in which i am first geting data from ReconFileDtls and MerchantOrderPayment Table from DB then based upon ATRN and rfsId i am storing the data to ReconResultDto. this ReconResultDto store the record of matched, unmatched and pulicate record. and then based upon this record i am update the status of there ATRN in reconFileDtls. now i am using this whole process with the help jdbc . and normal java to get the record.
+
+now i want to process all thes by SpringBatch. As a i know in Spring Batch step we have reader, processer and writer so i want to get data from the Db in Reader then process the record in Processer and then update the status of recorded data in writer.So that we i lonch the job this will call the step and that step will read , process and write . and we have to store these data in ReconResultDto as well because i need this Dto to other methods.
+
+
