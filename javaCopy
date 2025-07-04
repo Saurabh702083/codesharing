@@ -790,7 +790,86 @@ public class ReconciliationCompletionListener implements StepExecutionListener {
     private ReconFileSummaryDto reconFileSummaryDto;
 
     @Override
-    public void beforeStep(StepExecution stepExecution)
+    public void beforeStep(StepExecution stepExecution) {
+        JobParameters jobParameters = stepExecution.getJobParameters();
+        UUID rfsId = UUID.fromString(jobParameters.getString("rfsId"));
+        reconFileSummaryDto = reconFileSummaryDao.findByFileSummaryId(rfsId);
+    }
+
+    @Override
+    public ExitStatus afterStep(StepExecution stepExecution) {
+        StepExecution stepExecutionContext = stepExecution.getStepExecution();
+        
+        // Get processor and writer from step execution context
+        ReconciliationProcessor processor = (ReconciliationProcessor) stepExecutionContext
+            .getExecutionContext()
+            .get("reconciliationProcessor");
+        
+        ReconciliationWriter writer = (ReconciliationWriter) stepExecutionContext
+            .getExecutionContext()
+            .get("reconciliationWriter");
+
+        try {
+            // Get the processed result
+            ReconResultDto reconResultDto = processor.getReconResult();
+            
+            // Update statuses
+            writer.updateReconStatuses(reconResultDto);
+            
+            // Update summary counts
+            updateReconSummaryCount(reconFileSummaryDto, reconResultDto);
+            
+            // Publish results
+            reconResultProcessorService.reconStatusPublisher(reconResultDto);
+            
+            return ExitStatus.COMPLETED;
+        } catch (Exception ex) {
+            reconFileSummaryDto.setReconStatus(Status.FAIL);
+            reconFileSummaryDao.save(reconFileSummaryDto);
+            stepExecutionContext.addFailureException(ex);
+            return ExitStatus.FAILED;
+        }
+    }
+
+    private void updateReconSummaryCount(ReconFileSummaryDto reconFileSummaryDto, ReconResultDto reconResultDto) {
+        reconFileSummaryDto.setMatchedRecords(reconResultDto.getMatched().size());
+        reconFileSummaryDto.setUnmatchedRecords(reconResultDto.getUnmatched().size());
+        reconFileSummaryDto.setDuplicateRecords(reconResultDto.getDuplicate().size());
+        reconFileSummaryDao.save(reconFileSummaryDto);
+    }
+}
+
+@Service
+@RequiredArgsConstructor
+public class JavaReconciliationService {
+
+    private final JobLauncher jobLauncher;
+    private final Job reconciliationJob;
+    private final LoggerUtility log;
+
+    public void performRecon(UUID rfsId) {
+        log.info("Starting Recon file process at: {}", System.currentTimeMillis());
+        
+        JobParameters jobParameters = new JobParametersBuilder()
+                .addString("rfsId", rfsId.toString(), true) // make parameter identifying
+                .addLong("time", System.currentTimeMillis())
+                .toJobParameters();
+
+        try {
+            JobExecution jobExecution = jobLauncher.run(reconciliationJob, jobParameters);
+            
+            if (jobExecution.getExitStatus().equals(ExitStatus.FAILED)) {
+                throw new RuntimeException("Reconciliation job failed");
+            }
+            
+            log.info("Recon file process completed at: {}", System.currentTimeMillis());
+        } catch (Exception ex) {
+            log.error("Error during recon process for rfsId {}: {}", rfsId, ex.getMessage(), ex);
+            throw new RuntimeException("Reconciliation job failed", ex);
+        }
+    }
+}
+
 
 
 
