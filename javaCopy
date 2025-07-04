@@ -600,7 +600,197 @@ public class JavaReconciliationService {
     }
 }
 -----------------------------------------------------
+@Configuration
+@RequiredArgsConstructor
+public class ReconciliationBatchConfig {
 
+    private final JobRepository jobRepository;
+    private final PlatformTransactionManager transactionManager;
+    private final MerchantOrderPaymentDao merchantOrderPaymentDao;
+    private final ReconFileDtlsDao reconFileDtlsDao;
+    private final ReconFileSummaryDao reconFileSummaryDao;
+    private final ReconResultProcessorService reconResultProcessorService;
+    
+    private static final int CHUNK_SIZE = 20000;
+
+    @Bean
+    public Job reconciliationJob() {
+        return new JobBuilder("reconciliationJob", jobRepository)
+                .start(reconciliationStep())
+                .build();
+    }
+
+    @Bean
+    public Step reconciliationStep() {
+        return new StepBuilder("reconciliationStep", jobRepository)
+                .<ReconFileDtlsDto, ReconFileDtlsDto>chunk(CHUNK_SIZE, transactionManager)
+                .reader(reconciliationReader(null))
+                .processor(reconciliationProcessor())
+                .writer(reconciliationWriter())
+                .listener(reconciliationCompletionListener())
+                .build();
+    }
+
+    @Bean
+    @StepScope
+    public ItemReader<ReconFileDtlsDto> reconciliationReader(
+            @Value("#{jobParameters['rfsId']}") UUID rfsId) {
+        return new ReconciliationReader(rfsId, reconFileDtlsDao);
+    }
+
+    @Bean
+    @StepScope
+    public ItemProcessor<ReconFileDtlsDto, ReconFileDtlsDto> reconciliationProcessor() {
+        return new ReconciliationProcessor(merchantOrderPaymentDao);
+    }
+
+    @Bean
+    @StepScope
+    public ItemWriter<ReconFileDtlsDto> reconciliationWriter() {
+        return new ReconciliationWriter(reconFileDtlsDao);
+    }
+
+    @Bean
+    @StepScope
+    public StepExecutionListener reconciliationCompletionListener() {
+        return new ReconciliationCompletionListener(reconFileSummaryDao, reconResultProcessorService);
+    }
+}
+
+@RequiredArgsConstructor
+public class ReconciliationReader implements ItemReader<ReconFileDtlsDto> {
+
+    private final UUID rfsId;
+    private final ReconFileDtlsDao reconFileDtlsDao;
+    private Iterator<ReconFileDtlsDto> reconDataIterator;
+
+    @Override
+    public ReconFileDtlsDto read() throws Exception {
+        if (reconDataIterator == null) {
+            log.info("Fetching Recon data from ReconFileDtls for rfsId: {}", rfsId);
+            List<ReconFileDtlsDto> reconFileData = reconFileDtlsDao.getAllReconFileData(rfsId);
+            reconDataIterator = reconFileData.iterator();
+        }
+        
+        if (reconDataIterator.hasNext()) {
+            return reconDataIterator.next();
+        }
+        return null;
+    }
+}
+
+
+@RequiredArgsConstructor
+public class ReconciliationProcessor implements ItemProcessor<ReconFileDtlsDto, ReconFileDtlsDto> {
+
+    private final MerchantOrderPaymentDao merchantOrderPaymentDao;
+    private Map<String, MerchantOrderPaymentDto> systemPaymentMap;
+    private final Map<String, List<ReconFileDtlsDto>> reconPaymentMap = new HashMap<>();
+    private final ReconResultDto reconResultDto = new ReconResultDto();
+
+    @Override
+    public ReconFileDtlsDto process(ReconFileDtlsDto item) throws Exception {
+        // Initialize systemPaymentMap on first call
+        if (systemPaymentMap == null) {
+            log.info("Fetching matched ATRNs data from MerchantOrderPayment");
+            systemPaymentMap = fetchMerchantPayments(item.getRfsId());
+        }
+        
+        // Group recon data by ATRN
+        reconPaymentMap.computeIfAbsent(item.getAtrnNum(), k -> new ArrayList<>()).add(item);
+        
+        // Return the item as we'll process all records in the completion listener
+        return item;
+    }
+
+    private Map<String, MerchantOrderPaymentDto> fetchMerchantPayments(UUID rfsId) {
+        List<MerchantOrderPaymentDto> payments = merchantOrderPaymentDao.getMatchedData(rfsId);
+        return payments.stream().collect(Collectors.toMap(
+            MerchantOrderPaymentDto::getAtrnNum, 
+            Function.identity(), 
+            (existing, replacement) -> {
+                log.warn("Duplicate ATRN detected: {}", existing.getAtrnNum());
+                return existing;
+            }
+        ));
+    }
+
+    public ReconResultDto getReconResult() {
+        // Process all records once reading is complete
+        reconPaymentMap.forEach((atrn, reconList) -> {
+            if (systemPaymentMap.containsKey(atrn)) {
+                processMatchingAtrn(reconList, systemPaymentMap.get(atrn));
+            } else {
+                reconResultDto.addUnmatched(reconList);
+            }
+        });
+        return reconResultDto;
+    }
+
+    private void processMatchingAtrn(List<ReconFileDtlsDto> reconFileDtlsList, MerchantOrderPaymentDto payment) {
+        if (reconFileDtlsList.size() > 1) {
+            boolean oneMatched = false;
+            for (ReconFileDtlsDto rfd : reconFileDtlsList) {
+                if (!oneMatched && rfd.getPaymentAmount().compareTo(payment.getDebitAmt()) == 0) {
+                    reconResultDto.addMatched(rfd);
+                    oneMatched = true;
+                } else {
+                    reconResultDto.addDuplicate(rfd);
+                }
+            }
+        } else if (reconFileDtlsList.size() == 1) {
+            if (reconFileDtlsList.getFirst().getPaymentAmount().compareTo(payment.getDebitAmt()) == 0) {
+                reconResultDto.addMatched(reconFileDtlsList.getFirst());
+            } else {
+                reconResultDto.addUnmatched(reconFileDtlsList);
+            }
+        } else {
+            log.error("Invalid reconFileDtlsList: {} with blank size.", reconFileDtlsList);
+        }
+    }
+}
+
+
+@RequiredArgsConstructor
+public class ReconciliationWriter implements ItemWriter<ReconFileDtlsDto> {
+
+    private final ReconFileDtlsDao reconFileDtlsDao;
+
+    @Override
+    public void write(Chunk<? extends ReconFileDtlsDto> chunk) throws Exception {
+        // This writer doesn't actually write items as we process them,
+        // but we need it for the chunk processing to work
+    }
+
+    public void updateReconStatuses(ReconResultDto result) {
+        batchUpdateStatus(result.getMatched(), "MATCHED");
+        batchUpdateStatus(result.getUnmatched(), "UNMATCHED");
+        batchUpdateStatus(result.getDuplicate(), "DUPLICATE");
+    }
+
+    private void batchUpdateStatus(List<ReconFileDtlsDto> list, String status) {
+        final int batchSize = 20000;
+        for (int i = 0; i < list.size(); i += batchSize) {
+            int end = Math.min(i + batchSize, list.size());
+            List<String> batchAtrns = list.subList(i, end).stream()
+                .map(ReconFileDtlsDto::getAtrnNum)
+                .collect(Collectors.toList());
+            reconFileDtlsDao.updateReconStatus(status, batchAtrns);
+        }
+    }
+}
+
+
+
+@RequiredArgsConstructor
+public class ReconciliationCompletionListener implements StepExecutionListener {
+
+    private final ReconFileSummaryDao reconFileSummaryDao;
+    private final ReconResultProcessorService reconResultProcessorService;
+    private ReconFileSummaryDto reconFileSummaryDto;
+
+    @Override
+    public void beforeStep(StepExecution stepExecution)
 
 
 
