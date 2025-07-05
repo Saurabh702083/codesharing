@@ -1221,6 +1221,145 @@ public class JavaReconciliationService {
 }
 
 
+databaseChangeLog:
+  - changeSet:
+      id: 1
+      author: yourname
+      dbms: oracle
+      changes:
+        - sql:
+            sql: |
+              CREATE TABLE BATCH_JOB_INSTANCE (
+                JOB_INSTANCE_ID NUMBER(19,0) NOT NULL,
+                VERSION NUMBER(19,0) NOT NULL,
+                JOB_NAME VARCHAR2(100) NOT NULL,
+                JOB_KEY VARCHAR2(32) NOT NULL,
+                CONSTRAINT JOB_INST_UN UNIQUE (JOB_NAME, JOB_KEY),
+                CONSTRAINT JOB_INST_PK PRIMARY KEY (JOB_INSTANCE_ID)
+              );
+
+              CREATE TABLE BATCH_JOB_EXECUTION (
+                JOB_EXECUTION_ID NUMBER(19,0) NOT NULL,
+                VERSION NUMBER(19,0) NOT NULL,
+                JOB_INSTANCE_ID NUMBER(19,0) NOT NULL,
+                CREATE_TIME TIMESTAMP NOT NULL,
+                START_TIME TIMESTAMP,
+                END_TIME TIMESTAMP,
+                STATUS VARCHAR2(10),
+                EXIT_CODE VARCHAR2(2500),
+                EXIT_MESSAGE VARCHAR2(2500),
+                LAST_UPDATED TIMESTAMP,
+                CONSTRAINT JOB_EXEC_PK PRIMARY KEY (JOB_EXECUTION_ID),
+                CONSTRAINT JOB_INST_FK FOREIGN KEY (JOB_INSTANCE_ID) REFERENCES BATCH_JOB_INSTANCE(JOB_INSTANCE_ID)
+              );
+
+              CREATE TABLE BATCH_JOB_EXECUTION_PARAMS (
+                JOB_EXECUTION_ID NUMBER(19,0) NOT NULL,
+                TYPE_CD VARCHAR2(6) NOT NULL,
+                KEY_NAME VARCHAR2(100) NOT NULL,
+                STRING_VAL VARCHAR2(250),
+                DATE_VAL TIMESTAMP,
+                LONG_VAL NUMBER(19,0),
+                DOUBLE_VAL NUMBER,
+                CONSTRAINT JOB_EXEC_PARAMS_PK PRIMARY KEY (JOB_EXECUTION_ID, KEY_NAME),
+                CONSTRAINT JOB_EXEC_FK FOREIGN KEY (JOB_EXECUTION_ID) REFERENCES BATCH_JOB_EXECUTION(JOB_EXECUTION_ID)
+              );
+
+              CREATE TABLE BATCH_STEP_EXECUTION (
+                STEP_EXECUTION_ID NUMBER(19,0) NOT NULL,
+                VERSION NUMBER(19,0) NOT NULL,
+                STEP_NAME VARCHAR2(100) NOT NULL,
+                JOB_EXECUTION_ID NUMBER(19,0) NOT NULL,
+                CREATE_TIME TIMESTAMP NOT NULL,
+                START_TIME TIMESTAMP,
+                END_TIME TIMESTAMP,
+                STATUS VARCHAR2(10),
+                COMMIT_COUNT NUMBER(19,0),
+                READ_COUNT NUMBER(19,0),
+                FILTER_COUNT NUMBER(19,0),
+                WRITE_COUNT NUMBER(19,0),
+                READ_SKIP_COUNT NUMBER(19,0),
+                WRITE_SKIP_COUNT NUMBER(19,0),
+                PROCESS_SKIP_COUNT NUMBER(19,0),
+                ROLLBACK_COUNT NUMBER(19,0),
+                EXIT_CODE VARCHAR2(2500),
+                EXIT_MESSAGE VARCHAR2(2500),
+                LAST_UPDATED TIMESTAMP,
+                CONSTRAINT STEP_EXEC_PK PRIMARY KEY (STEP_EXECUTION_ID),
+                CONSTRAINT JOB_EXEC_FK2 FOREIGN KEY (JOB_EXECUTION_ID) REFERENCES BATCH_JOB_EXECUTION(JOB_EXECUTION_ID)
+              );
+
+              CREATE TABLE BATCH_STEP_EXECUTION_CONTEXT (
+                STEP_EXECUTION_ID NUMBER(19,0) NOT NULL,
+                SHORT_CONTEXT VARCHAR2(2500),
+                SERIALIZED_CONTEXT CLOB,
+                CONSTRAINT STEP_EXEC_CTX_PK PRIMARY KEY (STEP_EXECUTION_ID),
+                CONSTRAINT STEP_EXEC_FK FOREIGN KEY (STEP_EXECUTION_ID) REFERENCES BATCH_STEP_EXECUTION(STEP_EXECUTION_ID)
+              );
+
+              CREATE TABLE BATCH_JOB_EXECUTION_CONTEXT (
+                JOB_EXECUTION_ID NUMBER(19,0) NOT NULL,
+                SHORT_CONTEXT VARCHAR2(2500),
+                SERIALIZED_CONTEXT CLOB,
+                CONSTRAINT JOB_EXEC_CTX_PK PRIMARY KEY (JOB_EXECUTION_ID),
+                CONSTRAINT JOB_EXEC_CTX_FK FOREIGN KEY (JOB_EXECUTION_ID) REFERENCES BATCH_JOB_EXECUTION(JOB_EXECUTION_ID)
+              );
+
+              CREATE SEQUENCE BATCH_STEP_EXECUTION_SEQ START WITH 0 INCREMENT BY 1 NOMAXVALUE;
+              CREATE SEQUENCE BATCH_JOB_EXECUTION_SEQ START WITH 0 INCREMENT BY 1 NOMAXVALUE;
+              CREATE SEQUENCE BATCH_JOB_SEQ START WITH 0 INCREMENT BY 1 NOMAXVALUE;
+    ```
+
+- **Notes**:
+  - Use `NUMBER(19,0)` for BIGINT compatibility in Oracle.
+  - `VARCHAR2` is Oracle’s string type; adjust lengths as needed.
+  - `CLOB` is used for serialized context data, which is suitable for Oracle.
+  - The sequences are created to generate unique IDs, starting at 0 (a common practice in Spring Batch Oracle scripts).
+
+#### 3. **Integrate with Gradle and Liquibase**
+- **Update `build.gradle`**:
+  Ensure your Gradle file includes Liquibase and the Oracle JDBC driver:
+  ```gradle
+  plugins {
+      id 'org.springframework.boot' version '3.0.0'
+      id 'io.spring.dependency-management' version '1.1.0'
+      id 'java'
+      id 'org.liquibase.gradle' version '2.2.0'
+  }
+
+  group = 'your.group'
+  version = '0.0.1-SNAPSHOT'
+  sourceCompatibility = '21'
+
+  repositories {
+      mavenCentral()
+  }
+
+  dependencies {
+      implementation 'org.springframework.boot:spring-boot-starter-batch'
+      implementation 'org.springframework.boot:spring-boot-starter-jdbc'
+      runtimeOnly 'com.oracle.database.jdbc:ojdbc11' // Oracle JDBC driver
+      implementation 'org.liquibase:liquibase-core'
+      testImplementation 'org.springframework.boot:spring-boot-starter-test'
+      testImplementation 'org.springframework.batch:spring-batch-test'
+  }
+
+  tasks.named('test') {
+      useJUnitPlatform()
+  }
+
+  liquibase {
+      activities {
+          main {
+              driver 'oracle.jdbc.OracleDriver'
+              url 'jdbc:oracle:thin:@//localhost:1521/your_sid'
+              username 'your_username'
+              password 'your_password'
+              changeLogFile 'src/main/resources/db/changelog/db.changelog-master.yaml'
+          }
+      }
+  }
+
 
 
 
