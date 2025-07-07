@@ -1366,4 +1366,63 @@ org.springframework.jdbc.BadSqlGrammarException: PreparedStatementCallback; bad 
 ]
 
 
+@Repository
+public interface MerchantOrderPaymentRepository extends JpaRepository<MerchantOrderPayment, UUID> {
+    @Query(value =" SELECT m.*,r.RFS_ID FROM MERCHANT_ORDER_PAYMENTS m, RECON_FILE_DTLS r WHERE m.ATRN_NUM=r.ATRN_NUM AND r.RFS_ID= rfsId", nativeQuery = true)
+    List<MerchantOrderPayment> getAllData(@Param("rfsId")UUID rfsId);
+
+}
+
+@Data
+@Entity
+@Table(name = "MERCHANT_ORDER_PAYMENTS")
+@EqualsAndHashCode
+public class MerchantOrderPayment {
+  @Id private String atrnNum;
+
+  @Column(name = "MERCHANT_ID")
+  private String mId;
+
+  private String sbiOrderRefNumber;
+  private BigDecimal orderAmount;
+  private BigDecimal debitAmt;
+
+  @Enumerated(EnumType.STRING)
+  private PaymentStatus paymentStatus;
+
+  @Enumerated(EnumType.STRING)
+  private TransactionStatus transactionStatus;
+
+  private Date paymentSuccessDate;
+}
+
+@Data
+@Entity
+@Table(name = "RECON_FILE_DTLS")
+public class ReconFileDtls {
+
+  @Id
+  @GeneratedValue(strategy = GenerationType.UUID)
+  private UUID rfdId;
+
+  private UUID rfsId;
+  private int rowNumber;
+  private String recordType;
+  private String atrnNum;
+  private BigDecimal paymentAmount;
+  private Date paymentDate;
+  private String bankRefNumber;
+  private String paymentStatus;
+  private String reconStatus;
+  private String settlementStatus;
+  private String remark;
+
+}
+
+getting this error 
+org.springframework.dao.InvalidDataAccessResourceUsageException: JDBC exception executing SQL [ SELECT m.*,r.RFS_ID FROM MERCHANT_ORDER_PAYMENTS m, RECON_FILE_DTLS r WHERE m.ATRN_NUM=r.ATRN_NUM AND r.RFS_ID= rfsId ] [ORA-00904: "RFSID": invalid identifier
+
+https://docs.oracle.com/error-help/db/ora-00904/] [n/a]; SQL [n/a]
+
+
 
