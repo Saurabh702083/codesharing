@@ -1,98 +1,17 @@
-@Data
-@Builder
-@AllArgsConstructor
-@NoArgsConstructor
-public class ReconFileSummaryDto {
-
-    private UUID rfsId;
-    private UUID rfcId;
-    private String sftpPath;
-    private String s3Path;
-    private String fileName;
-    private String bankCode;
-    private Long fileReceivedTime;
-    private Long fileUploadTime;
-    private BigDecimal totalAmount;
-    private Status parsingStatus;
-    private Integer totalRecords;
-    private Integer passedRecords;
-    private Integer failedRecords;
-    private Status reconStatus;
-    private Long reconTime;
-    private Status settlementStatus;
-    private Long settlementTime;
-    private String remark;
-    private Status fileUploadStatus;
-    private Integer matchedRecords;
-    private Integer unmatchedRecords;
-    private Integer duplicateRecords;
-}
-
-
-@Getter
-public  class ReconResultDto {
-    private final List<ReconFileDtlsDto> matched = new LinkedList<>();
-    private final List<ReconFileDtlsDto> duplicate = new LinkedList<>();
-    private final List<ReconFileDtlsDto> unmatched = new LinkedList<>();
-
-    public void addMatched(ReconFileDtlsDto record) {
-        matched.add(record);
-    }
-
-    public void addUnmatched(List<ReconFileDtlsDto> records) {
-        unmatched.addAll(records);
-    }
-
-    public void removeDuplicates(List<ReconFileDtlsDto> records) {
-        duplicate.removeAll(records);
-    }
-
-    public void addDuplicate(ReconFileDtlsDto record){
-        duplicate.add(record);
-    }
-}
-
-@Data
-@Builder
-@AllArgsConstructor
-@NoArgsConstructor
-public class ReconFileDtlsDto {
-
-    private UUID rfdId;
-    private UUID rfsId;
-    private int rowNumber;
-    private String recordType;
-    private String atrnNum;
-    private BigDecimal paymentAmount;
-    private Date paymentDate;
-    private String bankRefNumber;
-    private String paymentStatus;
-    private String reconStatus;
-    private String settlementStatus;
-    private String remark;
-
-    /**
-     * @return String in-format of [atrnNum]:[bankRefNumber]:[rfsId]
-     */
-    public String getAtrnDtls() {
-        return String.format("%s:%s:%s", getAtrnNum(), getBankRefNumber(),getRfsId());
-    }
-
-}
-
+1).
 @Service
 @RequiredArgsConstructor
 public class JavaReconciliationService {
 
-    private static final int BATCH_SIZE = 20000;
+    private static final int BATCH_SIZE = 2000;
     private final LoggerUtility log = LoggerFactoryUtility.getLogger(this.getClass());
     private final MerchantOrderPaymentDao merchantOrderPaymentDao;
     private final ReconFileDtlsDao reconFileDtlsDao;
     private final ReconFileSummaryDao reconFileSummaryDao;
     private final ReconResultProcessorService reconResultProcessorService;
+    private final PayoutSchedulerDataDao payoutSchedulerDataDao;
 
     public void performRecon(UUID rfsId) {
-        ReconFileSummaryDto reconFileSummaryDto= reconFileSummaryDao.findByFileSummaryId(rfsId);
         log.info("Starting Recon file process at: {}", System.currentTimeMillis());
         try {
             // Step 1. Process Reconciliation to get Matched , Unmatched and Duplicate record.
@@ -100,15 +19,13 @@ public class JavaReconciliationService {
             // Step 2. Update ReconStatus in ReconFileDtls Table
             updateReconStatuses(reconResultDto);
             // Step 3. Update Matched , Unmatched and Duplicate count in ReconFileSummary table
-            updateReconSummaryCount(reconFileSummaryDto, reconResultDto);
             log.info("Recon file process completed at: {}", System.currentTimeMillis());
             log.info("Publishing Recon result for Transaction Service");
             // Step 4. Publish Matched record to Transaction Service
-            reconResultProcessorService.reconStatusPublisher(reconResultDto);
+            log.info("Updating recon details in PayoutScheduler table");
+
         } catch (Exception ex) {
             log.error("Error during recon process for rfsId {}: {}", rfsId, ex.getMessage(), ex);
-            reconFileSummaryDto.setReconStatus(Status.FAIL);
-            reconFileSummaryDao.save(reconFileSummaryDto);
         }
     }
 
@@ -172,7 +89,7 @@ public class JavaReconciliationService {
             //Step-2 Single record checking
         } else if (reconFileDtlsList.size() == 1) {
 
-            if (reconFileDtlsList.getFirst().getPaymentAmount().compareTo(payment.getDebitAmt()) == 0) {
+            if ((reconFileDtlsList.getFirst().getPaymentAmount().compareTo(payment.getDebitAmt()) == 0)) {
                 result.addMatched(reconFileDtlsList.getFirst());
             } else {
                 result.addUnmatched(reconFileDtlsList);
@@ -190,8 +107,6 @@ public class JavaReconciliationService {
         batchUpdateStatus(result.getDuplicate(), "DUPLICATE");
     }
 
-
-
     /**
      * * Updating Recon Status in batch.
      * *
@@ -201,22 +116,14 @@ public class JavaReconciliationService {
     // Batch to update Status
     @Transactional
     private void batchUpdateStatus(List<ReconFileDtlsDto> list, String status) {
-        final int batchSize = BATCH_SIZE;
-        for (int i = 0; i < list.size(); i += batchSize) {
-            int end = Math.min(i + batchSize, list.size());
-            List<String> batchAtrns = list.subList(i, end).stream().map(ReconFileDtlsDto::getAtrnNum).collect(Collectors.toList());
+        List<UUID> batchAtrns;
+        for (int i = 0; i < list.size(); i += BATCH_SIZE) {
+            int end = Math.min(i + BATCH_SIZE, list.size());
+            batchAtrns = list.subList(i, end).stream().map(ReconFileDtlsDto::getRfdId).toList();
             reconFileDtlsDao.updateReconStatus(status, batchAtrns);
         }
     }
-
-    private void updateReconSummaryCount(ReconFileSummaryDto reconFileSummaryDto, ReconResultDto reconResultDto) {
-        reconFileSummaryDto.setMatchedRecords(reconResultDto.getMatched().size());
-        reconFileSummaryDto.setUnmatchedRecords(reconResultDto.getUnmatched().size());
-        reconFileSummaryDto.setDuplicateRecords(reconResultDto.getDuplicate().size());
-        reconFileSummaryDao.save(reconFileSummaryDto);
-    }
 }
-
 
 @Component
 @RequiredArgsConstructor
@@ -227,19 +134,114 @@ public class ReconFileDtlsDao {
     private final ReconFileDtlsMapper reconFileDtlsMapper;
     private final ReconFileRepository fileDtlsRepository;
 
-    public void save(List<ReconFileDtlsDto> reconFileDtlsDtoList) {
 
-        reconFileDtlsRepository.saveAll(reconFileDtlsMapper.mapToEntityList(reconFileDtlsDtoList));
-    }
-
-   @Transactional
-    public void updateReconStatus(String status, List<String> atrnNums) {
-        fileDtlsRepository.updateReconStatus(status,atrnNums);
+    public void updateReconStatus(String status, List<UUID> listOfRfdId) {
+        fileDtlsRepository.updateReconStatus(status,listOfRfdId);
     }
 
     public List<ReconFileDtlsDto> getAllReconFileData(UUID rfsId){
          return reconFileDtlsMapper.mapToDtoList(fileDtlsRepository.getAllByRfsId(rfsId));
     }
+}
+
+@Repository
+@RequiredArgsConstructor
+public class ReconFileRepository {
+
+    private final LoggerUtility log = LoggerFactoryUtility.getLogger(this.getClass());
+    private final NamedParameterJdbcTemplate jdbcTemplate;
+
+    /**
+     * This will update the ReconStatus
+     *
+     * @param status   String
+     * @param listOfRfdId List of atrn
+     */
+    @Transactional
+    public void updateReconStatus(String status, List<UUID> listOfRfdId) {
+
+        log.info("Updating {} status.", status);
+        MapSqlParameterSource[] batchParams = listOfRfdId.stream().map(rfdId -> new MapSqlParameterSource().addValue("status", status).addValue("rfdId", rfdId.toString().replace("-", "").toUpperCase())).toArray(MapSqlParameterSource[]::new);
+
+        jdbcTemplate.batchUpdate(UPDATE_RECON_STATUS, batchParams);
+    }
+    /**
+     * Getting ReconFile data based upon rfsId.
+     *
+     * @param rfsId  UUID file I'd
+     */
+    public List<ReconFileDtls> getAllByRfsId(UUID rfsId) {
+        log.info("Getting data for {} rfsId.", rfsId);
+        MapSqlParameterSource params = new MapSqlParameterSource().addValue("rfsId", rfsId.toString());
+        return jdbcTemplate.query(GET_ALL_RECON_FILE_DTLS, params, new ReconFileDtlsRowMapper());
+
+    }
+}
+
+@UtilityClass
+public class JdbcQuery {
+
+    //Table Name
+    public static final String MERCHANT_ORDER_PAYMENTS = "MERCHANT_ORDER_PAYMENTS";
+    public static final String RECON_FILE_DTLS = "RECON_FILE_DTLS";
+    public static final String RECON_STATUS_STAGE = "RECON_STATUS_STAGE";
+
+    public static final String SELECT_YESTERDAY_BY_MILLIS_TEMPLATE = """
+        (SELECT * FROM %s
+         WHERE CREATED_DATE BETWEEN %d AND %d)
+        """;
+
+    public static String getYesterdayQuery(String table, long currentMillis) {
+        long oneDayBefore = currentMillis - 24 * 60 * 60 * 1000;
+        return String.format(SELECT_YESTERDAY_BY_MILLIS_TEMPLATE, table, oneDayBefore, currentMillis);
+    }
+
+    public static final String UPDATE_MERCHANT_ORDER="""
+                        INSERT INTO MERCHANT_ORDERS (
+                            SBI_ORDER_REF_NUMBER,
+                            ATRN_NUM,
+                            MULTI_ACCOUNTS
+                        ) VALUES (
+                            :SBI_ORDER_REF_NUMBER,
+                            :ATRN_NUM,
+                            :MULTI_ACCOUNTS
+                        )
+                    """;
+public static final String UPDATE_MERCHANT_PAYMENT= """
+                        INSERT INTO MERCHANT_ORDER_PAYMENTS (
+                            MERCHANT_ID,
+                            SBI_ORDER_REF_NUMBER,
+                            ATRN_NUM,
+                            ORDER_AMOUNT,
+                            DEBIT_AMT,
+                            TRANSACTION_STATUS,
+                            PAYMENT_STATUS,
+                            PAYMENT_SUCCESS_DATE
+                        ) VALUES (
+                            :MERCHANT_ID,
+                            :SBI_ORDER_REF_NUMBER,
+                            :ATRN_NUM,
+                            :ORDER_AMOUNT,
+                            :DEBIT_AMT,
+                            :TRANSACTION_STATUS,
+                            :PAYMENT_STATUS,
+                            :PAYMENT_SUCCESS_DATE
+                        )
+                    """;
+
+public static final String UPDATE_RECON_STATUS="""
+                UPDATE RECON_FILE_DTLS rfd
+                SET rfd.RECON_STATUS = :status
+                WHERE rfd.RFD_ID = :rfdId
+                """;
+
+public static final String MATCHED_ORDER_PAYMENT_DATA="""
+        SELECT m.*,r.RFS_ID FROM MERCHANT_ORDER_PAYMENTS m, RECON_FILE_DTLS r
+        WHERE m.ATRN_NUM=r.ATRN_NUM AND r.RFS_ID= HEXTORAW(REPLACE(:rfsId, '-', ''))
+        """;
+
+public static final String GET_ALL_RECON_FILE_DTLS=  "SELECT * FROM RECON_FILE_DTLS WHERE RFS_ID = HEXTORAW(REPLACE(:rfsId, '-', ''))";
+
 }
 
 @Component
@@ -264,1112 +266,37 @@ public class MerchantOrderPaymentDao {
 
 @Repository
 @RequiredArgsConstructor
-public class ReconFileRepository {
-
-    private final NamedParameterJdbcTemplate jdbcTemplate;
-    private final LoggerUtility log = LoggerFactoryUtility.getLogger(this.getClass());
-
-  
-    @Transactional
-    public void updateReconStatus(String status, List<String> atrnNums) {
-
-        log.info("Updating {} status.", status);
-        MapSqlParameterSource[] batchParams = atrnNums.stream().map(atrn -> new MapSqlParameterSource().addValue("status", status).addValue("atrnNum", atrn)).toArray(MapSqlParameterSource[]::new);
-
-        jdbcTemplate.batchUpdate(UPDATE_RECON_STATUS, batchParams);
-    }
-    
-    public List<ReconFileDtls> getAllByRfsId(UUID rfsId) {
-        log.info("Getting data for {} rfsId.", rfsId);
-        MapSqlParameterSource params = new MapSqlParameterSource().addValue("rfsId", rfsId.toString());
-        return jdbcTemplate.query(GET_ALL_RECON_FILE_DTLS, params, new ReconFileDtlsRowMapper());
-
-    }
-}
-
-@Repository
-@RequiredArgsConstructor
 public class OrderPaymentRepository {
     private final NamedParameterJdbcTemplate jdbcTemplate;
     private final LoggerUtility log = LoggerFactoryUtility.getLogger(this.getClass());
 
-    public List<MerchantOrderPayment> getAllbyRfsId(UUID rfsId){
+    public List<MerchantOrderPayment> getAllbyRfsId(UUID rfsId) {
         String sql = JdbcQuery.MATCHED_ORDER_PAYMENT_DATA;
         MapSqlParameterSource param= new MapSqlParameterSource().addValue("rfsId",rfsId.toString());
-        return jdbcTemplate.query(sql,param,new BeanPropertyRowMapper<>(MerchantOrderPayment.class));
+        return jdbcTemplate.query(sql, param, new BeanPropertyRowMapper<>(MerchantOrderPayment.class));
     }
 }
 
-@UtilityClass
-public class JdbcQuery {
-
-    //Table Name
-    public static final String MERCHANT_ORDER_PAYMENTS = "MERCHANT_ORDER_PAYMENTS";
-    public static final String RECON_FILE_DTLS = "RECON_FILE_DTLS";
-    public static final String RECON_STATUS_STAGE = "RECON_STATUS_STAGE";
-
-    public static final String SELECT_YESTERDAY_BY_MILLIS_TEMPLATE = """
-        (SELECT * FROM %s
-         WHERE CREATED_DATE BETWEEN %d AND %d)
-        """;
-
-    public static String getYesterdayQuery(String table, long currentMillis) {
-        long oneDayBefore = currentMillis - 24 * 60 * 60 * 1000;
-        return String.format(SELECT_YESTERDAY_BY_MILLIS_TEMPLATE, table, oneDayBefore, currentMillis);
-    }
-
-
-
-public static final String UPDATE_RECON_STATUS="""
-                UPDATE RECON_FILE_DTLS rfd
-                SET rfd.RECON_STATUS = :status
-                WHERE rfd.ATRN_NUM = :atrnNum
-                """;
-
-public static final String MATCHED_ORDER_PAYMENT_DATA="""
-        SELECT m.*,r.RFS_ID FROM MERCHANT_ORDER_PAYMENTS m, RECON_FILE_DTLS r
-        WHERE m.ATRN_NUM=r.ATRN_NUM AND r.RFS_ID= HEXTORAW(REPLACE(:rfsId, '-', ''))
-        """;
-
-public static final String GET_ALL_RECON_FILE_DTLS=  "SELECT * FROM RECON_FILE_DTLS WHERE RFS_ID = HEXTORAW(REPLACE(:rfsId, '-', ''))";
-
-    public static String buildQueryForRecon(UUID rfsId) {
-        String hexUUID = rfsId.toString().replace("-", "").toUpperCase();
-        return String.format("(SELECT r.* FROM RECON_FILE_DTLS r WHERE r.RFS_ID = HEXTORAW('%s'))", hexUUID);
-    }
-
-    public static String buildQueryForTransaction(UUID rfsId){
-        String hexUUID = rfsId.toString().replace("-", "").toUpperCase();
-        return String.format("(SELECT m.* FROM MERCHANT_ORDER_PAYMENTS m, RECON_FILE_DTLS r WHERE r.ATRN_NUM = m.ATRN_NUM AND r.RFS_ID = HEXTORAW('%s'))", hexUUID);
-    }
-
-}
-
-
-this is code in which i am first geting data from ReconFileDtls and MerchantOrderPayment Table from DB then based upon ATRN and rfsId i am storing the data to ReconResultDto. this ReconResultDto store the record of matched, unmatched and pulicate record. and then based upon this record i am update the status of there ATRN in reconFileDtls. now i am using this whole process with the help jdbc . and normal java to get the record.
-
-now i want to process all thes by SpringBatch. As a i know in Spring Batch step we have reader, processer and writer so i want to get data from the Db in Reader then process the record in Processer and then update the status of recorded data in writer.So that we i lonch the job this will call the step and that step will read , process and write . and we have to store these data in ReconResultDto as well because i need this Dto to other methods.
-
-
---------------++-----
-@Configuration
-@RequiredArgsConstructor
-public class ReconciliationBatchConfig {
-
-    private final JobBuilderFactory jobBuilderFactory;
-    private final StepBuilderFactory stepBuilderFactory;
-    private final MerchantOrderPaymentDao merchantOrderPaymentDao;
-    private final ReconFileDtlsDao reconFileDtlsDao;
-    private final ReconFileSummaryDao reconFileSummaryDao;
-    private final ReconResultProcessorService reconResultProcessorService;
-    
-    private static final int CHUNK_SIZE = 20000;
-
-    @Bean
-    public Job reconciliationJob() {
-        return jobBuilderFactory.get("reconciliationJob")
-                .start(reconciliationStep())
-                .build();
-    }
-
-    @Bean
-    public Step reconciliationStep() {
-        return stepBuilderFactory.get("reconciliationStep")
-                .<ReconFileDtlsDto, ReconFileDtlsDto>chunk(CHUNK_SIZE)
-                .reader(reconciliationReader(null))
-                .processor(reconciliationProcessor())
-                .writer(reconciliationWriter())
-                .listener(reconciliationCompletionListener())
-                .build();
-    }
-
-    @Bean
-    @StepScope
-    public ItemReader<ReconFileDtlsDto> reconciliationReader(
-            @Value("#{jobParameters['rfsId']}") UUID rfsId) {
-        return new ReconciliationReader(rfsId, reconFileDtlsDao);
-    }
-
-    @Bean
-    public ItemProcessor<ReconFileDtlsDto, ReconFileDtlsDto> reconciliationProcessor() {
-        return new ReconciliationProcessor(merchantOrderPaymentDao);
-    }
-
-    @Bean
-    public ItemWriter<ReconFileDtlsDto> reconciliationWriter() {
-        return new ReconciliationWriter(reconFileDtlsDao);
-    }
-
-    @Bean
-    public StepExecutionListener reconciliationCompletionListener() {
-        return new ReconciliationCompletionListener(reconFileSummaryDao, reconResultProcessorService);
-    }
-}
-
-
-@RequiredArgsConstructor
-public class ReconciliationReader implements ItemReader<ReconFileDtlsDto> {
-
-    private final UUID rfsId;
-    private final ReconFileDtlsDao reconFileDtlsDao;
-    private Iterator<ReconFileDtlsDto> reconDataIterator;
-
-    @Override
-    public ReconFileDtlsDto read() throws Exception {
-        if (reconDataIterator == null) {
-            List<ReconFileDtlsDto> reconFileData = reconFileDtlsDao.getAllReconFileData(rfsId);
-            reconDataIterator = reconFileData.iterator();
-        }
-        
-        return reconDataIterator.hasNext() ? reconDataIterator.next() : null;
-    }
-}
-
-@RequiredArgsConstructor
-public class ReconciliationProcessor implements ItemProcessor<ReconFileDtlsDto, ReconFileDtlsDto> {
-
-    private final MerchantOrderPaymentDao merchantOrderPaymentDao;
-    private Map<String, MerchantOrderPaymentDto> systemPaymentMap;
-    private Map<String, List<ReconFileDtlsDto>> reconPaymentMap = new HashMap<>();
-    private ReconResultDto reconResultDto = new ReconResultDto();
-
-    @Override
-    public ReconFileDtlsDto process(ReconFileDtlsDto item) throws Exception {
-        // Initialize systemPaymentMap on first call
-        if (systemPaymentMap == null) {
-            systemPaymentMap = fetchMerchantPayments(item.getRfsId());
-        }
-        
-        // Group recon data by ATRN
-        reconPaymentMap.computeIfAbsent(item.getAtrnNum(), k -> new ArrayList<>()).add(item);
-        
-        // Return the item as we'll process all records in the completion listener
-        return item;
-    }
-
-    private Map<String, MerchantOrderPaymentDto> fetchMerchantPayments(UUID rfsId) {
-        List<MerchantOrderPaymentDto> payments = merchantOrderPaymentDao.getMatchedData(rfsId);
-        return payments.stream().collect(Collectors.toMap(
-            MerchantOrderPaymentDto::getAtrnNum, 
-            Function.identity(), 
-            (existing, replacement) -> existing
-        ));
-    }
-
-    public ReconResultDto getReconResult() {
-        // Process all records once reading is complete
-        reconPaymentMap.forEach((atrn, reconList) -> {
-            if (systemPaymentMap.containsKey(atrn)) {
-                processMatchingAtrn(reconList, systemPaymentMap.get(atrn));
-            } else {
-                reconResultDto.addUnmatched(reconList);
-            }
-        });
-        return reconResultDto;
-    }
-
-    private void processMatchingAtrn(List<ReconFileDtlsDto> reconFileDtlsList, MerchantOrderPaymentDto payment) {
-        if (reconFileDtlsList.size() > 1) {
-            boolean oneMatched = false;
-            for (ReconFileDtlsDto rfd : reconFileDtlsList) {
-                if (!oneMatched && rfd.getPaymentAmount().compareTo(payment.getDebitAmt()) == 0) {
-                    reconResultDto.addMatched(rfd);
-                    oneMatched = true;
-                } else {
-                    reconResultDto.addDuplicate(rfd);
-                }
-            }
-        } else if (reconFileDtlsList.size() == 1) {
-            if (reconFileDtlsList.get(0).getPaymentAmount().compareTo(payment.getDebitAmt()) == 0) {
-                reconResultDto.addMatched(reconFileDtlsList.get(0));
-            } else {
-                reconResultDto.addUnmatched(reconFileDtlsList);
-            }
-        }
-    }
-}
-
-@RequiredArgsConstructor
-public class ReconciliationWriter implements ItemWriter<ReconFileDtlsDto> {
-
-    private final ReconFileDtlsDao reconFileDtlsDao;
-
-    @Override
-    public void write(List<? extends ReconFileDtlsDto> items) throws Exception {
-        // This writer doesn't actually write items as we process them,
-        // but we need it for the chunk processing to work
-    }
-
-    public void updateReconStatuses(ReconResultDto result) {
-        batchUpdateStatus(result.getMatched(), "MATCHED");
-        batchUpdateStatus(result.getUnmatched(), "UNMATCHED");
-        batchUpdateStatus(result.getDuplicate(), "DUPLICATE");
-    }
-
-    private void batchUpdateStatus(List<ReconFileDtlsDto> list, String status) {
-        final int batchSize = 20000;
-        for (int i = 0; i < list.size(); i += batchSize) {
-            int end = Math.min(i + batchSize, list.size());
-            List<String> batchAtrns = list.subList(i, end).stream()
-                .map(ReconFileDtlsDto::getAtrnNum)
-                .collect(Collectors.toList());
-            reconFileDtlsDao.updateReconStatus(status, batchAtrns);
-        }
-    }
-}
-
-
-@RequiredArgsConstructor
-public class ReconciliationCompletionListener implements StepExecutionListener {
-
-    private final ReconFileSummaryDao reconFileSummaryDao;
-    private final ReconResultProcessorService reconResultProcessorService;
-    private ReconFileSummaryDto reconFileSummaryDto;
-
-    @Override
-    public void beforeStep(StepExecution stepExecution) {
-        JobParameters jobParameters = stepExecution.getJobParameters();
-        UUID rfsId = UUID.fromString(jobParameters.getString("rfsId"));
-        reconFileSummaryDto = reconFileSummaryDao.findByFileSummaryId(rfsId);
-    }
-
-    @Override
-    public ExitStatus afterStep(StepExecution stepExecution) {
-        ReconciliationProcessor processor = (ReconciliationProcessor) stepExecution.getStepExecution()
-            .getJobExecution()
-            .getExecutionContext()
-            .get("reconciliationProcessor");
-        
-        ReconciliationWriter writer = (ReconciliationWriter) stepExecution.getStepExecution()
-            .getJobExecution()
-            .getExecutionContext()
-            .get("reconciliationWriter");
-
-        try {
-            // Get the processed result
-            ReconResultDto reconResultDto = processor.getReconResult();
-            
-            // Update statuses
-            writer.updateReconStatuses(reconResultDto);
-            
-            // Update summary counts
-            updateReconSummaryCount(reconFileSummaryDto, reconResultDto);
-            
-            // Publish results
-            reconResultProcessorService.reconStatusPublisher(reconResultDto);
-            
-            return ExitStatus.COMPLETED;
-        } catch (Exception ex) {
-            reconFileSummaryDto.setReconStatus(Status.FAIL);
-            reconFileSummaryDao.save(reconFileSummaryDto);
-            return ExitStatus.FAILED;
-        }
-    }
-
-    private void updateReconSummaryCount(ReconFileSummaryDto reconFileSummaryDto, ReconResultDto reconResultDto) {
-        reconFileSummaryDto.setMatchedRecords(reconResultDto.getMatched().size());
-        reconFileSummaryDto.setUnmatchedRecords(reconResultDto.getUnmatched().size());
-        reconFileSummaryDto.setDuplicateRecords(reconResultDto.getDuplicate().size());
-        reconFileSummaryDao.save(reconFileSummaryDto);
-    }
-}
-
-@Service
-@RequiredArgsConstructor
-public class JavaReconciliationService {
-
-    private final JobLauncher jobLauncher;
-    private final Job reconciliationJob;
-    private final LoggerUtility log = LoggerFactoryUtility.getLogger(this.getClass());
-
-    public void performRecon(UUID rfsId) {
-        log.info("Starting Recon file process at: {}", System.currentTimeMillis());
-        
-        JobParameters jobParameters = new JobParametersBuilder()
-                .addString("rfsId", rfsId.toString())
-                .addLong("time", System.currentTimeMillis())
-                .toJobParameters();
-
-        try {
-            jobLauncher.run(reconciliationJob, jobParameters);
-            log.info("Recon file process completed at: {}", System.currentTimeMillis());
-        } catch (Exception ex) {
-            log.error("Error during recon process for rfsId {}: {}", rfsId, ex.getMessage(), ex);
-            throw new RuntimeException("Reconciliation job failed", ex);
-        }
-    }
-}
------------------------------------------------------
-@Configuration
-@RequiredArgsConstructor
-public class ReconciliationBatchConfig {
-
-    private final JobRepository jobRepository;
-    private final PlatformTransactionManager transactionManager;
-    private final MerchantOrderPaymentDao merchantOrderPaymentDao;
-    private final ReconFileDtlsDao reconFileDtlsDao;
-    private final ReconFileSummaryDao reconFileSummaryDao;
-    private final ReconResultProcessorService reconResultProcessorService;
-    
-    private static final int CHUNK_SIZE = 20000;
-
-    @Bean
-    public Job reconciliationJob() {
-        return new JobBuilder("reconciliationJob", jobRepository)
-                .start(reconciliationStep())
-                .build();
-    }
-
-    @Bean
-    public Step reconciliationStep() {
-        return new StepBuilder("reconciliationStep", jobRepository)
-                .<ReconFileDtlsDto, ReconFileDtlsDto>chunk(CHUNK_SIZE, transactionManager)
-                .reader(reconciliationReader(null))
-                .processor(reconciliationProcessor())
-                .writer(reconciliationWriter())
-                .listener(reconciliationCompletionListener())
-                .build();
-    }
-
-    @Bean
-    @StepScope
-    public ItemReader<ReconFileDtlsDto> reconciliationReader(
-            @Value("#{jobParameters['rfsId']}") UUID rfsId) {
-        return new ReconciliationReader(rfsId, reconFileDtlsDao);
-    }
-
-    @Bean
-    @StepScope
-    public ItemProcessor<ReconFileDtlsDto, ReconFileDtlsDto> reconciliationProcessor() {
-        return new ReconciliationProcessor(merchantOrderPaymentDao);
-    }
-
-    @Bean
-    @StepScope
-    public ItemWriter<ReconFileDtlsDto> reconciliationWriter() {
-        return new ReconciliationWriter(reconFileDtlsDao);
-    }
-
-    @Bean
-    @StepScope
-    public StepExecutionListener reconciliationCompletionListener() {
-        return new ReconciliationCompletionListener(reconFileSummaryDao, reconResultProcessorService);
-    }
-}
-
-@RequiredArgsConstructor
-public class ReconciliationReader implements ItemReader<ReconFileDtlsDto> {
-
-    private final UUID rfsId;
-    private final ReconFileDtlsDao reconFileDtlsDao;
-    private Iterator<ReconFileDtlsDto> reconDataIterator;
-
-    @Override
-    public ReconFileDtlsDto read() throws Exception {
-        if (reconDataIterator == null) {
-            log.info("Fetching Recon data from ReconFileDtls for rfsId: {}", rfsId);
-            List<ReconFileDtlsDto> reconFileData = reconFileDtlsDao.getAllReconFileData(rfsId);
-            reconDataIterator = reconFileData.iterator();
-        }
-        
-        if (reconDataIterator.hasNext()) {
-            return reconDataIterator.next();
-        }
-        return null;
-    }
-}
-
-
-@RequiredArgsConstructor
-public class ReconciliationProcessor implements ItemProcessor<ReconFileDtlsDto, ReconFileDtlsDto> {
-
-    private final MerchantOrderPaymentDao merchantOrderPaymentDao;
-    private Map<String, MerchantOrderPaymentDto> systemPaymentMap;
-    private final Map<String, List<ReconFileDtlsDto>> reconPaymentMap = new HashMap<>();
-    private final ReconResultDto reconResultDto = new ReconResultDto();
-
-    @Override
-    public ReconFileDtlsDto process(ReconFileDtlsDto item) throws Exception {
-        // Initialize systemPaymentMap on first call
-        if (systemPaymentMap == null) {
-            log.info("Fetching matched ATRNs data from MerchantOrderPayment");
-            systemPaymentMap = fetchMerchantPayments(item.getRfsId());
-        }
-        
-        // Group recon data by ATRN
-        reconPaymentMap.computeIfAbsent(item.getAtrnNum(), k -> new ArrayList<>()).add(item);
-        
-        // Return the item as we'll process all records in the completion listener
-        return item;
-    }
-
-    private Map<String, MerchantOrderPaymentDto> fetchMerchantPayments(UUID rfsId) {
-        List<MerchantOrderPaymentDto> payments = merchantOrderPaymentDao.getMatchedData(rfsId);
-        return payments.stream().collect(Collectors.toMap(
-            MerchantOrderPaymentDto::getAtrnNum, 
-            Function.identity(), 
-            (existing, replacement) -> {
-                log.warn("Duplicate ATRN detected: {}", existing.getAtrnNum());
-                return existing;
-            }
-        ));
-    }
-
-    public ReconResultDto getReconResult() {
-        // Process all records once reading is complete
-        reconPaymentMap.forEach((atrn, reconList) -> {
-            if (systemPaymentMap.containsKey(atrn)) {
-                processMatchingAtrn(reconList, systemPaymentMap.get(atrn));
-            } else {
-                reconResultDto.addUnmatched(reconList);
-            }
-        });
-        return reconResultDto;
-    }
-
-    private void processMatchingAtrn(List<ReconFileDtlsDto> reconFileDtlsList, MerchantOrderPaymentDto payment) {
-        if (reconFileDtlsList.size() > 1) {
-            boolean oneMatched = false;
-            for (ReconFileDtlsDto rfd : reconFileDtlsList) {
-                if (!oneMatched && rfd.getPaymentAmount().compareTo(payment.getDebitAmt()) == 0) {
-                    reconResultDto.addMatched(rfd);
-                    oneMatched = true;
-                } else {
-                    reconResultDto.addDuplicate(rfd);
-                }
-            }
-        } else if (reconFileDtlsList.size() == 1) {
-            if (reconFileDtlsList.getFirst().getPaymentAmount().compareTo(payment.getDebitAmt()) == 0) {
-                reconResultDto.addMatched(reconFileDtlsList.getFirst());
-            } else {
-                reconResultDto.addUnmatched(reconFileDtlsList);
-            }
-        } else {
-            log.error("Invalid reconFileDtlsList: {} with blank size.", reconFileDtlsList);
-        }
-    }
-}
-
-
-@RequiredArgsConstructor
-public class ReconciliationWriter implements ItemWriter<ReconFileDtlsDto> {
-
-    private final ReconFileDtlsDao reconFileDtlsDao;
-
-    @Override
-    public void write(Chunk<? extends ReconFileDtlsDto> chunk) throws Exception {
-        // This writer doesn't actually write items as we process them,
-        // but we need it for the chunk processing to work
-    }
-
-    public void updateReconStatuses(ReconResultDto result) {
-        batchUpdateStatus(result.getMatched(), "MATCHED");
-        batchUpdateStatus(result.getUnmatched(), "UNMATCHED");
-        batchUpdateStatus(result.getDuplicate(), "DUPLICATE");
-    }
-
-    private void batchUpdateStatus(List<ReconFileDtlsDto> list, String status) {
-        final int batchSize = 20000;
-        for (int i = 0; i < list.size(); i += batchSize) {
-            int end = Math.min(i + batchSize, list.size());
-            List<String> batchAtrns = list.subList(i, end).stream()
-                .map(ReconFileDtlsDto::getAtrnNum)
-                .collect(Collectors.toList());
-            reconFileDtlsDao.updateReconStatus(status, batchAtrns);
-        }
-    }
-}
-
-
-
-@RequiredArgsConstructor
-public class ReconciliationCompletionListener implements StepExecutionListener {
-
-    private final ReconFileSummaryDao reconFileSummaryDao;
-    private final ReconResultProcessorService reconResultProcessorService;
-    private ReconFileSummaryDto reconFileSummaryDto;
-
-    @Override
-    public void beforeStep(StepExecution stepExecution) {
-        JobParameters jobParameters = stepExecution.getJobParameters();
-        UUID rfsId = UUID.fromString(jobParameters.getString("rfsId"));
-        reconFileSummaryDto = reconFileSummaryDao.findByFileSummaryId(rfsId);
-    }
-
-    @Override
-    public ExitStatus afterStep(StepExecution stepExecution) {
-        StepExecution stepExecutionContext = stepExecution.getStepExecution();
-        
-        // Get processor and writer from step execution context
-        ReconciliationProcessor processor = (ReconciliationProcessor) stepExecutionContext
-            .getExecutionContext()
-            .get("reconciliationProcessor");
-        
-        ReconciliationWriter writer = (ReconciliationWriter) stepExecutionContext
-            .getExecutionContext()
-            .get("reconciliationWriter");
-
-        try {
-            // Get the processed result
-            ReconResultDto reconResultDto = processor.getReconResult();
-            
-            // Update statuses
-            writer.updateReconStatuses(reconResultDto);
-            
-            // Update summary counts
-            updateReconSummaryCount(reconFileSummaryDto, reconResultDto);
-            
-            // Publish results
-            reconResultProcessorService.reconStatusPublisher(reconResultDto);
-            
-            return ExitStatus.COMPLETED;
-        } catch (Exception ex) {
-            reconFileSummaryDto.setReconStatus(Status.FAIL);
-            reconFileSummaryDao.save(reconFileSummaryDto);
-            stepExecutionContext.addFailureException(ex);
-            return ExitStatus.FAILED;
-        }
-    }
-
-    private void updateReconSummaryCount(ReconFileSummaryDto reconFileSummaryDto, ReconResultDto reconResultDto) {
-        reconFileSummaryDto.setMatchedRecords(reconResultDto.getMatched().size());
-        reconFileSummaryDto.setUnmatchedRecords(reconResultDto.getUnmatched().size());
-        reconFileSummaryDto.setDuplicateRecords(reconResultDto.getDuplicate().size());
-        reconFileSummaryDao.save(reconFileSummaryDto);
-    }
-}
-
-@Service
-@RequiredArgsConstructor
-public class JavaReconciliationService {
-
-    private final JobLauncher jobLauncher;
-    private final Job reconciliationJob;
-    private final LoggerUtility log;
-
-    public void performRecon(UUID rfsId) {
-        log.info("Starting Recon file process at: {}", System.currentTimeMillis());
-        
-        JobParameters jobParameters = new JobParametersBuilder()
-                .addString("rfsId", rfsId.toString(), true) // make parameter identifying
-                .addLong("time", System.currentTimeMillis())
-                .toJobParameters();
-
-        try {
-            JobExecution jobExecution = jobLauncher.run(reconciliationJob, jobParameters);
-            
-            if (jobExecution.getExitStatus().equals(ExitStatus.FAILED)) {
-                throw new RuntimeException("Reconciliation job failed");
-            }
-            
-            log.info("Recon file process completed at: {}", System.currentTimeMillis());
-        } catch (Exception ex) {
-            log.error("Error during recon process for rfsId {}: {}", rfsId, ex.getMessage(), ex);
-            throw new RuntimeException("Reconciliation job failed", ex);
-        }
-    }
-}
--------------------------------—----------------
-4/12
-import org.springframework.batch.core.Job;
-import org.springframework.batch.core.JobExecution;
-import org.springframework.batch.core.JobParametersBuilder;
-import org.springframework.batch.core.Step;
-import org.springframework.batch.core.configuration.annotation.EnableBatchProcessing;
-import org.springframework.batch.core.job.builder.JobBuilder;
-import org.springframework.batch.core.launch.JobLauncher;
-import org.springframework.batch.core.repository.JobRepository;
-import org.springframework.batch.core.step.builder.StepBuilder;
-import org.springframework.batch.item.ItemProcessor;
-import org.springframework.batch.item.ItemReader;
-import org.springframework.batch.item.ItemWriter;
-import org.springframework.batch.item.database.JdbcBatchItemWriter;
-import org.springframework.batch.item.database.JdbcCursorItemReader;
-import org.springframework.batch.item.support.SynchronizedItemStreamReader;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Configuration;
-import org.springframework.jdbc.core.BeanPropertyRowMapper;
-import org.springframework.transaction.PlatformTransactionManager;
-
-import javax.sql.DataSource;
-import java.util.*;
-
-@Configuration
-@EnableBatchProcessing
-public class ReconBatchConfig {
-
-    private final JobRepository jobRepository;
-    private final PlatformTransactionManager transactionManager;
-    private final DataSource dataSource;
-    private final ReconFileDtlsDao reconFileDtlsDao;
-    private final MerchantOrderPaymentDao merchantOrderPaymentDao;
-
-    @Autowired
-    public ReconBatchConfig(JobRepository jobRepository, PlatformTransactionManager transactionManager,
-                            DataSource dataSource, ReconFileDtlsDao reconFileDtlsDao,
-                            MerchantOrderPaymentDao merchantOrderPaymentDao) {
-        this.jobRepository = jobRepository;
-        this.transactionManager = transactionManager;
-        this.dataSource = dataSource;
-        this.reconFileDtlsDao = reconFileDtlsDao;
-        this.merchantOrderPaymentDao = merchantOrderPaymentDao;
-    }
-
-    // Reader: Fetch ReconFileDtlsDto records for the given rfsId
-    @Bean
-    @StepScope
-    public ItemReader<ReconFileDtlsDto> reconFileReader(@Value("#{jobParameters['rfsId']}") String rfsId) {
-        JdbcCursorItemReader<ReconFileDtlsDto> reader = new JdbcCursorItemReader<>();
-        reader.setDataSource(dataSource);
-        reader.setSql(JdbcQuery.GET_ALL_RECON_FILE_DTLS);
-        reader.setRowMapper(new BeanPropertyRowMapper<>(ReconFileDtlsDto.class));
-        reader.setPreparedStatementSetter(ps -> ps.setString(1, rfsId.replace("-", "")));
-        SynchronizedItemStreamReader<ReconFileDtlsDto> synchronizedReader = new SynchronizedItemStreamReader<>();
-        synchronizedReader.setDelegate(reader);
-        return synchronizedReader;
-    }
-
-    // Processor: Categorize records and accumulate in ReconResultDto
-    @Bean
-    @StepScope
-    public ItemProcessor<ReconFileDtlsDto, ReconFileDtlsDto> reconProcessor(
-            @Value("#{jobParameters['rfsId']}") String rfsId) {
-        return new ReconItemProcessor(rfsId, merchantOrderPaymentDao);
-    }
-
-    // Writer: Update statuses in ReconFileDtls table
-    @Bean
-    @StepScope
-    public ItemWriter<ReconFileDtlsDto> reconWriter() {
-        JdbcBatchItemWriter<ReconFileDtlsDto> writer = new JdbcBatchItemWriter<>();
-        writer.setDataSource(dataSource);
-        writer.setSql(JdbcQuery.UPDATE_RECON_STATUS);
-        writer.setItemPreparedStatementSetter((item, ps) -> {
-            ps.setString(1, item.getReconStatus());
-            ps.setString(2, item.getAtrnNum());
-        });
-        return writer;
-    }
-
-    // Step: Combine reader, processor, and writer
-    @Bean
-    public Step reconStep(ItemReader<ReconFileDtlsDto> reconFileReader,
-                         ItemProcessor<ReconFileDtlsDto, ReconFileDtlsDto> reconProcessor,
-                         ItemWriter<ReconFileDtlsDto> reconWriter,
-                         ReconResultHolder reconResultHolder) {
-        return new StepBuilder("reconStep", jobRepository)
-                .<ReconFileDtlsDto, ReconFileDtlsDto>chunk(20000, transactionManager) // Batch size
-                .reader(reconFileReader)
-                .processor(reconProcessor)
-                .writer(reconWriter)
-                .listener(reconResultHolder)
-                .build();
-    }
-
-    // Job: Define the reconciliation job
-    @Bean
-    public Job reconJob(Step reconStep) {
-        return new JobBuilder("reconJob", jobRepository)
-                .incrementer(new RunIdIncrementer())
-                .start(reconStep)
-                .build();
-    }
-
-    // Bean to hold ReconResultDto
-    @Bean
-    @StepScope
-    public ReconResultHolder reconResultHolder() {
-        return new ReconResultHolder();
-    }
-}
-
-import org.springframework.batch.item.ItemProcessor;
-
-import java.util.List;
-import java.util.Map;
-import java.util.UUID;
-import java.util.function.Function;
-import java.util.stream.Collectors;
-
-public class ReconItemProcessor implements ItemProcessor<ReconFileDtlsDto, ReconFileDtlsDto> {
-
-    private final ReconResultDto reconResultDto = new ReconResultDto();
-    private final Map<String, MerchantOrderPaymentDto> systemPaymentMap;
-    private final Map<String, List<ReconFileDtlsDto>> reconPaymentMap;
-
-    public ReconItemProcessor(String rfsId, MerchantOrderPaymentDao merchantOrderPaymentDao) {
-        // Fetch MerchantOrderPaymentDto data once during initialization
-        this.systemPaymentMap = merchantOrderPaymentDao.getMatchedData(UUID.fromString(rfsId))
-                .stream()
-                .collect(Collectors.toMap(MerchantOrderPaymentDto::getAtrnNum, Function.identity(),
-                        (existing, replacement) -> {
-                            // Log duplicate ATRN if needed
-                            System.out.println("Duplicate ATRN detected: " + existing.getAtrnNum());
-                            return existing;
-                        }));
-        // Initialize reconPaymentMap to group ReconFileDtlsDto by ATRN
-        this.reconPaymentMap = new HashMap<>();
-    }
-
-    @Override
-    public ReconFileDtlsDto process(ReconFileDtlsDto item) {
-        // Group ReconFileDtlsDto by ATRN
-        reconPaymentMap.computeIfAbsent(item.getAtrnNum(), k -> new ArrayList<>()).add(item);
-        return item; // Return item for writer
-    }
-
-    public ReconResultDto getReconResultDto() {
-        return reconResultDto;
-    }
-
-    public void categorizeRecords() {
-        reconPaymentMap.forEach((atrn, reconList) -> {
-            if (systemPaymentMap.containsKey(atrn)) {
-                processMatchingAtrn(reconList, systemPaymentMap.get(atrn));
-            } else {
-                reconResultDto.addUnmatched(reconList);
-                reconList.forEach(rfd -> rfd.setReconStatus("UNMATCHED"));
-            }
-        });
-    }
-
-    private void processMatchingAtrn(List<ReconFileDtlsDto> reconFileDtlsList, MerchantOrderPaymentDto payment) {
-        if (reconFileDtlsList.size() > 1) {
-            boolean oneMatched = false;
-            for (ReconFileDtlsDto rfd : reconFileDtlsList) {
-                if (!oneMatched && rfd.getPaymentAmount().compareTo(payment.getDebitAmt()) == 0) {
-                    reconResultDto.addMatched(rfd);
-                    rfd.setReconStatus("MATCHED");
-                    oneMatched = true;
-                } else {
-                    reconResultDto.addDuplicate(rfd);
-                    rfd.setReconStatus("DUPLICATE");
-                }
-            }
-        } else if (reconFileDtlsList.size() == 1) {
-            ReconFileDtlsDto rfd = reconFileDtlsList.get(0);
-            if (rfd.getPaymentAmount().compareTo(payment.getDebitAmt()) == 0) {
-                reconResultDto.addMatched(rfd);
-                rfd.setReconStatus("MATCHED");
-            } else {
-                reconResultDto.addUnmatched(reconFileDtlsList);
-                rfd.setReconStatus("UNMATCHED");
-            }
-        }
-    }
-}
-
-
-import org.springframework.batch.item.ItemProcessor;
-
-import java.util.List;
-import java.util.Map;
-import java.util.UUID;
-import java.util.function.Function;
-import java.util.stream.Collectors;
-
-public class ReconItemProcessor implements ItemProcessor<ReconFileDtlsDto, ReconFileDtlsDto> {
-
-    private final ReconResultDto reconResultDto = new ReconResultDto();
-    private final Map<String, MerchantOrderPaymentDto> systemPaymentMap;
-    private final Map<String, List<ReconFileDtlsDto>> reconPaymentMap;
-
-    public ReconItemProcessor(String rfsId, MerchantOrderPaymentDao merchantOrderPaymentDao) {
-        // Fetch MerchantOrderPaymentDto data once during initialization
-        this.systemPaymentMap = merchantOrderPaymentDao.getMatchedData(UUID.fromString(rfsId))
-                .stream()
-                .collect(Collectors.toMap(MerchantOrderPaymentDto::getAtrnNum, Function.identity(),
-                        (existing, replacement) -> {
-                            // Log duplicate ATRN if needed
-                            System.out.println("Duplicate ATRN detected: " + existing.getAtrnNum());
-                            return existing;
-                        }));
-        // Initialize reconPaymentMap to group ReconFileDtlsDto by ATRN
-        this.reconPaymentMap = new HashMap<>();
-    }
-
-    @Override
-    public ReconFileDtlsDto process(ReconFileDtlsDto item) {
-        // Group ReconFileDtlsDto by ATRN
-        reconPaymentMap.computeIfAbsent(item.getAtrnNum(), k -> new ArrayList<>()).add(item);
-        return item; // Return item for writer
-    }
-
-    public ReconResultDto getReconResultDto() {
-        return reconResultDto;
-    }
-
-    public void categorizeRecords() {
-        reconPaymentMap.forEach((atrn, reconList) -> {
-            if (systemPaymentMap.containsKey(atrn)) {
-                processMatchingAtrn(reconList, systemPaymentMap.get(atrn));
-            } else {
-                reconResultDto.addUnmatched(reconList);
-                reconList.forEach(rfd -> rfd.setReconStatus("UNMATCHED"));
-            }
-        });
-    }
-
-    private void processMatchingAtrn(List<ReconFileDtlsDto> reconFileDtlsList, MerchantOrderPaymentDto payment) {
-        if (reconFileDtlsList.size() > 1) {
-            boolean oneMatched = false;
-            for (ReconFileDtlsDto rfd : reconFileDtlsList) {
-                if (!oneMatched && rfd.getPaymentAmount().compareTo(payment.getDebitAmt()) == 0) {
-                    reconResultDto.addMatched(rfd);
-                    rfd.setReconStatus("MATCHED");
-                    oneMatched = true;
-                } else {
-                    reconResultDto.addDuplicate(rfd);
-                    rfd.setReconStatus("DUPLICATE");
-                }
-            }
-        } else if (reconFileDtlsList.size() == 1) {
-            ReconFileDtlsDto rfd = reconFileDtlsList.get(0);
-            if (rfd.getPaymentAmount().compareTo(payment.getDebitAmt()) == 0) {
-                reconResultDto.addMatched(rfd);
-                rfd.setReconStatus("MATCHED");
-            } else {
-                reconResultDto.addUnmatched(reconFileDtlsList);
-                rfd.setReconStatus("UNMATCHED");
-            }
-        }
-    }
-}
-
-
-import org.springframework.batch.core.StepExecution;
-import org.springframework.batch.core.annotation.AfterStep;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.stereotype.Component;
-
-@Component
-public class ReconResultHolder {
-
-    private ReconResultDto reconResultDto;
-
-    @Autowired
-    private ReconItemProcessor reconProcessor;
-
-    @AfterStep
-    public void afterStep(StepExecution stepExecution) {
-        // Finalize categorization after all records are processed
-        reconProcessor.categorizeRecords();
-        this.reconResultDto = reconProcessor.getReconResultDto();
-        // Store ReconResultDto in JobExecutionContext for later use
-        stepExecution.getJobExecution().getExecutionContext().put("reconResultDto", reconProcessor.getReconResultDto());
-    }
-
-    public ReconResultDto getReconResultDto() {
-        return reconResultDto;
-    }
-}
-
-
-import org.springframework.batch.core.Job;
-import org.springframework.batch.core.JobExecution;
-import org.springframework.batch.core.JobParameters;
-import org.springframework.batch.core.JobParametersBuilder;
-import org.springframework.batch.core.launch.JobLauncher;
-import org.springframework.stereotype.Service;
-
-@Service
-@RequiredArgsConstructor
-public class JavaReconciliationService {
-
-    private static final LoggerUtility log = LoggerFactoryUtility.getLogger(JavaReconciliationService.class);
-    private final JobLauncher jobLauncher;
-    private final Job reconJob;
-    private final ReconFileSummaryDao reconFileSummaryDao;
-    private final ReconResultProcessorService reconResultProcessorService;
-
-    public void performRecon(UUID rfsId) {
-        log.info("Starting Recon file process at: {}", System.currentTimeMillis());
-        ReconFileSummaryDto reconFileSummaryDto = reconFileSummaryDao.findByFileSummaryId(rfsId);
-        try {
-            // Launch the Spring Batch job
-            JobParameters params = new JobParametersBuilder()
-                    .addString("rfsId", rfsId.toString())
-                    .addLong("time", System.currentTimeMillis())
-                    .toJobParameters();
-            JobExecution jobExecution = jobLauncher.run(reconJob, params);
-
-            // Retrieve ReconResultDto from JobExecutionContext
-            ReconResultDto reconResultDto = (ReconResultDto) jobExecution.getExecutionContext().get("reconResultDto");
-
-            // Update ReconFileSummary with counts
-            updateReconSummaryCount(reconFileSummaryDto, reconResultDto);
-
-            log.info("Recon file process completed at: {}", System.currentTimeMillis());
-            log.info("Publishing Recon result for Transaction Service");
-            // Publish matched records
-            reconResultProcessorService.reconStatusPublisher(reconResultDto);
-        } catch (Exception ex) {
-            log.error("Error during recon process for rfsId {}: {}", rfsId, ex.getMessage(), ex);
-            reconFileSummaryDto.setReconStatus(Status.FAIL);
-            reconFileSummaryDao.save(reconFileSummaryDto);
-        }
-    }
-
-    private void updateReconSummaryCount(ReconFileSummaryDto reconFileSummaryDto, ReconResultDto reconResultDto) {
-        reconFileSummaryDto.setMatchedRecords(reconResultDto.getMatched().size());
-        reconFileSummaryDto.setUnmatchedRecords(reconResultDto.getUnmatched().size());
-        reconFileSummaryDto.setDuplicateRecords(reconResultDto.getDuplicate().size());
-        reconFileSummaryDao.save(reconFileSummaryDto);
-    }
-}
-
-
-databaseChangeLog:
-  - changeSet:
-      id: 1
-      author: yourname
-      dbms: oracle
-      changes:
-        - sql:
-            sql: |
-              CREATE TABLE BATCH_JOB_INSTANCE (
-                JOB_INSTANCE_ID NUMBER(19,0) NOT NULL,
-                VERSION NUMBER(19,0) NOT NULL,
-                JOB_NAME VARCHAR2(100) NOT NULL,
-                JOB_KEY VARCHAR2(32) NOT NULL,
-                CONSTRAINT JOB_INST_UN UNIQUE (JOB_NAME, JOB_KEY),
-                CONSTRAINT JOB_INST_PK PRIMARY KEY (JOB_INSTANCE_ID)
-              );
-
-              CREATE TABLE BATCH_JOB_EXECUTION (
-                JOB_EXECUTION_ID NUMBER(19,0) NOT NULL,
-                VERSION NUMBER(19,0) NOT NULL,
-                JOB_INSTANCE_ID NUMBER(19,0) NOT NULL,
-                CREATE_TIME TIMESTAMP NOT NULL,
-                START_TIME TIMESTAMP,
-                END_TIME TIMESTAMP,
-                STATUS VARCHAR2(10),
-                EXIT_CODE VARCHAR2(2500),
-                EXIT_MESSAGE VARCHAR2(2500),
-                LAST_UPDATED TIMESTAMP,
-                CONSTRAINT JOB_EXEC_PK PRIMARY KEY (JOB_EXECUTION_ID),
-                CONSTRAINT JOB_INST_FK FOREIGN KEY (JOB_INSTANCE_ID) REFERENCES BATCH_JOB_INSTANCE(JOB_INSTANCE_ID)
-              );
-
-              CREATE TABLE BATCH_JOB_EXECUTION_PARAMS (
-                JOB_EXECUTION_ID NUMBER(19,0) NOT NULL,
-                TYPE_CD VARCHAR2(6) NOT NULL,
-                KEY_NAME VARCHAR2(100) NOT NULL,
-                STRING_VAL VARCHAR2(250),
-                DATE_VAL TIMESTAMP,
-                LONG_VAL NUMBER(19,0),
-                DOUBLE_VAL NUMBER,
-                CONSTRAINT JOB_EXEC_PARAMS_PK PRIMARY KEY (JOB_EXECUTION_ID, KEY_NAME),
-                CONSTRAINT JOB_EXEC_FK FOREIGN KEY (JOB_EXECUTION_ID) REFERENCES BATCH_JOB_EXECUTION(JOB_EXECUTION_ID)
-              );
-
-              CREATE TABLE BATCH_STEP_EXECUTION (
-                STEP_EXECUTION_ID NUMBER(19,0) NOT NULL,
-                VERSION NUMBER(19,0) NOT NULL,
-                STEP_NAME VARCHAR2(100) NOT NULL,
-                JOB_EXECUTION_ID NUMBER(19,0) NOT NULL,
-                CREATE_TIME TIMESTAMP NOT NULL,
-                START_TIME TIMESTAMP,
-                END_TIME TIMESTAMP,
-                STATUS VARCHAR2(10),
-                COMMIT_COUNT NUMBER(19,0),
-                READ_COUNT NUMBER(19,0),
-                FILTER_COUNT NUMBER(19,0),
-                WRITE_COUNT NUMBER(19,0),
-                READ_SKIP_COUNT NUMBER(19,0),
-                WRITE_SKIP_COUNT NUMBER(19,0),
-                PROCESS_SKIP_COUNT NUMBER(19,0),
-                ROLLBACK_COUNT NUMBER(19,0),
-                EXIT_CODE VARCHAR2(2500),
-                EXIT_MESSAGE VARCHAR2(2500),
-                LAST_UPDATED TIMESTAMP,
-                CONSTRAINT STEP_EXEC_PK PRIMARY KEY (STEP_EXECUTION_ID),
-                CONSTRAINT JOB_EXEC_FK2 FOREIGN KEY (JOB_EXECUTION_ID) REFERENCES BATCH_JOB_EXECUTION(JOB_EXECUTION_ID)
-              );
-
-              CREATE TABLE BATCH_STEP_EXECUTION_CONTEXT (
-                STEP_EXECUTION_ID NUMBER(19,0) NOT NULL,
-                SHORT_CONTEXT VARCHAR2(2500),
-                SERIALIZED_CONTEXT CLOB,
-                CONSTRAINT STEP_EXEC_CTX_PK PRIMARY KEY (STEP_EXECUTION_ID),
-                CONSTRAINT STEP_EXEC_FK FOREIGN KEY (STEP_EXECUTION_ID) REFERENCES BATCH_STEP_EXECUTION(STEP_EXECUTION_ID)
-              );
-
-              CREATE TABLE BATCH_JOB_EXECUTION_CONTEXT (
-                JOB_EXECUTION_ID NUMBER(19,0) NOT NULL,
-                SHORT_CONTEXT VARCHAR2(2500),
-                SERIALIZED_CONTEXT CLOB,
-                CONSTRAINT JOB_EXEC_CTX_PK PRIMARY KEY (JOB_EXECUTION_ID),
-                CONSTRAINT JOB_EXEC_CTX_FK FOREIGN KEY (JOB_EXECUTION_ID) REFERENCES BATCH_JOB_EXECUTION(JOB_EXECUTION_ID)
-              );
-
-              CREATE SEQUENCE BATCH_STEP_EXECUTION_SEQ START WITH 0 INCREMENT BY 1 NOMAXVALUE;
-              CREATE SEQUENCE BATCH_JOB_EXECUTION_SEQ START WITH 0 INCREMENT BY 1 NOMAXVALUE;
-              CREATE SEQUENCE BATCH_JOB_SEQ START WITH 0 INCREMENT BY 1 NOMAXVALUE;
-    ```
-
-- **Notes**:
-  - Use `NUMBER(19,0)` for BIGINT compatibility in Oracle.
-  - `VARCHAR2` is Oracle’s string type; adjust lengths as needed.
-  - `CLOB` is used for serialized context data, which is suitable for Oracle.
-  - The sequences are created to generate unique IDs, starting at 0 (a common practice in Spring Batch Oracle scripts).
-
-#### 3. **Integrate with Gradle and Liquibase**
-- **Update `build.gradle`**:
-  Ensure your Gradle file includes Liquibase and the Oracle JDBC driver:
-  ```gradle
-  plugins {
-      id 'org.springframework.boot' version '3.0.0'
-      id 'io.spring.dependency-management' version '1.1.0'
-      id 'java'
-      id 'org.liquibase.gradle' version '2.2.0'
-  }
-
-  group = 'your.group'
-  version = '0.0.1-SNAPSHOT'
-  sourceCompatibility = '21'
-
-  repositories {
-      mavenCentral()
-  }
-
-  dependencies {
-      implementation 'org.springframework.boot:spring-boot-starter-batch'
-      implementation 'org.springframework.boot:spring-boot-starter-jdbc'
-      runtimeOnly 'com.oracle.database.jdbc:ojdbc11' // Oracle JDBC driver
-      implementation 'org.liquibase:liquibase-core'
-      testImplementation 'org.springframework.boot:spring-boot-starter-test'
-      testImplementation 'org.springframework.batch:spring-batch-test'
-  }
-
-  tasks.named('test') {
-      useJUnitPlatform()
-  }
-
-  liquibase {
-      activities {
-          main {
-              driver 'oracle.jdbc.OracleDriver'
-              url 'jdbc:oracle:thin:@//localhost:1521/your_sid'
-              username 'your_username'
-              password 'your_password'
-              changeLogFile 'src/main/resources/db/changelog/db.changelog-master.yaml'
-          }
-      }
-  }
-
-
-org.springframework.jdbc.BadSqlGrammarException: PreparedStatementCallback; bad SQL grammar [INSERT INTO BATCH_JOB_EXECUTION_PARAMS(JOB_EXECUTION_ID, PARAMETER_NAME, PARAMETER_TYPE, PARAMETER_VALUE, IDENTIFYING)
-	VALUES (?, ?, ?, ?, ?)
-]
-
-
-@Repository
-public interface MerchantOrderPaymentRepository extends JpaRepository<MerchantOrderPayment, UUID> {
-    @Query(value =" SELECT m.*,r.RFS_ID FROM MERCHANT_ORDER_PAYMENTS m, RECON_FILE_DTLS r WHERE m.ATRN_NUM=r.ATRN_NUM AND r.RFS_ID= rfsId", nativeQuery = true)
-    List<MerchantOrderPayment> getAllData(@Param("rfsId")UUID rfsId);
+@Data
+@Entity
+@Table(name = "RECON_FILE_DTLS")
+public class ReconFileDtls {
+
+  @Id
+  @GeneratedValue(strategy = GenerationType.UUID)
+  private UUID rfdId;
+
+  private UUID rfsId;
+  private int rowNumber;
+  private String recordType;
+  private String atrnNum;
+  private BigDecimal paymentAmount;
+  private Date paymentDate;
+  private String bankRefNumber;
+  private String paymentStatus;
+  private String reconStatus;
+  private String settlementStatus;
+  private String remark;
 
 }
 
@@ -1396,33 +323,110 @@ public class MerchantOrderPayment {
   private Date paymentSuccessDate;
 }
 
-@Data
-@Entity
-@Table(name = "RECON_FILE_DTLS")
-public class ReconFileDtls {
+@Getter
+public  class ReconResultDto {
+    private final List<ReconFileDtlsDto> matched = new LinkedList<>();
+    private final List<ReconFileDtlsDto> duplicate = new LinkedList<>();
+    private final List<ReconFileDtlsDto> unmatched = new LinkedList<>();
 
-  @Id
-  @GeneratedValue(strategy = GenerationType.UUID)
-  private UUID rfdId;
+    public void addMatched(ReconFileDtlsDto reconFileDtlsDto) {
+        matched.add(reconFileDtlsDto);
+    }
 
-  private UUID rfsId;
-  private int rowNumber;
-  private String recordType;
-  private String atrnNum;
-  private BigDecimal paymentAmount;
-  private Date paymentDate;
-  private String bankRefNumber;
-  private String paymentStatus;
-  private String reconStatus;
-  private String settlementStatus;
-  private String remark;
+    public void addUnmatched(List<ReconFileDtlsDto> reconFileDtlsDtos) {
+        unmatched.addAll(reconFileDtlsDtos);
+    }
 
+    public void removeDuplicates(List<ReconFileDtlsDto> reconFileDtlsDtos) {
+        duplicate.removeAll(reconFileDtlsDtos);
+    }
+
+    public void addDuplicate(ReconFileDtlsDto reconFileDtlsDto){
+        duplicate.add(reconFileDtlsDto);
+    }
+}
+------------------------------------------------------
+2).
+
+ @Transactional
+    private void batchUpdateStatus(List<ReconFileDtlsDto> list, String status) {
+        final int batchSize = BATCH_SIZE;
+        for (int i = 0; i < list.size(); i += batchSize) {
+            int end = Math.min(i + batchSize, list.size());
+            List<String> batchAtrns = list.subList(i, end).stream().map(ReconFileDtlsDto::getAtrnNum).collect(Collectors.toList());
+            reconFileDtlsDao.updateReconStatus(status, batchAtrns);
+        }
+    }
+
+@Component
+@RequiredArgsConstructor
+public class ReconFileDtlsDao {
+
+    private final LoggerUtility log = LoggerFactoryUtility.getLogger(this.getClass());
+    private final ReconFileDtlsRepository reconFileDtlsRepository;
+    private final ReconFileDtlsMapper reconFileDtlsMapper;
+    private final ReconFileRepository fileDtlsRepository;
+
+    public void save(List<ReconFileDtlsDto> reconFileDtlsDtoList) {
+
+        reconFileDtlsRepository.saveAll(reconFileDtlsMapper.mapToEntityList(reconFileDtlsDtoList));
+    }
+
+    /**
+     * This will update the ReconStatus
+     * @param status String
+     * @param atrnNums List of atrn
+     */
+    @Transactional
+    public void updateReconStatus(String status, List<String> atrnNums) {
+        fileDtlsRepository.updateReconStatus(status,atrnNums);
+    }
 }
 
-getting this error 
-org.springframework.dao.InvalidDataAccessResourceUsageException: JDBC exception executing SQL [ SELECT m.*,r.RFS_ID FROM MERCHANT_ORDER_PAYMENTS m, RECON_FILE_DTLS r WHERE m.ATRN_NUM=r.ATRN_NUM AND r.RFS_ID= rfsId ] [ORA-00904: "RFSID": invalid identifier
+@Repository
+@RequiredArgsConstructor
+public class ReconFileRepository {
 
-https://docs.oracle.com/error-help/db/ora-00904/] [n/a]; SQL [n/a]
+    private final NamedParameterJdbcTemplate jdbcTemplate;
+    private final LoggerUtility log = LoggerFactoryUtility.getLogger(this.getClass());
+
+    /**
+     * This will update the ReconStatus
+     *
+     * @param status   String
+     * @param atrnNums List of atrn
+     */
+    @Transactional
+    public void updateReconStatus(String status, List<String> atrnNums) {
+
+        log.info("Updating {} status.", status);
+        MapSqlParameterSource[] batchParams = atrnNums.stream().map(atrn -> new MapSqlParameterSource().addValue("status", status).addValue("atrnNum", atrn)).toArray(MapSqlParameterSource[]::new);
+
+        jdbcTemplate.batchUpdate(UPDATE_RECON_STATUS, batchParams);
+    }
+
+@UtilityClass
+public class JdbcQuery {
+
+    //Table Name
+    public static final String MERCHANT_ORDER_PAYMENTS = "MERCHANT_ORDER_PAYMENTS";
+    public static final String RECON_FILE_DTLS = "RECON_FILE_DTLS";
+    public static final String RECON_STATUS_STAGE = "RECON_STATUS_STAGE";
 
 
+public static final String UPDATE_RECON_STATUS="""
+                UPDATE RECON_FILE_DTLS rfd
+                SET rfd.RECON_STATUS = :status
+                WHERE rfd.ATRN_NUM = :atrnNum
+                """;
+}
+
+
+1st one is my full code for Reconciliation , I am geting data from reconFileDtls and MerchantOrderPayment table and then i do the reconcilliation process and then set the record into three record MATCHED, UNMATCHED, DUPLICATE.
+
+2nd one was my code from past. 
+
+but with my current code i am facing some issue , earlealy when i used to call  batchUpdateStatus(result.getMatched(), Status) it used to update the Status based upon the ATRN and it used to update my record for 100000 with in 1min 30sec. but now when i am calling batchUpdateStatus(result.getMatched(), Status) it updates status of the record by rfdId and here rfdId is my UUID and primery Key but this takes lots of time to update my record and some times when i run this service outcome doesnot comes and and my postman keeps on running .
+
+i dont know why this is happening , can you help me to solve this. 
 
