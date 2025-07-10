@@ -1,3 +1,26 @@
+import java.nio.ByteBuffer; // Add this import
+
+@Transactional
+public void updateReconStatus(String status, List<UUID> listOfRfdId) {
+    log.info("Updating {} status.", status);
+    MapSqlParameterSource[] batchParams = listOfRfdId.stream()
+        .map(rfdId -> {
+            // Convert UUID to byte array (16 bytes)
+            ByteBuffer bb = ByteBuffer.wrap(new byte[16]);
+            bb.putLong(rfdId.getMostSignificantBits());
+            bb.putLong(rfdId.getLeastSignificantBits());
+            byte[] uuidBytes = bb.array();
+            return new MapSqlParameterSource()
+                .addValue("status", status)
+                .addValue("rfdId", uuidBytes, Types.VARBINARY); // Use Types.VARBINARY for RAW
+        })
+        .toArray(MapSqlParameterSource[]::new);
+
+    jdbcTemplate.batchUpdate(UPDATE_RECON_STATUS, batchParams);
+}
+
+
+
 1).
 @Service
 @RequiredArgsConstructor
