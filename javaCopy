@@ -1,4 +1,5 @@
-@Data
+2025-07-15 14:44:28.969 ERROR | com.epay.reporting.exceptionhandlers.ReportingExceptionHandler:98 | principal=  | scenario=/api/reporting/v1/invoice/transaction/1000003 | operation=POST | correlation=6b336bfb-4c60-4cab-9e0b-a5f9214ef761 | handleDBException | Database exception occurred: PreparedStatementCallback; uncategorized SQLException for SQL [SELECT * FROM VIEW_TRANSACTION_MIS WHERE MERCHANT_ID = ?]; SQL state [99999]; error code [17004]; Invalid column type: getTimestamp not implemented for class oracle.jdbc.driver.T4CNumberAccessor
+
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
@@ -39,75 +40,41 @@ public class ViewTransactionMis {
     private BigDecimal customerGstBearableAbs;
     private String sbuStatusDescription;
     private long paymentSuccessDate;
-    private UUID rfsId;
+
 }
 
-@Data
-@Builder
-@NoArgsConstructor
-@AllArgsConstructor
-public class OrderReport {
-    private String transactionDate;
-    private String merchantOrderNumber;
-    private String customerId;
-    private String transactionCurrency;
-    private BigDecimal orderAmount;
-    private String sbiOrderRefNumber;
-    private String status;
-    private Integer attempts;
-    private String mId;
-}
-protected List<Object> convertToListOfObject(OrderReport orderReport) {
-        List<Object> objectList = new ArrayList<>();
-        objectList.add(StringUtils.isEmpty(orderReport.getTransactionDate()) ? StringUtils.EMPTY : orderReport.getTransactionDate());
-        objectList.add(StringUtils.isEmpty(orderReport.getMerchantOrderNumber()) ? StringUtils.EMPTY : orderReport.getMerchantOrderNumber());
-        objectList.add(StringUtils.isEmpty(orderReport.getCustomerId()) ? ReportingConstant.NOT_AVAILABLE : orderReport.getCustomerId());
-        objectList.add(StringUtils.isEmpty(orderReport.getTransactionCurrency()) ? StringUtils.EMPTY : orderReport.getTransactionCurrency());
-        objectList.add(ObjectUtils.isEmpty(orderReport.getOrderAmount()) ? StringUtils.EMPTY : orderReport.getOrderAmount());
-        objectList.add(StringUtils.isEmpty(orderReport.getSbiOrderRefNumber()) ? StringUtils.EMPTY : orderReport.getSbiOrderRefNumber());
-        objectList.add(StringUtils.isEmpty(orderReport.getStatus()) ? StringUtils.EMPTY : orderReport.getStatus());
-        objectList.add(ObjectUtils.isEmpty(orderReport.getAttempts()) ? StringUtils.EMPTY : orderReport.getAttempts());
-        return objectList;
-    }
-
-
---------
-protected List<Object> convertToListOfObject(ViewTransactionMis viewTransactionMis) {
-    List<Object> objectList = new ArrayList<>();
-    objectList.add(StringUtils.isEmpty(viewTransactionMis.getMerchantId()) ? StringUtils.EMPTY : viewTransactionMis.getMerchantId());
-    objectList.add(StringUtils.isEmpty(viewTransactionMis.getMerchantName()) ? StringUtils.EMPTY : viewTransactionMis.getMerchantName());
-    objectList.add(ObjectUtils.isEmpty(viewTransactionMis.getMerchantCategory()) ? StringUtils.EMPTY : viewTransactionMis.getMerchantCategory());
-    objectList.add(StringUtils.isEmpty(viewTransactionMis.getOrderRefNumber()) ? StringUtils.EMPTY : viewTransactionMis.getOrderRefNumber());
-    objectList.add(StringUtils.isEmpty(viewTransactionMis.getAtrnNum()) ? StringUtils.EMPTY : viewTransactionMis.getAtrnNum());
-    objectList.add(ObjectUtils.isEmpty(viewTransactionMis.getInstructionDateandTime()) ? StringUtils.EMPTY : viewTransactionMis.getInstructionDateandTime());
-    objectList.add(StringUtils.isEmpty(viewTransactionMis.getCurrencyCode()) ? StringUtils.EMPTY : viewTransactionMis.getCurrencyCode());
-    objectList.add(ObjectUtils.isEmpty(viewTransactionMis.getOrderAmount()) ? StringUtils.EMPTY : viewTransactionMis.getOrderAmount());
-    objectList.add(ObjectUtils.isEmpty(viewTransactionMis.getTotalFeeAbs()) ? StringUtils.EMPTY : viewTransactionMis.getTotalFeeAbs());
-    objectList.add(StringUtils.isEmpty(viewTransactionMis.getGstNumber()) ? StringUtils.EMPTY : viewTransactionMis.getGstNumber());
-    objectList.add(ObjectUtils.isEmpty(viewTransactionMis.getGatewayPostingAmount()) ? StringUtils.EMPTY : viewTransactionMis.getGatewayPostingAmount());
-    objectList.add(ObjectUtils.isEmpty(viewTransactionMis.getAmountSettled()) ? StringUtils.EMPTY : viewTransactionMis.getAmountSettled());
-    objectList.add(ObjectUtils.isEmpty(viewTransactionMis.getAvailableRefundAmount()) ? StringUtils.EMPTY : viewTransactionMis.getAvailableRefundAmount());
-    objectList.add(StringUtils.isEmpty(viewTransactionMis.getPayMode()) ? StringUtils.EMPTY : viewTransactionMis.getPayMode());
-    objectList.add(StringUtils.isEmpty(viewTransactionMis.getChannelBank()) ? StringUtils.EMPTY : viewTransactionMis.getChannelBank());
-    objectList.add(StringUtils.isEmpty(viewTransactionMis.getGatewayTraceNumber()) ? StringUtils.EMPTY : viewTransactionMis.getGatewayTraceNumber());
-    objectList.add(StringUtils.isEmpty(viewTransactionMis.getTransactionStatus()) ? StringUtils.EMPTY : viewTransactionMis.getTransactionStatus());
-    objectList.add(StringUtils.isEmpty(viewTransactionMis.getRemark()) ? StringUtils.EMPTY : viewTransactionMis.getRemark());
-    objectList.add(StringUtils.isEmpty(viewTransactionMis.getAccessMedium()) ? StringUtils.EMPTY : viewTransactionMis.getAccessMedium());
-    objectList.add(StringUtils.isEmpty(viewTransactionMis.getMerchantRiskCategory()) ? StringUtils.EMPTY : viewTransactionMis.getMerchantRiskCategory());
-    objectList.add(StringUtils.isEmpty(viewTransactionMis.getPayProcId()) ? StringUtils.EMPTY : viewTransactionMis.getPayProcId());
-    objectList.add(StringUtils.isEmpty(viewTransactionMis.getPayProcType()) ? StringUtils.EMPTY : viewTransactionMis.getPayProcType());
-    objectList.add(StringUtils.isEmpty(viewTransactionMis.getMerchantAuthorize()) ? StringUtils.EMPTY : viewTransactionMis.getMerchantAuthorize());
-    objectList.add(ObjectUtils.isEmpty(viewTransactionMis.getMerchantAuthorizeDate()) ? StringUtils.EMPTY : viewTransactionMis.getMerchantAuthorizeDate());
-    objectList.add(StringUtils.isEmpty(viewTransactionMis.getAutoSettlement()) ? StringUtils.EMPTY : viewTransactionMis.getAutoSettlement());
-    objectList.add(StringUtils.isEmpty(viewTransactionMis.getBearableEntity()) ? StringUtils.EMPTY : viewTransactionMis.getBearableEntity());
-    objectList.add(StringUtils.isEmpty(viewTransactionMis.getCin()) ? StringUtils.EMPTY : viewTransactionMis.getCin());
-    objectList.add(StringUtils.isEmpty(viewTransactionMis.getFailReason()) ? StringUtils.EMPTY : viewTransactionMis.getFailReason());
-    objectList.add(ObjectUtils.isEmpty(viewTransactionMis.getMerchantFeeBearableAbs()) ? StringUtils.EMPTY : viewTransactionMis.getMerchantFeeBearableAbs());
-    objectList.add(ObjectUtils.isEmpty(viewTransactionMis.getMerchantGstBearableAbs()) ? StringUtils.EMPTY : viewTransactionMis.getMerchantGstBearableAbs());
-    objectList.add(ObjectUtils.isEmpty(viewTransactionMis.getCustomerFeeBearableAbs()) ? StringUtils.EMPTY : viewTransactionMis.getCustomerFeeBearableAbs());
-    objectList.add(ObjectUtils.isEmpty(viewTransactionMis.getCustomerGstBearableAbs()) ? StringUtils.EMPTY : viewTransactionMis.getCustomerGstBearableAbs());
-    objectList.add(StringUtils.isEmpty(viewTransactionMis.getSbuStatusDescription()) ? StringUtils.EMPTY : viewTransactionMis.getSbuStatusDescription());
-    objectList.add(ObjectUtils.isEmpty(viewTransactionMis.getPaymentSuccessDate()) ? StringUtils.EMPTY : viewTransactionMis.getPaymentSuccessDate());
-    objectList.add(ObjectUtils.isEmpty(viewTransactionMis.getRfsId()) ? StringUtils.EMPTY : viewTransactionMis.getRfsId());
-    return objectList;
-}
+MERCHANT_ID	VARCHAR2(20)
+MERCHANT_NAME	VARCHAR2(100)
+MERCHANT_CATEGORY	CHAR()
+ORDER_REF_NUMBER	VARCHAR2(50)
+ATRN_NUM	VARCHAR2(50)
+INSTRUCTION_DATEAND_TIME	NUMBER
+CURRENCY_CODE	VARCHAR2(50)
+ORDER_AMOUNT	NUMBER(20,2)
+TOTAL_FEE_ABS	NUMBER(20,2)
+GST_NUMBER	VARCHAR2(20)
+GATEWAY_POSTING_AMOUNT	NUMBER
+AMOUNT_SETTLED	NUMBER(20,2)
+AVAILABLE_REFUND_AMOUNT	NUMBER(20,2)
+PAY_MODE	VARCHAR2(50)
+CHANNEL_BANK	VARCHAR2(100)
+GATEWAY_TRACE_NUMBER	CHAR()
+TRANSACTION_STATUS	VARCHAR2(50)
+REMARK	CHAR()
+MERCHANT_RISK_CATEGORY	CHAR()
+ACCESS_MEDIUM	CHAR()
+PAY_PROC_ID	VARCHAR2(20)
+PAY_PROC_TYPE	VARCHAR2(20)
+MERCHANT_AUTHORIZE	CHAR()
+MERCHANT_AUTHORIZE_DATE	NUMBER
+AUTO_SETTLEMENT	CHAR()
+BEARABLE_ENTITY	CHAR(1)
+CIN	VARCHAR2(50)
+FAIL_REASON	VARCHAR2(2000)
+MERCHANT_FEE_BEARABLE_ABS	NUMBER(20,2)
+MERCHANT_GST_BEARABLE_ABS	NUMBER(20,2)
+CUSTOMER_FEE_BEARABLE_ABS	NUMBER(20,2)
+CUSTOMER_GST_BEARABLE_ABS	NUMBER(20,2)
+SUB_STATUS_DESCRIPTION	CHAR()
+PAYMENT_SUCCESS_DATE	DATE
+RFS_ID	RAW
