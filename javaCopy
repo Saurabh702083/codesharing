@@ -42,4 +42,30 @@ public class ViewTransactionMis {
     private UUID rfsId;
 }
 
-i ne
+@Data
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
+public class OrderReport {
+    private String transactionDate;
+    private String merchantOrderNumber;
+    private String customerId;
+    private String transactionCurrency;
+    private BigDecimal orderAmount;
+    private String sbiOrderRefNumber;
+    private String status;
+    private Integer attempts;
+    private String mId;
+}
+protected List<Object> convertToListOfObject(OrderReport orderReport) {
+        List<Object> objectList = new ArrayList<>();
+        objectList.add(StringUtils.isEmpty(orderReport.getTransactionDate()) ? StringUtils.EMPTY : orderReport.getTransactionDate());
+        objectList.add(StringUtils.isEmpty(orderReport.getMerchantOrderNumber()) ? StringUtils.EMPTY : orderReport.getMerchantOrderNumber());
+        objectList.add(StringUtils.isEmpty(orderReport.getCustomerId()) ? ReportingConstant.NOT_AVAILABLE : orderReport.getCustomerId());
+        objectList.add(StringUtils.isEmpty(orderReport.getTransactionCurrency()) ? StringUtils.EMPTY : orderReport.getTransactionCurrency());
+        objectList.add(ObjectUtils.isEmpty(orderReport.getOrderAmount()) ? StringUtils.EMPTY : orderReport.getOrderAmount());
+        objectList.add(StringUtils.isEmpty(orderReport.getSbiOrderRefNumber()) ? StringUtils.EMPTY : orderReport.getSbiOrderRefNumber());
+        objectList.add(StringUtils.isEmpty(orderReport.getStatus()) ? StringUtils.EMPTY : orderReport.getStatus());
+        objectList.add(ObjectUtils.isEmpty(orderReport.getAttempts()) ? StringUtils.EMPTY : orderReport.getAttempts());
+        return objectList;
+    }
