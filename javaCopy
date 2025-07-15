@@ -69,3 +69,45 @@ protected List<Object> convertToListOfObject(OrderReport orderReport) {
         objectList.add(ObjectUtils.isEmpty(orderReport.getAttempts()) ? StringUtils.EMPTY : orderReport.getAttempts());
         return objectList;
     }
+
+
+--------
+protected List<Object> convertToListOfObject(ViewTransactionMis viewTransactionMis) {
+    List<Object> objectList = new ArrayList<>();
+    objectList.add(StringUtils.isEmpty(viewTransactionMis.getMerchantId()) ? StringUtils.EMPTY : viewTransactionMis.getMerchantId());
+    objectList.add(StringUtils.isEmpty(viewTransactionMis.getMerchantName()) ? StringUtils.EMPTY : viewTransactionMis.getMerchantName());
+    objectList.add(ObjectUtils.isEmpty(viewTransactionMis.getMerchantCategory()) ? StringUtils.EMPTY : viewTransactionMis.getMerchantCategory());
+    objectList.add(StringUtils.isEmpty(viewTransactionMis.getOrderRefNumber()) ? StringUtils.EMPTY : viewTransactionMis.getOrderRefNumber());
+    objectList.add(StringUtils.isEmpty(viewTransactionMis.getAtrnNum()) ? StringUtils.EMPTY : viewTransactionMis.getAtrnNum());
+    objectList.add(ObjectUtils.isEmpty(viewTransactionMis.getInstructionDateandTime()) ? StringUtils.EMPTY : viewTransactionMis.getInstructionDateandTime());
+    objectList.add(StringUtils.isEmpty(viewTransactionMis.getCurrencyCode()) ? StringUtils.EMPTY : viewTransactionMis.getCurrencyCode());
+    objectList.add(ObjectUtils.isEmpty(viewTransactionMis.getOrderAmount()) ? StringUtils.EMPTY : viewTransactionMis.getOrderAmount());
+    objectList.add(ObjectUtils.isEmpty(viewTransactionMis.getTotalFeeAbs()) ? StringUtils.EMPTY : viewTransactionMis.getTotalFeeAbs());
+    objectList.add(StringUtils.isEmpty(viewTransactionMis.getGstNumber()) ? StringUtils.EMPTY : viewTransactionMis.getGstNumber());
+    objectList.add(ObjectUtils.isEmpty(viewTransactionMis.getGatewayPostingAmount()) ? StringUtils.EMPTY : viewTransactionMis.getGatewayPostingAmount());
+    objectList.add(ObjectUtils.isEmpty(viewTransactionMis.getAmountSettled()) ? StringUtils.EMPTY : viewTransactionMis.getAmountSettled());
+    objectList.add(ObjectUtils.isEmpty(viewTransactionMis.getAvailableRefundAmount()) ? StringUtils.EMPTY : viewTransactionMis.getAvailableRefundAmount());
+    objectList.add(StringUtils.isEmpty(viewTransactionMis.getPayMode()) ? StringUtils.EMPTY : viewTransactionMis.getPayMode());
+    objectList.add(StringUtils.isEmpty(viewTransactionMis.getChannelBank()) ? StringUtils.EMPTY : viewTransactionMis.getChannelBank());
+    objectList.add(StringUtils.isEmpty(viewTransactionMis.getGatewayTraceNumber()) ? StringUtils.EMPTY : viewTransactionMis.getGatewayTraceNumber());
+    objectList.add(StringUtils.isEmpty(viewTransactionMis.getTransactionStatus()) ? StringUtils.EMPTY : viewTransactionMis.getTransactionStatus());
+    objectList.add(StringUtils.isEmpty(viewTransactionMis.getRemark()) ? StringUtils.EMPTY : viewTransactionMis.getRemark());
+    objectList.add(StringUtils.isEmpty(viewTransactionMis.getAccessMedium()) ? StringUtils.EMPTY : viewTransactionMis.getAccessMedium());
+    objectList.add(StringUtils.isEmpty(viewTransactionMis.getMerchantRiskCategory()) ? StringUtils.EMPTY : viewTransactionMis.getMerchantRiskCategory());
+    objectList.add(StringUtils.isEmpty(viewTransactionMis.getPayProcId()) ? StringUtils.EMPTY : viewTransactionMis.getPayProcId());
+    objectList.add(StringUtils.isEmpty(viewTransactionMis.getPayProcType()) ? StringUtils.EMPTY : viewTransactionMis.getPayProcType());
+    objectList.add(StringUtils.isEmpty(viewTransactionMis.getMerchantAuthorize()) ? StringUtils.EMPTY : viewTransactionMis.getMerchantAuthorize());
+    objectList.add(ObjectUtils.isEmpty(viewTransactionMis.getMerchantAuthorizeDate()) ? StringUtils.EMPTY : viewTransactionMis.getMerchantAuthorizeDate());
+    objectList.add(StringUtils.isEmpty(viewTransactionMis.getAutoSettlement()) ? StringUtils.EMPTY : viewTransactionMis.getAutoSettlement());
+    objectList.add(StringUtils.isEmpty(viewTransactionMis.getBearableEntity()) ? StringUtils.EMPTY : viewTransactionMis.getBearableEntity());
+    objectList.add(StringUtils.isEmpty(viewTransactionMis.getCin()) ? StringUtils.EMPTY : viewTransactionMis.getCin());
+    objectList.add(StringUtils.isEmpty(viewTransactionMis.getFailReason()) ? StringUtils.EMPTY : viewTransactionMis.getFailReason());
+    objectList.add(ObjectUtils.isEmpty(viewTransactionMis.getMerchantFeeBearableAbs()) ? StringUtils.EMPTY : viewTransactionMis.getMerchantFeeBearableAbs());
+    objectList.add(ObjectUtils.isEmpty(viewTransactionMis.getMerchantGstBearableAbs()) ? StringUtils.EMPTY : viewTransactionMis.getMerchantGstBearableAbs());
+    objectList.add(ObjectUtils.isEmpty(viewTransactionMis.getCustomerFeeBearableAbs()) ? StringUtils.EMPTY : viewTransactionMis.getCustomerFeeBearableAbs());
+    objectList.add(ObjectUtils.isEmpty(viewTransactionMis.getCustomerGstBearableAbs()) ? StringUtils.EMPTY : viewTransactionMis.getCustomerGstBearableAbs());
+    objectList.add(StringUtils.isEmpty(viewTransactionMis.getSbuStatusDescription()) ? StringUtils.EMPTY : viewTransactionMis.getSbuStatusDescription());
+    objectList.add(ObjectUtils.isEmpty(viewTransactionMis.getPaymentSuccessDate()) ? StringUtils.EMPTY : viewTransactionMis.getPaymentSuccessDate());
+    objectList.add(ObjectUtils.isEmpty(viewTransactionMis.getRfsId()) ? StringUtils.EMPTY : viewTransactionMis.getRfsId());
+    return objectList;
+}
