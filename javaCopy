@@ -194,3 +194,60 @@ CHANNEL_BANK	VARCHAR2(100)
 GATEWAY_TRACE_NUMBER	CHAR()
 PAY_MODE	VARCHAR2(50)
 GATEWAY_STATUS	CHAR()
+
+
+import lombok.AllArgsConstructor;
+import lombok.Builder;
+import lombok.Data;
+import lombok.NoArgsConstructor;
+import com.fasterxml.jackson.annotation.JsonInclude;
+
+import java.math.BigDecimal;
+
+@Data
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
+@JsonInclude(JsonInclude.Include.NON_NULL)
+public class Transaction {
+    private String merchantId; // VARCHAR2(20)
+    private Character merchantCategory; // CHAR()
+    private String merchantName; // VARCHAR2(100)
+    private String orderRefNumber; // VARCHAR2(50)
+    private String atrnNum; // VARCHAR2(50)
+    private String transactionDate; // VARCHAR2(19)
+    private BigDecimal orderAmount; // NUMBER(20,2)
+    private String currencyCode; // VARCHAR2(50)
+    private String transactionStatus; // VARCHAR2(50)
+    private String etlUploadDate; // CHAR()
+    private String etlStatus; // CHAR()
+    private String channelBank; // VARCHAR2(100)
+    private String gatewayTraceNumber; // CHAR()
+    private String payMode; // VARCHAR2(50)
+    private String gatewayStatus; // CHAR()
+}
+
+import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.ObjectUtils;
+import java.util.ArrayList;
+import java.util.List;
+
+protected List<Object> convertToListOfObject(Transaction transaction) {
+    List<Object> objectList = new ArrayList<>();
+    objectList.add(StringUtils.isEmpty(transaction.getMerchantId()) ? StringUtils.EMPTY : transaction.getMerchantId());
+    objectList.add(ObjectUtils.isEmpty(transaction.getMerchantCategory()) ? StringUtils.EMPTY : transaction.getMerchantCategory());
+    objectList.add(StringUtils.isEmpty(transaction.getMerchantName()) ? StringUtils.EMPTY : transaction.getMerchantName());
+    objectList.add(StringUtils.isEmpty(transaction.getOrderRefNumber()) ? StringUtils.EMPTY : transaction.getOrderRefNumber());
+    objectList.add(StringUtils.isEmpty(transaction.getAtrnNum()) ? StringUtils.EMPTY : transaction.getAtrnNum());
+    objectList.add(StringUtils.isEmpty(transaction.getTransactionDate()) ? StringUtils.EMPTY : transaction.getTransactionDate());
+    objectList.add(ObjectUtils.isEmpty(transaction.getOrderAmount()) ? StringUtils.EMPTY : transaction.getOrderAmount());
+    objectList.add(StringUtils.isEmpty(transaction.getCurrencyCode()) ? StringUtils.EMPTY : transaction.getCurrencyCode());
+    objectList.add(StringUtils.isEmpty(transaction.getTransactionStatus()) ? StringUtils.EMPTY : transaction.getTransactionStatus());
+    objectList.add(StringUtils.isEmpty(transaction.getEtlUploadDate()) ? StringUtils.EMPTY : transaction.getEtlUploadDate());
+    objectList.add(StringUtils.isEmpty(transaction.getEtlStatus()) ? StringUtils.EMPTY : transaction.getEtlStatus());
+    objectList.add(StringUtils.isEmpty(transaction.getChannelBank()) ? StringUtils.EMPTY : transaction.getChannelBank());
+    objectList.add(StringUtils.isEmpty(transaction.getGatewayTraceNumber()) ? StringUtils.EMPTY : transaction.getGatewayTraceNumber());
+    objectList.add(StringUtils.isEmpty(transaction.getPayMode()) ? StringUtils.EMPTY : transaction.getPayMode());
+    objectList.add(StringUtils.isEmpty(transaction.getGatewayStatus()) ? StringUtils.EMPTY : transaction.getGatewayStatus());
+    return objectList;
+}
