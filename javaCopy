@@ -102,3 +102,78 @@ OTHER_DETAILS	CLOB
 BEARABLE_ENTITY	CHAR(1)
 CIN	VARCHAR2(50)
 RFS_ID	RAW
+
+
+
+import lombok.AllArgsConstructor;
+import lombok.Builder;
+import lombok.Data;
+import lombok.NoArgsConstructor;
+import com.fasterxml.jackson.annotation.JsonInclude;
+
+import java.math.BigDecimal;
+import java.sql.Clob;
+import java.util.UUID;
+
+@Data
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
+@JsonInclude(JsonInclude.Include.NON_NULL)
+public class Settlement {
+    private String settlementFileNumber; // CHAR()
+    private String settlementTime; // VARCHAR2(19)
+    private String merchantId; // VARCHAR2(20)
+    private String merchantName; // VARCHAR2(100)
+    private String orderRefNumber; // VARCHAR2(50)
+    private String atrnNum; // VARCHAR2(50)
+    private String createdDate; // VARCHAR2(19)
+    private String currencyCode; // VARCHAR2(50)
+    private BigDecimal orderAmount; // NUMBER(20,2)
+    private String settlementCurrency; // VARCHAR2(50)
+    private BigDecimal settlementAmount; // NUMBER
+    private BigDecimal commissionPayable; // NUMBER
+    private BigDecimal merchantGstBearableAbs; // NUMBER(20,2)
+    private BigDecimal payoutAmount; // NUMBER
+    private String channelBank; // VARCHAR2(100)
+    private String gatewayTraceNumber; // CHAR()
+    private String payMode; // VARCHAR2(50)
+    private String payProcId; // VARCHAR2(20)
+    private String otherDetails; // CLOB
+    private Character bearableEntity; // CHAR(1)
+    private String cin; // VARCHAR2(50)
+    private UUID rfsId; // RAW
+}
+
+
+import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.ObjectUtils;
+import java.util.ArrayList;
+import java.util.List;
+
+protected List<Object> convertToListOfObject(Settlement settlement) {
+    List<Object> objectList = new ArrayList<>();
+    objectList.add(StringUtils.isEmpty(settlement.getSettlementFileNumber()) ? StringUtils.EMPTY : settlement.getSettlementFileNumber());
+    objectList.add(StringUtils.isEmpty(settlement.getSettlementTime()) ? StringUtils.EMPTY : settlement.getSettlementTime());
+    objectList.add(StringUtils.isEmpty(settlement.getMerchantId()) ? StringUtils.EMPTY : settlement.getMerchantId());
+    objectList.add(StringUtils.isEmpty(settlement.getMerchantName()) ? StringUtils.EMPTY : settlement.getMerchantName());
+    objectList.add(StringUtils.isEmpty(settlement.getOrderRefNumber()) ? StringUtils.EMPTY : settlement.getOrderRefNumber());
+    objectList.add(StringUtils.isEmpty(settlement.getAtrnNum()) ? StringUtils.EMPTY : settlement.getAtrnNum());
+    objectList.add(StringUtils.isEmpty(settlement.getCreatedDate()) ? StringUtils.EMPTY : settlement.getCreatedDate());
+    objectList.add(StringUtils.isEmpty(settlement.getCurrencyCode()) ? StringUtils.EMPTY : settlement.getCurrencyCode());
+    objectList.add(ObjectUtils.isEmpty(settlement.getOrderAmount()) ? StringUtils.EMPTY : settlement.getOrderAmount());
+    objectList.add(StringUtils.isEmpty(settlement.getSettlementCurrency()) ? StringUtils.EMPTY : settlement.getSettlementCurrency());
+    objectList.add(ObjectUtils.isEmpty(settlement.getSettlementAmount()) ? StringUtils.EMPTY : settlement.getSettlementAmount());
+    objectList.add(ObjectUtils.isEmpty(settlement.getCommissionPayable()) ? StringUtils.EMPTY : settlement.getCommissionPayable());
+    objectList.add(ObjectUtils.isEmpty(settlement.getMerchantGstBearableAbs()) ? StringUtils.EMPTY : settlement.getMerchantGstBearableAbs());
+    objectList.add(ObjectUtils.isEmpty(settlement.getPayoutAmount()) ? StringUtils.EMPTY : settlement.getPayoutAmount());
+    objectList.add(StringUtils.isEmpty(settlement.getChannelBank()) ? StringUtils.EMPTY : settlement.getChannelBank());
+    objectList.add(StringUtils.isEmpty(settlement.getGatewayTraceNumber()) ? StringUtils.EMPTY : settlement.getGatewayTraceNumber());
+    objectList.add(StringUtils.isEmpty(settlement.getPayMode()) ? StringUtils.EMPTY : settlement.getPayMode());
+    objectList.add(StringUtils.isEmpty(settlement.getPayProcId()) ? StringUtils.EMPTY : settlement.getPayProcId());
+    objectList.add(StringUtils.isEmpty(settlement.getOtherDetails()) ? StringUtils.EMPTY : settlement.getOtherDetails());
+    objectList.add(ObjectUtils.isEmpty(settlement.getBearableEntity()) ? StringUtils.EMPTY : settlement.getBearableEntity());
+    objectList.add(StringUtils.isEmpty(settlement.getCin()) ? StringUtils.EMPTY : settlement.getCin());
+    objectList.add(ObjectUtils.isEmpty(settlement.getRfsId()) ? StringUtils.EMPTY : settlement.getRfsId());
+    return objectList;
+}
