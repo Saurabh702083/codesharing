@@ -1,253 +1,224 @@
-2025-07-15 14:44:28.969 ERROR | com.epay.reporting.exceptionhandlers.ReportingExceptionHandler:98 | principal=  | scenario=/api/reporting/v1/invoice/transaction/1000003 | operation=POST | correlation=6b336bfb-4c60-4cab-9e0b-a5f9214ef761 | handleDBException | Database exception occurred: PreparedStatementCallback; uncategorized SQLException for SQL [SELECT * FROM VIEW_TRANSACTION_MIS WHERE MERCHANT_ID = ?]; SQL state [99999]; error code [17004]; Invalid column type: getTimestamp not implemented for class oracle.jdbc.driver.T4CNumberAccessor
-
-@Builder
-@NoArgsConstructor
+i am working in microService and i am using kafka to pass data from one service to anothe 
+Below is my Kafka publisher and ReportDto in my OperationService microservice. Operation service will produce ReportDto and other service named Report service will consume it.
+@Component
 @AllArgsConstructor
-@JsonInclude(JsonInclude.Include.NON_NULL)
-public class ViewTransactionMis {
+public class ReportGenerationPublisher {
 
-    private String merchantId;
-    private String merchantName;
-    private Character merchantCategory;
-    private String orderRefNumber;
-    private String atrnNum;
-    private long instructionDateandTime;
-    private  String currencyCode;
-    private BigDecimal orderAmount;
-    private BigDecimal totalFeeAbs;
-    private String gstNumber;
-    private Integer gatewayPostingAmount;
-    private BigDecimal amountSettled;
-    private BigDecimal availableRefundAmount;
-    private String payMode;
-    private String channelBank;
-    private String gatewayTraceNumber;
-    private String transactionStatus;
-    private String remark;
-    private String accessMedium;
-    private String merchantRiskCategory;
-    private String payProcId;
-    private String payProcType;
-    private String merchantAuthorize;
-    private Date merchantAuthorizeDate;
-    private String autoSettlement;
-    private String bearableEntity;
-    private String cin;
-    private String failReason;
-    private BigDecimal merchantFeeBearableAbs;
-    private BigDecimal merchantGstBearableAbs;
-    private BigDecimal customerFeeBearableAbs;
-    private BigDecimal customerGstBearableAbs;
-    private String sbuStatusDescription;
-    private long paymentSuccessDate;
+    private final LoggerUtility log = LoggerFactoryUtility.getLogger(this.getClass());
+    private final KafkaMessagePublisher kafkaMessagePublisher;
+    private final Topics topics;
 
+
+    /**
+     * @param requestType     String
+     * @param routingKey      String
+     * @param reportDto       ReportDto
+     */
+    public void publish(String requestType, String routingKey, ReportDto reportDto) {
+        try {
+            log.debug("duplicateTransaction for requestType : {}, routingKey : {} and value : {}", requestType, routingKey, reportDto.toString());
+            String kafkaRoutingKey = getKafkaRoutingKey(requestType, requestType, routingKey);
+            kafkaMessagePublisher.publish(topics.getReportGeneration(), kafkaRoutingKey, reportDto.toString());
+            log.debug("Transaction Duplicate Record has been published");
+        } catch (Exception e) {
+            log.error("Error in Transaction Duplicate  {} publish.", reportDto.toString(), e.getMessage());
+        }
+    }
 }
-
-MERCHANT_ID	VARCHAR2(20)
-MERCHANT_NAME	VARCHAR2(100)
-MERCHANT_CATEGORY	CHAR()
-ORDER_REF_NUMBER	VARCHAR2(50)
-ATRN_NUM	VARCHAR2(50)
-INSTRUCTION_DATEAND_TIME	NUMBER
-CURRENCY_CODE	VARCHAR2(50)
-ORDER_AMOUNT	NUMBER(20,2)
-TOTAL_FEE_ABS	NUMBER(20,2)
-GST_NUMBER	VARCHAR2(20)
-GATEWAY_POSTING_AMOUNT	NUMBER
-AMOUNT_SETTLED	NUMBER(20,2)
-AVAILABLE_REFUND_AMOUNT	NUMBER(20,2)
-PAY_MODE	VARCHAR2(50)
-CHANNEL_BANK	VARCHAR2(100)
-GATEWAY_TRACE_NUMBER	CHAR()
-TRANSACTION_STATUS	VARCHAR2(50)
-REMARK	CHAR()
-MERCHANT_RISK_CATEGORY	CHAR()
-ACCESS_MEDIUM	CHAR()
-PAY_PROC_ID	VARCHAR2(20)
-PAY_PROC_TYPE	VARCHAR2(20)
-MERCHANT_AUTHORIZE	CHAR()
-MERCHANT_AUTHORIZE_DATE	NUMBER
-AUTO_SETTLEMENT	CHAR()
-BEARABLE_ENTITY	CHAR(1)
-CIN	VARCHAR2(50)
-FAIL_REASON	VARCHAR2(2000)
-MERCHANT_FEE_BEARABLE_ABS	NUMBER(20,2)
-MERCHANT_GST_BEARABLE_ABS	NUMBER(20,2)
-CUSTOMER_FEE_BEARABLE_ABS	NUMBER(20,2)
-CUSTOMER_GST_BEARABLE_ABS	NUMBER(20,2)
-SUB_STATUS_DESCRIPTION	CHAR()
-PAYMENT_SUCCESS_DATE	DATE
-RFS_ID	RAW
-
----------------------------------------------------------
-SETTLEMENT_FILE_NUMBER	CHAR()
-SETTLEMENT_TIME	VARCHAR2(19)
-MERCHANT_ID	VARCHAR2(20)
-MERCHANT_NAME	VARCHAR2(100)
-ORDER_REF_NUMBER	VARCHAR2(50)
-ATRN_NUM	VARCHAR2(50)
-CREATED_DATE	VARCHAR2(19)
-CURRENCY_CODE	VARCHAR2(50)
-ORDER_AMOUNT	NUMBER(20,2)
-SETTLEMENT_CURRENCY	VARCHAR2(50)
-SETTLEMENT_AMOUNT	NUMBER
-COMMISSION_PAYABLE	NUMBER
-MERCHANT_GST_BEARABLE_ABS	NUMBER(20,2)
-PAYOUT_AMOUNT	NUMBER
-CHANNEL_BANK	VARCHAR2(100)
-GATEWAY_TRACE_NUMBER	CHAR()
-PAY_MODE	VARCHAR2(50)
-PAY_PROC_ID	VARCHAR2(20)
-OTHER_DETAILS	CLOB
-BEARABLE_ENTITY	CHAR(1)
-CIN	VARCHAR2(50)
-RFS_ID	RAW
-
-
-
-import lombok.AllArgsConstructor;
-import lombok.Builder;
-import lombok.Data;
-import lombok.NoArgsConstructor;
-import com.fasterxml.jackson.annotation.JsonInclude;
-
-import java.math.BigDecimal;
-import java.sql.Clob;
-import java.util.UUID;
 
 @Data
 @Builder
-@NoArgsConstructor
 @AllArgsConstructor
-@JsonInclude(JsonInclude.Include.NON_NULL)
-public class Settlement {
-    private String settlementFileNumber; // CHAR()
-    private String settlementTime; // VARCHAR2(19)
-    private String merchantId; // VARCHAR2(20)
-    private String merchantName; // VARCHAR2(100)
-    private String orderRefNumber; // VARCHAR2(50)
-    private String atrnNum; // VARCHAR2(50)
-    private String createdDate; // VARCHAR2(19)
-    private String currencyCode; // VARCHAR2(50)
-    private BigDecimal orderAmount; // NUMBER(20,2)
-    private String settlementCurrency; // VARCHAR2(50)
-    private BigDecimal settlementAmount; // NUMBER
-    private BigDecimal commissionPayable; // NUMBER
-    private BigDecimal merchantGstBearableAbs; // NUMBER(20,2)
-    private BigDecimal payoutAmount; // NUMBER
-    private String channelBank; // VARCHAR2(100)
-    private String gatewayTraceNumber; // CHAR()
-    private String payMode; // VARCHAR2(50)
-    private String payProcId; // VARCHAR2(20)
-    private String otherDetails; // CLOB
-    private Character bearableEntity; // CHAR(1)
-    private String cin; // VARCHAR2(50)
-    private UUID rfsId; // RAW
+@NoArgsConstructor
+public class ReportDto {
+    private UUID oreId;
+    private Report reportType;
+    private ReportFilters reportFilters;
 }
-
-
-import org.apache.commons.lang3.StringUtils;
-import org.apache.commons.lang3.ObjectUtils;
-import java.util.ArrayList;
-import java.util.List;
-
-protected List<Object> convertToListOfObject(Settlement settlement) {
-    List<Object> objectList = new ArrayList<>();
-    objectList.add(StringUtils.isEmpty(settlement.getSettlementFileNumber()) ? StringUtils.EMPTY : settlement.getSettlementFileNumber());
-    objectList.add(StringUtils.isEmpty(settlement.getSettlementTime()) ? StringUtils.EMPTY : settlement.getSettlementTime());
-    objectList.add(StringUtils.isEmpty(settlement.getMerchantId()) ? StringUtils.EMPTY : settlement.getMerchantId());
-    objectList.add(StringUtils.isEmpty(settlement.getMerchantName()) ? StringUtils.EMPTY : settlement.getMerchantName());
-    objectList.add(StringUtils.isEmpty(settlement.getOrderRefNumber()) ? StringUtils.EMPTY : settlement.getOrderRefNumber());
-    objectList.add(StringUtils.isEmpty(settlement.getAtrnNum()) ? StringUtils.EMPTY : settlement.getAtrnNum());
-    objectList.add(StringUtils.isEmpty(settlement.getCreatedDate()) ? StringUtils.EMPTY : settlement.getCreatedDate());
-    objectList.add(StringUtils.isEmpty(settlement.getCurrencyCode()) ? StringUtils.EMPTY : settlement.getCurrencyCode());
-    objectList.add(ObjectUtils.isEmpty(settlement.getOrderAmount()) ? StringUtils.EMPTY : settlement.getOrderAmount());
-    objectList.add(StringUtils.isEmpty(settlement.getSettlementCurrency()) ? StringUtils.EMPTY : settlement.getSettlementCurrency());
-    objectList.add(ObjectUtils.isEmpty(settlement.getSettlementAmount()) ? StringUtils.EMPTY : settlement.getSettlementAmount());
-    objectList.add(ObjectUtils.isEmpty(settlement.getCommissionPayable()) ? StringUtils.EMPTY : settlement.getCommissionPayable());
-    objectList.add(ObjectUtils.isEmpty(settlement.getMerchantGstBearableAbs()) ? StringUtils.EMPTY : settlement.getMerchantGstBearableAbs());
-    objectList.add(ObjectUtils.isEmpty(settlement.getPayoutAmount()) ? StringUtils.EMPTY : settlement.getPayoutAmount());
-    objectList.add(StringUtils.isEmpty(settlement.getChannelBank()) ? StringUtils.EMPTY : settlement.getChannelBank());
-    objectList.add(StringUtils.isEmpty(settlement.getGatewayTraceNumber()) ? StringUtils.EMPTY : settlement.getGatewayTraceNumber());
-    objectList.add(StringUtils.isEmpty(settlement.getPayMode()) ? StringUtils.EMPTY : settlement.getPayMode());
-    objectList.add(StringUtils.isEmpty(settlement.getPayProcId()) ? StringUtils.EMPTY : settlement.getPayProcId());
-    objectList.add(StringUtils.isEmpty(settlement.getOtherDetails()) ? StringUtils.EMPTY : settlement.getOtherDetails());
-    objectList.add(ObjectUtils.isEmpty(settlement.getBearableEntity()) ? StringUtils.EMPTY : settlement.getBearableEntity());
-    objectList.add(StringUtils.isEmpty(settlement.getCin()) ? StringUtils.EMPTY : settlement.getCin());
-    objectList.add(ObjectUtils.isEmpty(settlement.getRfsId()) ? StringUtils.EMPTY : settlement.getRfsId());
-    return objectList;
-}
-
-
-MERCHANT_ID	VARCHAR2(20)
-MERCHANT_CATEGORY	CHAR()
-MERCHANT_NAME	VARCHAR2(100)
-ORDER_REF_NUMBER	VARCHAR2(50)
-ATRN_NUM	VARCHAR2(50)
-TRANSACTION_DATE	VARCHAR2(19)
-ORDER_AMOUNT	NUMBER(20,2)
-CURRENCY_CODE	VARCHAR2(50)
-TRANSACTION_STATUS	VARCHAR2(50)
-ETL_UPLOAD_DATE	CHAR()
-ETL_STATUS	CHAR()
-CHANNEL_BANK	VARCHAR2(100)
-GATEWAY_TRACE_NUMBER	CHAR()
-PAY_MODE	VARCHAR2(50)
-GATEWAY_STATUS	CHAR()
-
-
-import lombok.AllArgsConstructor;
-import lombok.Builder;
-import lombok.Data;
-import lombok.NoArgsConstructor;
-import com.fasterxml.jackson.annotation.JsonInclude;
-
-import java.math.BigDecimal;
 
 @Data
 @Builder
-@NoArgsConstructor
 @AllArgsConstructor
-@JsonInclude(JsonInclude.Include.NON_NULL)
-public class Transaction {
-    private String merchantId; // VARCHAR2(20)
-    private Character merchantCategory; // CHAR()
-    private String merchantName; // VARCHAR2(100)
-    private String orderRefNumber; // VARCHAR2(50)
-    private String atrnNum; // VARCHAR2(50)
-    private String transactionDate; // VARCHAR2(19)
-    private BigDecimal orderAmount; // NUMBER(20,2)
-    private String currencyCode; // VARCHAR2(50)
-    private String transactionStatus; // VARCHAR2(50)
-    private String etlUploadDate; // CHAR()
-    private String etlStatus; // CHAR()
-    private String channelBank; // VARCHAR2(100)
-    private String gatewayTraceNumber; // CHAR()
-    private String payMode; // VARCHAR2(50)
-    private String gatewayStatus; // CHAR()
+@NoArgsConstructor
+public class ReportFilters {
+    private UUID rfsId;
+    private String mId;
+    private Long toDate;
+    private Long fromDate;
 }
 
-import org.apache.commons.lang3.StringUtils;
-import org.apache.commons.lang3.ObjectUtils;
-import java.util.ArrayList;
-import java.util.List;
+--------------------------------------------------------
+Below is my service class in ReportService 
 
-protected List<Object> convertToListOfObject(Transaction transaction) {
-    List<Object> objectList = new ArrayList<>();
-    objectList.add(StringUtils.isEmpty(transaction.getMerchantId()) ? StringUtils.EMPTY : transaction.getMerchantId());
-    objectList.add(ObjectUtils.isEmpty(transaction.getMerchantCategory()) ? StringUtils.EMPTY : transaction.getMerchantCategory());
-    objectList.add(StringUtils.isEmpty(transaction.getMerchantName()) ? StringUtils.EMPTY : transaction.getMerchantName());
-    objectList.add(StringUtils.isEmpty(transaction.getOrderRefNumber()) ? StringUtils.EMPTY : transaction.getOrderRefNumber());
-    objectList.add(StringUtils.isEmpty(transaction.getAtrnNum()) ? StringUtils.EMPTY : transaction.getAtrnNum());
-    objectList.add(StringUtils.isEmpty(transaction.getTransactionDate()) ? StringUtils.EMPTY : transaction.getTransactionDate());
-    objectList.add(ObjectUtils.isEmpty(transaction.getOrderAmount()) ? StringUtils.EMPTY : transaction.getOrderAmount());
-    objectList.add(StringUtils.isEmpty(transaction.getCurrencyCode()) ? StringUtils.EMPTY : transaction.getCurrencyCode());
-    objectList.add(StringUtils.isEmpty(transaction.getTransactionStatus()) ? StringUtils.EMPTY : transaction.getTransactionStatus());
-    objectList.add(StringUtils.isEmpty(transaction.getEtlUploadDate()) ? StringUtils.EMPTY : transaction.getEtlUploadDate());
-    objectList.add(StringUtils.isEmpty(transaction.getEtlStatus()) ? StringUtils.EMPTY : transaction.getEtlStatus());
-    objectList.add(StringUtils.isEmpty(transaction.getChannelBank()) ? StringUtils.EMPTY : transaction.getChannelBank());
-    objectList.add(StringUtils.isEmpty(transaction.getGatewayTraceNumber()) ? StringUtils.EMPTY : transaction.getGatewayTraceNumber());
-    objectList.add(StringUtils.isEmpty(transaction.getPayMode()) ? StringUtils.EMPTY : transaction.getPayMode());
-    objectList.add(StringUtils.isEmpty(transaction.getGatewayStatus()) ? StringUtils.EMPTY : transaction.getGatewayStatus());
-    return objectList;
+
+@Service
+@RequiredArgsConstructor
+public class ReconReportService {
+    private static final List<String> transactionMisHeader = List.of("MERCHANT ID","MERCHANT NAME","MERCHANT CATEGORY","MERCHANT ORDER NO","TRANSACTION ID","INSTRUCTION DATE AND TIME","TRANSACTION CURRENCY","MERCHANT ORDER AMOUNT","TOTAL FEE ABS","GST","GATEWAY POSTING AMOUNT","AMOUNT SETTLED","AVAILABLE REFUND AMOUNT","PAY MODE CODE","PAY GATEWAY","GATEWAY TRACE NUMBER","STATUS","REMARK","MERCHANT RISK CATEGORY","ACCESS MEDIUM","PAY PROC","PAY PROC TYPE","MERCHANT AUTHORIZE","MERCHANT AUTHORIZE DATE","AUTO SETTLEMENT","TRANSACTION FEE FLAG","CIN NUMBER","RESPONSE REASON","MERCHANT BEARABLE FEE","MERCHANT BEARABLE GST","CUSTOMER BEARABLE FEE","CUSTOMER BEARABLE GST","SUB STATUS DESCRIPTION","PAYMENT SUCCESS DATE");
+    private static final List<String> transactionPayoutHeader =List.of("SETTLEMENT FILE NUMBER","SETTLEMENT DATE","MERCHANT ID","MERCHANT NAME","MERCHANT ORDER NO","TRANSACTION ID","TRANSACTION BOOKING DATE & TIME","TRANSACTION CURRENCY","TRANSACTION AMOUNT","SETTLEMENT CURRENCY","SETTLEMENT AMOUNT","COMMISSION PAYABLE","GST","PAYOUT AMOUNT","GATEWAY NAME","GATEWAY TRACE NUMBER","PAY MODE CODE","PAY PROC","OTHER DETAILS","TRANSACTION FEE FLAG","CIN NUMBER");
+    private static final List<String> sbiepayAggBankHeader =List.of("MERCHANT ID","MERCHANT CATEGORY","MERCHANT NAME","MERCHANT ORDER NUMBER","TRANSACTION ID","TRANSACTION BOOKING DATE & TIME","TRANSACTION AMOUNT","TRANSACTION CURRENCY","TRANSACTION STATUS","ETL UPLOAD DATE","ETL STATUS","GATEWAY NAME","GATEWAY TRACE NUMBER","PAY MODE CODE","GATEWAY STATUS");
+    private final LoggerUtility log = LoggerFactoryUtility.getLogger(this.getClass());
+    private final FileGeneratorService fileGeneratorService;
+    private final S3Service s3Service;
+    private final ReportManagementDao reportManagementDao;
+    private final ViewTransactionMisDao viewTransactionMisDao;
+    private final ViewTransactionWisePayoutDao viewTransactionWisePayoutDao;
+    private final SbiepayAggBankstmtReportDao sbiepayAggBankstmtReportDao;
+
+    public ReportingResponse generateTransactionMis(String mId){
+
+        List<ViewTransactionMis> list= viewTransactionMisDao.getViewTransactionData(mId);
+        validateNotEmpty(list);
+        List<List<Object>> fileData = list.stream().map(this::convertToListOfObject).toList();
+//        buildReport("Transaction",transactionMisHeader,fileData,response);
+        buildReport(ReportFormat.CSV,transactionMisHeader,fileData,"Transaction");
+        return ReportingResponse.<String>builder().status(ReportingConstant.RESPONSE_SUCCESS).build();
+
+    }
+
+    public ReportingResponse<String> generateTransactionWisePayout(String mId,HttpServletResponse response){
+        List<ViewTransactionWisePayoutFormat> list = viewTransactionWisePayoutDao.getViewTransactionPayoutData(mId);
+        validateNotEmpty(list);
+        List<List<Object>> fileData = list.stream().map(this::convertToListOfObject).toList();
+//        buildReport("TransactionPayout",transactionPayoutHeader,fileData,response);
+        buildReport(ReportFormat.CSV,transactionPayoutHeader,fileData,"TransactionPayout");
+        return ReportingResponse.<String>builder().status(ReportingConstant.RESPONSE_SUCCESS).build();
+    }
+
+    public ReportingResponse<String> generateSbiepayAggBankDtl(String mId,HttpServletResponse response){
+        List<ViewSbiepayAggBankstmtReport> list = sbiepayAggBankstmtReportDao.getViewTransactionData(mId);
+        validateNotEmpty(list);
+        List<List<Object>> fileData = list.stream().map(this::convertToListOfObject).toList();
+//        buildReport("SbiepayAggBankReport",sbiepayAggBankHeader,fileData,response);
+        buildReport(ReportFormat.CSV,sbiepayAggBankHeader,fileData,"SbiepayAggBankReport");
+        return ReportingResponse.<String>builder().status(ReportingConstant.RESPONSE_SUCCESS).build();
+
+    }
+
+
+
+    private void buildReport( ReportFormat reportFormat, List<String> header, List<List<Object>> fileData, String mid) {
+        FileModel fileModel = fileGeneratorService.buildFileModel(reportFormat, header, fileData, Map.of("headers", header, "rows", fileData));
+        ReportFile reportFile = fileGeneratorService.generateFile(reportFormat, Report.TRANSACTION_MIS, mid, fileModel);
+        String s3FileName = s3Service.uploadFile(reportFile.getName(), reportFile.getContent());
+        //        reportManagementDao.updateStatusAndFilePath(reportManagementId, ReportStatus.GENERATED, s3FileName);
+        //        publishReportGenerationAlert(reportManagementDto);//
+        //        log.info("Report generated and file path [{}] updated for ReportManagementId: {}", s3FileName, reportManagementId);
+    }
+
+    protected List<Object> convertToListOfObject(ViewTransactionMis viewTransactionMis) {
+        List<Object> objectList = new ArrayList<>();
+        objectList.add(StringUtils.isEmpty(viewTransactionMis.getMerchantId()) ? StringUtils.EMPTY : viewTransactionMis.getMerchantId());
+        objectList.add(StringUtils.isEmpty(viewTransactionMis.getMerchantName()) ? StringUtils.EMPTY : viewTransactionMis.getMerchantName());
+        objectList.add(ObjectUtils.isEmpty(viewTransactionMis.getMerchantCategory()) ? StringUtils.EMPTY : viewTransactionMis.getMerchantCategory());
+        objectList.add(StringUtils.isEmpty(viewTransactionMis.getOrderRefNumber()) ? StringUtils.EMPTY : viewTransactionMis.getOrderRefNumber());
+        objectList.add(StringUtils.isEmpty(viewTransactionMis.getAtrnNum()) ? StringUtils.EMPTY : viewTransactionMis.getAtrnNum());
+        objectList.add(ObjectUtils.isEmpty(viewTransactionMis.getInstructionDateandTime()) ? StringUtils.EMPTY : viewTransactionMis.getInstructionDateandTime());
+        objectList.add(StringUtils.isEmpty(viewTransactionMis.getCurrencyCode()) ? StringUtils.EMPTY : viewTransactionMis.getCurrencyCode());
+        objectList.add(ObjectUtils.isEmpty(viewTransactionMis.getOrderAmount()) ? StringUtils.EMPTY : viewTransactionMis.getOrderAmount());
+        objectList.add(ObjectUtils.isEmpty(viewTransactionMis.getTotalFeeAbs()) ? StringUtils.EMPTY : viewTransactionMis.getTotalFeeAbs());
+        objectList.add(StringUtils.isEmpty(viewTransactionMis.getGstNumber()) ? StringUtils.EMPTY : viewTransactionMis.getGstNumber());
+        objectList.add(ObjectUtils.isEmpty(viewTransactionMis.getGatewayPostingAmount()) ? StringUtils.EMPTY : viewTransactionMis.getGatewayPostingAmount());
+        objectList.add(ObjectUtils.isEmpty(viewTransactionMis.getAmountSettled()) ? StringUtils.EMPTY : viewTransactionMis.getAmountSettled());
+        objectList.add(ObjectUtils.isEmpty(viewTransactionMis.getAvailableRefundAmount()) ? StringUtils.EMPTY : viewTransactionMis.getAvailableRefundAmount());
+        objectList.add(StringUtils.isEmpty(viewTransactionMis.getPayMode()) ? StringUtils.EMPTY : viewTransactionMis.getPayMode());
+        objectList.add(StringUtils.isEmpty(viewTransactionMis.getChannelBank()) ? StringUtils.EMPTY : viewTransactionMis.getChannelBank());
+        objectList.add(StringUtils.isEmpty(viewTransactionMis.getGatewayTraceNumber()) ? StringUtils.EMPTY : viewTransactionMis.getGatewayTraceNumber());
+        objectList.add(StringUtils.isEmpty(viewTransactionMis.getTransactionStatus()) ? StringUtils.EMPTY : viewTransactionMis.getTransactionStatus());
+        objectList.add(StringUtils.isEmpty(viewTransactionMis.getRemark()) ? StringUtils.EMPTY : viewTransactionMis.getRemark());
+        objectList.add(StringUtils.isEmpty(viewTransactionMis.getMerchantRiskCategory()) ? StringUtils.EMPTY : viewTransactionMis.getMerchantRiskCategory());
+        objectList.add(StringUtils.isEmpty(viewTransactionMis.getAccessMedium()) ? StringUtils.EMPTY : viewTransactionMis.getAccessMedium());
+        objectList.add(StringUtils.isEmpty(viewTransactionMis.getPayProcId()) ? StringUtils.EMPTY : viewTransactionMis.getPayProcId());
+        objectList.add(StringUtils.isEmpty(viewTransactionMis.getPayProcType()) ? StringUtils.EMPTY : viewTransactionMis.getPayProcType());
+        objectList.add(StringUtils.isEmpty(viewTransactionMis.getMerchantAuthorize()) ? StringUtils.EMPTY : viewTransactionMis.getMerchantAuthorize());
+        objectList.add(ObjectUtils.isEmpty(viewTransactionMis.getMerchantAuthorizeDate()) ? StringUtils.EMPTY : viewTransactionMis.getMerchantAuthorizeDate());
+        objectList.add(StringUtils.isEmpty(viewTransactionMis.getAutoSettlement()) ? StringUtils.EMPTY : viewTransactionMis.getAutoSettlement());
+        objectList.add(StringUtils.isEmpty(viewTransactionMis.getBearableEntity()) ? StringUtils.EMPTY : viewTransactionMis.getBearableEntity());
+        objectList.add(StringUtils.isEmpty(viewTransactionMis.getCin()) ? StringUtils.EMPTY : viewTransactionMis.getCin());
+        objectList.add(StringUtils.isEmpty(viewTransactionMis.getFailReason()) ? StringUtils.EMPTY : viewTransactionMis.getFailReason());
+        objectList.add(ObjectUtils.isEmpty(viewTransactionMis.getMerchantFeeBearableAbs()) ? StringUtils.EMPTY : viewTransactionMis.getMerchantFeeBearableAbs());
+        objectList.add(ObjectUtils.isEmpty(viewTransactionMis.getMerchantGstBearableAbs()) ? StringUtils.EMPTY : viewTransactionMis.getMerchantGstBearableAbs());
+        objectList.add(ObjectUtils.isEmpty(viewTransactionMis.getCustomerFeeBearableAbs()) ? StringUtils.EMPTY : viewTransactionMis.getCustomerFeeBearableAbs());
+        objectList.add(ObjectUtils.isEmpty(viewTransactionMis.getCustomerGstBearableAbs()) ? StringUtils.EMPTY : viewTransactionMis.getCustomerGstBearableAbs());
+        objectList.add(StringUtils.isEmpty(viewTransactionMis.getSbuStatusDescription()) ? StringUtils.EMPTY : viewTransactionMis.getSbuStatusDescription());
+        objectList.add(ObjectUtils.isEmpty(viewTransactionMis.getPaymentSuccessDate()) ? StringUtils.EMPTY : viewTransactionMis.getPaymentSuccessDate());
+        return objectList;
+    }
+
+    protected List<Object> convertToListOfObject(ViewTransactionWisePayoutFormat payoutFormat) {
+        List<Object> objectList = new ArrayList<>();
+        objectList.add(StringUtils.isEmpty(payoutFormat.getSettlementFileNumber()) ? StringUtils.EMPTY : payoutFormat.getSettlementFileNumber());
+        objectList.add(StringUtils.isEmpty(payoutFormat.getSettlementTime()) ? StringUtils.EMPTY : payoutFormat.getSettlementTime());
+        objectList.add(StringUtils.isEmpty(payoutFormat.getMerchantId()) ? StringUtils.EMPTY : payoutFormat.getMerchantId());
+        objectList.add(StringUtils.isEmpty(payoutFormat.getMerchantName()) ? StringUtils.EMPTY : payoutFormat.getMerchantName());
+        objectList.add(StringUtils.isEmpty(payoutFormat.getOrderRefNumber()) ? StringUtils.EMPTY : payoutFormat.getOrderRefNumber());
+        objectList.add(StringUtils.isEmpty(payoutFormat.getAtrnNum()) ? StringUtils.EMPTY : payoutFormat.getAtrnNum());
+        objectList.add(StringUtils.isEmpty(payoutFormat.getCreatedDate()) ? StringUtils.EMPTY : payoutFormat.getCreatedDate());
+        objectList.add(StringUtils.isEmpty(payoutFormat.getCurrencyCode()) ? StringUtils.EMPTY : payoutFormat.getCurrencyCode());
+        objectList.add(ObjectUtils.isEmpty(payoutFormat.getOrderAmount()) ? StringUtils.EMPTY : payoutFormat.getOrderAmount());
+        objectList.add(StringUtils.isEmpty(payoutFormat.getSettlementCurrency()) ? StringUtils.EMPTY : payoutFormat.getSettlementCurrency());
+        objectList.add(ObjectUtils.isEmpty(payoutFormat.getSettlementAmount()) ? StringUtils.EMPTY : payoutFormat.getSettlementAmount());
+        objectList.add(ObjectUtils.isEmpty(payoutFormat.getCommissionPayable()) ? StringUtils.EMPTY : payoutFormat.getCommissionPayable());
+        objectList.add(ObjectUtils.isEmpty(payoutFormat.getMerchantGstBearableAbs()) ? StringUtils.EMPTY : payoutFormat.getMerchantGstBearableAbs());
+        objectList.add(ObjectUtils.isEmpty(payoutFormat.getPayoutAmount()) ? StringUtils.EMPTY : payoutFormat.getPayoutAmount());
+        objectList.add(StringUtils.isEmpty(payoutFormat.getChannelBank()) ? StringUtils.EMPTY : payoutFormat.getChannelBank());
+        objectList.add(StringUtils.isEmpty(payoutFormat.getGatewayTraceNumber()) ? StringUtils.EMPTY : payoutFormat.getGatewayTraceNumber());
+        objectList.add(StringUtils.isEmpty(payoutFormat.getPayMode()) ? StringUtils.EMPTY : payoutFormat.getPayMode());
+        objectList.add(StringUtils.isEmpty(payoutFormat.getPayProcId()) ? StringUtils.EMPTY : payoutFormat.getPayProcId());
+        objectList.add(StringUtils.isEmpty(payoutFormat.getOtherDetails()) ? StringUtils.EMPTY : payoutFormat.getOtherDetails());
+        objectList.add(ObjectUtils.isEmpty(payoutFormat.getBearableEntity()) ? StringUtils.EMPTY : payoutFormat.getBearableEntity());
+        objectList.add(StringUtils.isEmpty(payoutFormat.getCin()) ? StringUtils.EMPTY : payoutFormat.getCin());
+        return objectList;
+    }
+
+    protected List<Object> convertToListOfObject(ViewSbiepayAggBankstmtReport aggBankstmtReport) {
+        List<Object> objectList = new ArrayList<>();
+        objectList.add(StringUtils.isEmpty(aggBankstmtReport.getMerchantId()) ? StringUtils.EMPTY : aggBankstmtReport.getMerchantId());
+        objectList.add(ObjectUtils.isEmpty(aggBankstmtReport.getMerchantCategory()) ? StringUtils.EMPTY : aggBankstmtReport.getMerchantCategory());
+        objectList.add(StringUtils.isEmpty(aggBankstmtReport.getMerchantName()) ? StringUtils.EMPTY : aggBankstmtReport.getMerchantName());
+        objectList.add(StringUtils.isEmpty(aggBankstmtReport.getOrderRefNumber()) ? StringUtils.EMPTY : aggBankstmtReport.getOrderRefNumber());
+        objectList.add(StringUtils.isEmpty(aggBankstmtReport.getAtrnNum()) ? StringUtils.EMPTY : aggBankstmtReport.getAtrnNum());
+        objectList.add(StringUtils.isEmpty(aggBankstmtReport.getTransactionDate()) ? StringUtils.EMPTY : aggBankstmtReport.getTransactionDate());
+        objectList.add(ObjectUtils.isEmpty(aggBankstmtReport.getOrderAmount()) ? StringUtils.EMPTY : aggBankstmtReport.getOrderAmount());
+        objectList.add(StringUtils.isEmpty(aggBankstmtReport.getCurrencyCode()) ? StringUtils.EMPTY : aggBankstmtReport.getCurrencyCode());
+        objectList.add(StringUtils.isEmpty(aggBankstmtReport.getTransactionStatus()) ? StringUtils.EMPTY : aggBankstmtReport.getTransactionStatus());
+        objectList.add(StringUtils.isEmpty(aggBankstmtReport.getEtlUploadDate()) ? StringUtils.EMPTY : aggBankstmtReport.getEtlUploadDate());
+        objectList.add(StringUtils.isEmpty(aggBankstmtReport.getEtlStatus()) ? StringUtils.EMPTY : aggBankstmtReport.getEtlStatus());
+        objectList.add(StringUtils.isEmpty(aggBankstmtReport.getChannelBank()) ? StringUtils.EMPTY : aggBankstmtReport.getChannelBank());
+        objectList.add(StringUtils.isEmpty(aggBankstmtReport.getGatewayTraceNumber()) ? StringUtils.EMPTY : aggBankstmtReport.getGatewayTraceNumber());
+        objectList.add(StringUtils.isEmpty(aggBankstmtReport.getPayMode()) ? StringUtils.EMPTY : aggBankstmtReport.getPayMode());
+        objectList.add(StringUtils.isEmpty(aggBankstmtReport.getGatewayStatus()) ? StringUtils.EMPTY : aggBankstmtReport.getGatewayStatus());
+        return objectList;
+    }
+
+    /**
+     * Validating report data list, if it is empty then throwing exception.
+     * @param list List
+     * @param <T> Order, Refund etc
+     */
+    private <T> void validateNotEmpty(List<T> list) {
+        if (CollectionUtils.isEmpty(list))
+            throw new ReportingException(NOT_FOUND_ERROR_CODE, NO_RECORD_FOUND);
+    }
+    /**
+     * Creating CSV content and setting it in response output stream.
+     * @param mId String
+     * @param header List<String> header
+     * @param fileData ist<List<Object>>
+     * @param response HttpServletResponse
+     */
+    protected void buildReport(String mId, List<String> header, List<List<Object>> fileData, HttpServletResponse response) {
+        FileModel fileModel = fileGeneratorService.buildFileModel(
+                ReportFormat.CSV, header, fileData, Map.of("headers", header, "rows", fileData)
+        );
+        log.info("File model created, generating file for transactions.");
+        fileGeneratorService.downloadFile(response, ReportFormat.CSV, Report.TRANSACTION, mId, fileModel);
+    }
 }
+
+i need to generate the code for me in my other microservice named Reporting service ,
+I need to write the listener in my Reporting service , it will cunsume the ReportDto in this microservices.
+once we get the reportDto we have to ReconReportService in the listener and pass that reportDto to this ReconReportService. now in this service we have to write the method that have switch case. If from reportDto if its type reportType is TRANSACTION_MIS then we have to call generateTransactionMis method ans pass mId from reportDto.
+if reportType is TRANSACTION_WISE_PAYOUT_MIS then call generateTransactionWisePayout method and pass mId from eportDto.
+if reportType is SBIEPAY_AGG_BANKSTMT_REPORT then call generateSbiepayAggBankDtl method and pass mId from eportDto.
+
