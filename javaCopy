@@ -63,3 +63,39 @@ public void save(List<ReconFileDtlsDto> reconFileDtlsDtoList) {
         reconFileRepository.saveList(reconFileDtlsList);
 }
 write the jdbc for saveList(reconFileDtlsList) 
+
+
+
+public void saveList(List<ReconFileDtls> reconFileDtlsList) {
+    log.info("Saving {} ReconFileDtls records", reconFileDtlsList.size());
+    
+    String INSERT_RECON_FILE_DTLS = "INSERT INTO RECON_FILE_DTLS " +
+            "(RFD_ID, RFS_ID, ATRN_NUM, PAYMENT_AMOUNT, RECON_STATUS, ROW_NUMBER, " +
+            "RECORD_TYPE, PAYMENT_DATE, BANK_REF_NUMBER, PAYMENT_STATUS, " +
+            "SETTLEMENT_STATUS, REMARK) " +
+            "VALUES (HEXTORAW(REPLACE(:rfdId, '-', '')), HEXTORAW(REPLACE(:rfsId, '-', '')), " +
+            ":atrnNum, :paymentAmount, :reconStatus, :rowNumber, " +
+            ":recordType, :paymentDate, :bankRefNumber, :paymentStatus, " +
+            ":settlementStatus, :remark)";
+    
+    List<MapSqlParameterSource> paramsList = reconFileDtlsList.stream()
+            .map(dto -> {
+                MapSqlParameterSource params = new MapSqlParameterSource();
+                params.addValue("rfdId", dto.getRfdId().toString());
+                params.addValue("rfsId", dto.getRfsId().toString());
+                params.addValue("atrnNum", dto.getAtrnNum());
+                params.addValue("paymentAmount", dto.getPaymentAmount());
+                params.addValue("reconStatus", dto.getReconStatus().name());
+                params.addValue("rowNumber", dto.getRowNumber());
+                params.addValue("recordType", dto.getRecordType());
+                params.addValue("paymentDate", dto.getPaymentDate());
+                params.addValue("bankRefNumber", dto.getBankRefNumber());
+                params.addValue("paymentStatus", dto.getPaymentStatus().name());
+                params.addValue("settlementStatus", dto.getSettlementStatus().name());
+                params.addValue("remark", dto.getRemark());
+                return params;
+            })
+            .collect(Collectors.toList());
+    
+    jdbcTemplate.batchUpdate(INSERT_RECON_FILE_DTLS, paramsList.toArray(new MapSqlParameterSource[0]));
+}
