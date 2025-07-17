@@ -89,4 +89,28 @@ protected List<Object> convertToListOfObject(ViewTransactionMis viewTransactionM
 
 
 
-please use nullSafe here in  convertToListOfObject method.
+please use nullSafe here in  convertToListOfObject method like this 
+protected List<Object> convertToListOfObject(TransactionRefund transactionRefund) {
+        return List.of(
+                nullSafe(transactionRefund.getSettlementFileNumber(), ""),
+                nullSafe(transactionRefund.getSettlementTime(), ""),
+                nullSafe(transactionRefund.getMId(), ""),
+                nullSafe(transactionRefund.getMerchantName(), ""),
+                nullSafe(transactionRefund.getOrderRefNumber(), ""),
+                nullSafe(transactionRefund.getAtrnNum(), ""),
+                nullSafe(transactionRefund.getCreatedDate(), ""),
+                nullSafe(transactionRefund.getCurrencyCode(), ""),
+                nullSafe(transactionRefund.getOrderAmount(), BigDecimal.ZERO),
+                nullSafe(transactionRefund.getRefundCurrency(), ""),
+                nullSafe(transactionRefund.getSettlementAmount(), BigDecimal.ZERO),
+                nullSafe(transactionRefund.getCommissionPayable(), 0),
+                nullSafe(transactionRefund.getMerchantGstBearableAbs(), BigDecimal.ZERO),
+                nullSafe(transactionRefund.getNetRefundAmount(), 0),
+                nullSafe(transactionRefund.getChannelBank(), ""),
+                nullSafe(transactionRefund.getGatewayTraceNumber(), ""),
+                nullSafe(transactionRefund.getPayMode(), ""),
+                nullSafe(transactionRefund.getRefundType(), ""),
+                nullSafe(transactionRefund.getRefundBookingDate(), ""),
+                nullSafe(transactionRefund.getArrnNum(), "")
+        );
+    }
