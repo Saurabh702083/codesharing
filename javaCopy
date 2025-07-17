@@ -1,1 +1,87 @@
+protected List<Object> convertToListOfObject(ViewTransactionMis viewTransactionMis) {
+    return List.of(
+            nullSafe(viewTransactionMis.getMerchantId(), ""),
+            nullSafe(viewTransactionMis.getMerchantName(), ""),
+            nullSafe(viewTransactionMis.getMerchantCategory(), ""),
+            nullSafe(viewTransactionMis.getOrderRefNumber(), ""),
+            nullSafe(viewTransactionMis.getAtrnNum(), ""),
+            nullSafe(viewTransactionMis.getInstructionDateandTime(), ""),
+            nullSafe(viewTransactionMis.getCurrencyCode(), ""),
+            nullSafe(viewTransactionMis.getOrderAmount(), ""),
+            nullSafe(viewTransactionMis.getTotalFeeAbs(), ""),
+            nullSafe(viewTransactionMis.getGstNumber(), ""),
+            nullSafe(viewTransactionMis.getGatewayPostingAmount(), ""),
+            nullSafe(viewTransactionMis.getAmountSettled(), ""),
+            nullSafe(viewTransactionMis.getAvailableRefundAmount(), ""),
+            nullSafe(viewTransactionMis.getPayMode(), ""),
+            nullSafe(viewTransactionMis.getChannelBank(), ""),
+            nullSafe(viewTransactionMis.getGatewayTraceNumber(), ""),
+            nullSafe(viewTransactionMis.getTransactionStatus(), ""),
+            nullSafe(viewTransactionMis.getRemark(), ""),
+            nullSafe(viewTransactionMis.getMerchantRiskCategory(), ""),
+            nullSafe(viewTransactionMis.getAccessMedium(), ""),
+            nullSafe(viewTransactionMis.getPayProcId(), ""),
+            nullSafe(viewTransactionMis.getPayProcType(), ""),
+            nullSafe(viewTransactionMis.getMerchantAuthorize(), ""),
+            nullSafe(viewTransactionMis.getMerchantAuthorizeDate(), ""),
+            nullSafe(viewTransactionMis.getAutoSettlement(), ""),
+            nullSafe(viewTransactionMis.getBearableEntity(), ""),
+            nullSafe(viewTransactionMis.getCin(), ""),
+            nullSafe(viewTransactionMis.getFailReason(), ""),
+            nullSafe(viewTransactionMis.getMerchantFeeBearableAbs(), ""),
+            nullSafe(viewTransactionMis.getMerchantGstBearableAbs(), ""),
+            nullSafe(viewTransactionMis.getCustomerFeeBearableAbs(), ""),
+            nullSafe(viewTransactionMis.getCustomerGstBearableAbs(), ""),
+            nullSafe(viewTransactionMis.getSbuStatusDescription(), ""),
+            nullSafe(viewTransactionMis.getPaymentSuccessDate(), "")
+    );
+}
 
+
+
+protected List<Object> convertToListOfObject(ViewTransactionWisePayoutFormat payoutFormat) {
+    return List.of(
+            nullSafe(payoutFormat.getSettlementFileNumber(), ""),
+            nullSafe(payoutFormat.getSettlementTime(), ""),
+            nullSafe(payoutFormat.getMerchantId(), ""),
+            nullSafe(payoutFormat.getMerchantName(), ""),
+            nullSafe(payoutFormat.getOrderRefNumber(), ""),
+            nullSafe(payoutFormat.getAtrnNum(), ""),
+            nullSafe(payoutFormat.getCreatedDate(), ""),
+            nullSafe(payoutFormat.getCurrencyCode(), ""),
+            nullSafe(payoutFormat.getOrderAmount(), ""),
+            nullSafe(payoutFormat.getSettlementCurrency(), ""),
+            nullSafe(payoutFormat.getSettlementAmount(), ""),
+            nullSafe(payoutFormat.getCommissionPayable(), ""),
+            nullSafe(payoutFormat.getMerchantGstBearableAbs(), ""),
+            nullSafe(payoutFormat.getPayoutAmount(), ""),
+            nullSafe(payoutFormat.getChannelBank(), ""),
+            nullSafe(payoutFormat.getGatewayTraceNumber(), ""),
+            nullSafe(payoutFormat.getPayMode(), ""),
+            nullSafe(payoutFormat.getPayProcId(), ""),
+            nullSafe(payoutFormat.getOtherDetails(), ""),
+            nullSafe(payoutFormat.getBearableEntity(), ""),
+            nullSafe(payoutFormat.getCin(), "")
+    );
+}
+
+
+protected List<Object> convertToListOfObject(ViewSbiepayAggBankstmtReport aggBankstmtReport) {
+    return List.of(
+            nullSafe(aggBankstmtReport.getMerchantId(), ""),
+            nullSafe(aggBankstmtReport.getMerchantCategory(), ""),
+            nullSafe(aggBankstmtReport.getMerchantName(), ""),
+            nullSafe(aggBankstmtReport.getOrderRefNumber(), ""),
+            nullSafe(aggBankstmtReport.getAtrnNum(), ""),
+            nullSafe(aggBankstmtReport.getTransactionDate(), ""),
+            nullSafe(aggBankstmtReport.getOrderAmount(), ""),
+            nullSafe(aggBankstmtReport.getCurrencyCode(), ""),
+            nullSafe(aggBankstmtReport.getTransactionStatus(), ""),
+            nullSafe(aggBankstmtReport.getEtlUploadDate(), ""),
+            nullSafe(aggBankstmtReport.getEtlStatus(), ""),
+            nullSafe(aggBankstmtReport.getChannelBank(), ""),
+            nullSafe(aggBankstmtReport.getGatewayTraceNumber(), ""),
+            nullSafe(aggBankstmtReport.getPayMode(), ""),
+            nullSafe(aggBankstmtReport.getGatewayStatus(), "")
+    );
+}
