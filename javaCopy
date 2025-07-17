@@ -28,3 +28,63 @@ public class ReconFileDtlsDto {
 }
 above is my controller and reconFileDtlsDtos can you create postman request for this controller 
 in postman put some value as well for request  and creat 3- 4 reconFileDtlsDtos for List<ReconFileDtlsDto>
+
+
+[
+  {
+    "rfdId": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+    "rfsId": "3fa85f64-5717-4562-b3fc-2c963f66afa7",
+    "rowNumber": 1,
+    "recordType": "PAYMENT",
+    "atrnNum": "ATRN123456",
+    "paymentAmount": 1500.75,
+    "paymentDate": "2023-05-15",
+    "bankRefNumber": "BREF789012",
+    "paymentStatus": "SUCCESS",
+    "reconStatus": "MATCHED",
+    "settlementStatus": "SETTLED",
+    "remark": "First record processed successfully"
+  },
+  {
+    "rfdId": "3fa85f64-5717-4562-b3fc-2c963f66afa8",
+    "rfsId": "3fa85f64-5717-4562-b3fc-2c963f66afa9",
+    "rowNumber": 2,
+    "recordType": "REFUND",
+    "atrnNum": "ATRN654321",
+    "paymentAmount": 200.50,
+    "paymentDate": "2023-05-16",
+    "bankRefNumber": "BREF123456",
+    "paymentStatus": "PENDING",
+    "reconStatus": "UNMATCHED",
+    "settlementStatus": "PENDING",
+    "remark": "Refund request in progress"
+  },
+  {
+    "rfdId": "3fa85f64-5717-4562-b3fc-2c963f66afb0",
+    "rfsId": "3fa85f64-5717-4562-b3fc-2c963f66afb1",
+    "rowNumber": 3,
+    "recordType": "PAYMENT",
+    "atrnNum": "ATRN987654",
+    "paymentAmount": 3000.00,
+    "paymentDate": "2023-05-17",
+    "bankRefNumber": "BREF456789",
+    "paymentStatus": "FAILED",
+    "reconStatus": "DISPUTED",
+    "settlementStatus": "FAILED",
+    "remark": "Payment failed due to insufficient funds"
+  },
+  {
+    "rfdId": "3fa85f64-5717-4562-b3fc-2c963f66afb2",
+    "rfsId": "3fa85f64-5717-4562-b3fc-2c963f66afb3",
+    "rowNumber": 4,
+    "recordType": "CHARGEBACK",
+    "atrnNum": "ATRN567890",
+    "paymentAmount": 500.25,
+    "paymentDate": "2023-05-18",
+    "bankRefNumber": "BREF345678",
+    "paymentStatus": "REVERSED",
+    "reconStatus": "PARTIALLY_MATCHED",
+    "settlementStatus": "REVERSED",
+    "remark": "Chargeback initiated by customer"
+  }
+]
