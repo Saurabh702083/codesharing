@@ -1,101 +1,30 @@
- public List<ReconFileDtlsDto> getAllReconFileData(UUID rfsId) {
-        return reconFileDtlsMapper.mapToDtoList(reconFileRepository.getAllByRfsId(rfsId));
+
+
+@PostMapping("/update")
+    public ResponseEntity<String> update(@RequestBody List<ReconFileDtlsDto> reconFileDtlsDtos){
+        reconFileDetailsDao.save(reconFileDtlsDtos);
+        return ResponseEntity.ok("Update is successful ");
     }
 
-/**
-     * Getting ReconFile data based upon rfsId.
-     *
-     * @param rfsId UUID file I'd
-     */
-    public List<ReconFileDtls> getAllByRfsId(UUID rfsId) {
-        log.info("Getting data for {} rfsId.", rfsId);
-        MapSqlParameterSource params = new MapSqlParameterSource().addValue("rfsId", rfsId.toString());
-        return jdbcTemplate.query(GET_ALL_RECON_FILE_DTLS, params, new ReconFileDtlsRowMapper());
+@Data
+@Builder
+@AllArgsConstructor
+@NoArgsConstructor
+public class ReconFileDtlsDto {
 
-    }
-
-public static final String GET_ALL_RECON_FILE_DTLS=  "SELECT * FROM RECON_FILE_DTLS WHERE RFS_ID = HEXTORAW(REPLACE(:rfsId, '-', ''))";
-
-
-public class ReconFileDtlsRowMapper implements RowMapper<ReconFileDtls> {
-    @Override
-    public ReconFileDtls mapRow(ResultSet rs, int rowNum) throws SQLException {
-
-        ReconFileDtls dto = new ReconFileDtls();
-        byte[] rfdIdBytes= rs.getBytes("RFD_ID");
-        UUID rfdId = bytesToUUID(rfdIdBytes);
-        dto.setRfdId(rfdId);
-        byte[] rfsIdBytes = rs.getBytes("RFS_ID");
-        UUID rfsId = bytesToUUID(rfsIdBytes);
-        dto.setRfsId(rfsId);
-
-        dto.setAtrnNum(rs.getString("ATRN_NUM"));
-        dto.setPaymentAmount(rs.getBigDecimal("PAYMENT_AMOUNT"));
-        dto.setReconStatus(ReconStatus.valueOf(rs.getString("RECON_STATUS")));
-        dto.setRowNumber(rs.getInt("ROW_NUMBER"));
-        dto.setRecordType(rs.getString("RECORD_TYPE"));
-        dto.setPaymentDate(rs.getDate("PAYMENT_DATE"));
-        dto.setBankRefNumber(rs.getString("BANK_REF_NUMBER"));
-        dto.setPaymentStatus(PaymentStatus.valueOf(rs.getString("PAYMENT_STATUS")));
-        dto.setReconStatus(ReconStatus.valueOf(rs.getString("RECON_STATUS")));
-        dto.setSettlementStatus(SettlementStatus.valueOf(rs.getString("SETTLEMENT_STATUS")));
-        dto.setRemark(rs.getString("REMARK"));
-        return dto;
-    }
-
-    private UUID bytesToUUID(byte[] bytes) {
-        if (bytes == null || bytes.length != 16) {
-            return null;
-        }
-        ByteBuffer bb = ByteBuffer.wrap(bytes);
-        long high = bb.getLong();
-        long low = bb.getLong();
-        return new UUID(high, low);
-    }
+    private UUID rfdId;
+    private UUID rfsId;
+    private int rowNumber;
+    private String recordType;
+    private String atrnNum;
+    private BigDecimal paymentAmount;
+    private Date paymentDate;
+    private String bankRefNumber;
+    private PaymentStatus paymentStatus;
+    private ReconStatus reconStatus;
+    private SettlementStatus settlementStatus;
+    private String remark;
 
 }
-
-Above is my code for getAllReconFileData in which i we are using jdbc method to get getAllByRfsId(rfsId).
-so similarly can you write jdbc method for my below code 
-
-public void save(List<ReconFileDtlsDto> reconFileDtlsDtoList) {
-        List<ReconFileDtls> reconFileDtlsList =reconFileDtlsMapper.mapToEntityList(reconFileDtlsDtoList);
-        reconFileRepository.saveList(reconFileDtlsList);
-}
-write the jdbc for saveList(reconFileDtlsList) 
-
-
-
-public void saveList(List<ReconFileDtls> reconFileDtlsList) {
-    log.info("Saving {} ReconFileDtls records", reconFileDtlsList.size());
-    
-    String INSERT_RECON_FILE_DTLS = "INSERT INTO RECON_FILE_DTLS " +
-            "(RFD_ID, RFS_ID, ATRN_NUM, PAYMENT_AMOUNT, RECON_STATUS, ROW_NUMBER, " +
-            "RECORD_TYPE, PAYMENT_DATE, BANK_REF_NUMBER, PAYMENT_STATUS, " +
-            "SETTLEMENT_STATUS, REMARK) " +
-            "VALUES (HEXTORAW(REPLACE(:rfdId, '-', '')), HEXTORAW(REPLACE(:rfsId, '-', '')), " +
-            ":atrnNum, :paymentAmount, :reconStatus, :rowNumber, " +
-            ":recordType, :paymentDate, :bankRefNumber, :paymentStatus, " +
-            ":settlementStatus, :remark)";
-    
-    List<MapSqlParameterSource> paramsList = reconFileDtlsList.stream()
-            .map(dto -> {
-                MapSqlParameterSource params = new MapSqlParameterSource();
-                params.addValue("rfdId", dto.getRfdId().toString());
-                params.addValue("rfsId", dto.getRfsId().toString());
-                params.addValue("atrnNum", dto.getAtrnNum());
-                params.addValue("paymentAmount", dto.getPaymentAmount());
-                params.addValue("reconStatus", dto.getReconStatus().name());
-                params.addValue("rowNumber", dto.getRowNumber());
-                params.addValue("recordType", dto.getRecordType());
-                params.addValue("paymentDate", dto.getPaymentDate());
-                params.addValue("bankRefNumber", dto.getBankRefNumber());
-                params.addValue("paymentStatus", dto.getPaymentStatus().name());
-                params.addValue("settlementStatus", dto.getSettlementStatus().name());
-                params.addValue("remark", dto.getRemark());
-                return params;
-            })
-            .collect(Collectors.toList());
-    
-    jdbcTemplate.batchUpdate(INSERT_RECON_FILE_DTLS, paramsList.toArray(new MapSqlParameterSource[0]));
-}
+above is my controller and reconFileDtlsDtos can you create postman request for this controller 
+in postman put some value as well for request  and creat 3- 4 reconFileDtlsDtos for List<ReconFileDtlsDto>
