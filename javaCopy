@@ -89,7 +89,4 @@ protected List<Object> convertToListOfObject(ViewTransactionMis viewTransactionM
 
 
 
-
-
-
-please use nullSafe here
+please use nullSafe here in  convertToListOfObject method.
