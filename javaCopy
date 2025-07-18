@@ -1,87 +1,204 @@
-protected List<Object> convertToListOfObject(ViewTransactionMis viewTransactionMis) {
-    return List.of(
-            nullSafe(viewTransactionMis.getMerchantId(), ""),
-            nullSafe(viewTransactionMis.getMerchantName(), ""),
-            nullSafe(viewTransactionMis.getMerchantCategory(), ""),
-            nullSafe(viewTransactionMis.getOrderRefNumber(), ""),
-            nullSafe(viewTransactionMis.getAtrnNum(), ""),
-            nullSafe(viewTransactionMis.getInstructionDateandTime(), ""),
-            nullSafe(viewTransactionMis.getCurrencyCode(), ""),
-            nullSafe(viewTransactionMis.getOrderAmount(), ""),
-            nullSafe(viewTransactionMis.getTotalFeeAbs(), ""),
-            nullSafe(viewTransactionMis.getGstNumber(), ""),
-            nullSafe(viewTransactionMis.getGatewayPostingAmount(), ""),
-            nullSafe(viewTransactionMis.getAmountSettled(), ""),
-            nullSafe(viewTransactionMis.getAvailableRefundAmount(), ""),
-            nullSafe(viewTransactionMis.getPayMode(), ""),
-            nullSafe(viewTransactionMis.getChannelBank(), ""),
-            nullSafe(viewTransactionMis.getGatewayTraceNumber(), ""),
-            nullSafe(viewTransactionMis.getTransactionStatus(), ""),
-            nullSafe(viewTransactionMis.getRemark(), ""),
-            nullSafe(viewTransactionMis.getMerchantRiskCategory(), ""),
-            nullSafe(viewTransactionMis.getAccessMedium(), ""),
-            nullSafe(viewTransactionMis.getPayProcId(), ""),
-            nullSafe(viewTransactionMis.getPayProcType(), ""),
-            nullSafe(viewTransactionMis.getMerchantAuthorize(), ""),
-            nullSafe(viewTransactionMis.getMerchantAuthorizeDate(), ""),
-            nullSafe(viewTransactionMis.getAutoSettlement(), ""),
-            nullSafe(viewTransactionMis.getBearableEntity(), ""),
-            nullSafe(viewTransactionMis.getCin(), ""),
-            nullSafe(viewTransactionMis.getFailReason(), ""),
-            nullSafe(viewTransactionMis.getMerchantFeeBearableAbs(), ""),
-            nullSafe(viewTransactionMis.getMerchantGstBearableAbs(), ""),
-            nullSafe(viewTransactionMis.getCustomerFeeBearableAbs(), ""),
-            nullSafe(viewTransactionMis.getCustomerGstBearableAbs(), ""),
-            nullSafe(viewTransactionMis.getSbuStatusDescription(), ""),
-            nullSafe(viewTransactionMis.getPaymentSuccessDate(), "")
-    );
+Below are my jdbc Querys,
+public static final String GET_VIEW_TRANSACTION_MIS=  "SELECT * FROM VIEW_TRANSACTION_MIS WHERE MERCHANT_ID = :mId";
+
+    public static final String GET_TRANSACTION_WISE_PAYOUT= "SELECT * FROM VIEW_TRANSACTION_WISE_PAYOUT_FORMAT WHERE MERCHANT_ID = :mId";
+
+    public static final String GET_SBIEPAY_AGG_BANK_DETAILS= "SELECT * FROM VIEW_SBIEPAY_AGG_BANKSTMT_REPORT WHERE MERCHANT_ID = :mId";
+
+Below are my enitity class
+
+@Data
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
+public class ViewTransactionMis {
+    private String mId;
+    private String merchantName;
+    private Character merchantCategory;
+    private String orderRefNumber;
+    private String atrnNum;
+    private Long instructionDateandTime;
+    private  String currencyCode;
+    private BigDecimal orderAmount;
+    private BigDecimal totalFeeAbs;
+    private String gstNumber;
+    private Integer gatewayPostingAmount;
+    private BigDecimal amountSettled;
+    private BigDecimal availableRefundAmount;
+    private String payMode;
+    private String channelBank;
+    private String gatewayTraceNumber;
+    private String transactionStatus;
+    private String remark;
+    private String accessMedium;
+    private String merchantRiskCategory;
+    private String payProcId;
+    private String payProcType;
+    private String merchantAuthorize;
+    private Long merchantAuthorizeDate;
+    private String autoSettlement;
+    private String bearableEntity;
+    private String cin;
+    private String failReason;
+    private BigDecimal merchantFeeBearableAbs;
+    private BigDecimal merchantGstBearableAbs;
+    private BigDecimal customerFeeBearableAbs;
+    private BigDecimal customerGstBearableAbs;
+    private String sbuStatusDescription;
+    private Date paymentSuccessDate;
+
 }
 
-
-
-protected List<Object> convertToListOfObject(ViewTransactionWisePayoutFormat payoutFormat) {
-    return List.of(
-            nullSafe(payoutFormat.getSettlementFileNumber(), ""),
-            nullSafe(payoutFormat.getSettlementTime(), ""),
-            nullSafe(payoutFormat.getMerchantId(), ""),
-            nullSafe(payoutFormat.getMerchantName(), ""),
-            nullSafe(payoutFormat.getOrderRefNumber(), ""),
-            nullSafe(payoutFormat.getAtrnNum(), ""),
-            nullSafe(payoutFormat.getCreatedDate(), ""),
-            nullSafe(payoutFormat.getCurrencyCode(), ""),
-            nullSafe(payoutFormat.getOrderAmount(), ""),
-            nullSafe(payoutFormat.getSettlementCurrency(), ""),
-            nullSafe(payoutFormat.getSettlementAmount(), ""),
-            nullSafe(payoutFormat.getCommissionPayable(), ""),
-            nullSafe(payoutFormat.getMerchantGstBearableAbs(), ""),
-            nullSafe(payoutFormat.getPayoutAmount(), ""),
-            nullSafe(payoutFormat.getChannelBank(), ""),
-            nullSafe(payoutFormat.getGatewayTraceNumber(), ""),
-            nullSafe(payoutFormat.getPayMode(), ""),
-            nullSafe(payoutFormat.getPayProcId(), ""),
-            nullSafe(payoutFormat.getOtherDetails(), ""),
-            nullSafe(payoutFormat.getBearableEntity(), ""),
-            nullSafe(payoutFormat.getCin(), "")
-    );
+@Data
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
+public class ViewSbiepayAggBankstmtReport {
+    private String mId;
+    private Character merchantCategory;
+    private String merchantName;
+    private String orderRefNumber;
+    private String atrnNum;
+    private String transactionDate;
+    private BigDecimal orderAmount;
+    private String currencyCode;
+    private String transactionStatus;
+    private String etlUploadDate;
+    private String etlStatus;
+    private String channelBank;
+    private String gatewayTraceNumber;
+    private String payMode;
+    private String gatewayStatus;
 }
 
-
-protected List<Object> convertToListOfObject(ViewSbiepayAggBankstmtReport aggBankstmtReport) {
-    return List.of(
-            nullSafe(aggBankstmtReport.getMerchantId(), ""),
-            nullSafe(aggBankstmtReport.getMerchantCategory(), ""),
-            nullSafe(aggBankstmtReport.getMerchantName(), ""),
-            nullSafe(aggBankstmtReport.getOrderRefNumber(), ""),
-            nullSafe(aggBankstmtReport.getAtrnNum(), ""),
-            nullSafe(aggBankstmtReport.getTransactionDate(), ""),
-            nullSafe(aggBankstmtReport.getOrderAmount(), ""),
-            nullSafe(aggBankstmtReport.getCurrencyCode(), ""),
-            nullSafe(aggBankstmtReport.getTransactionStatus(), ""),
-            nullSafe(aggBankstmtReport.getEtlUploadDate(), ""),
-            nullSafe(aggBankstmtReport.getEtlStatus(), ""),
-            nullSafe(aggBankstmtReport.getChannelBank(), ""),
-            nullSafe(aggBankstmtReport.getGatewayTraceNumber(), ""),
-            nullSafe(aggBankstmtReport.getPayMode(), ""),
-            nullSafe(aggBankstmtReport.getGatewayStatus(), "")
-    );
+@Data
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
+public class ViewTransactionWisePayoutFormat {
+    private String settlementFileNumber;
+    private String settlementTime;
+    private String mId;
+    private String merchantName;
+    private String orderRefNumber;
+    private String atrnNum;
+    private String createdDate;
+    private String currencyCode;
+    private BigDecimal orderAmount;
+    private String settlementCurrency;
+    private BigDecimal settlementAmount;
+    private BigDecimal commissionPayable;
+    private BigDecimal merchantGstBearableAbs;
+    private BigDecimal payoutAmount;
+    private String channelBank;
+    private String gatewayTraceNumber;
+    private String payMode;
+    private String payProcId;
+    private String otherDetails;
+    private Character bearableEntity;
+    private String cin;
 }
+
+Below are by Oracl data base tables colume name 
+Tbale name : VIEW_TRANSACTION_MIS
+
+MERCHANT_ID
+MERCHANT_NAME
+MERCHANT_CATEGORY
+ORDER_REF_NUMBER
+ATRN_NUM
+INSTRUCTION_DATEAND_TIME
+CURRENCY_CODE
+ORDER_AMOUNT
+TOTAL_FEE_ABS
+GST_NUMBER
+GATEWAY_POSTING_AMOUNT
+AMOUNT_SETTLED
+AVAILABLE_REFUND_AMOUNT
+PAY_MODE
+CHANNEL_BANK
+GATEWAY_TRACE_NUMBER
+TRANSACTION_STATUS
+REMARK
+MERCHANT_RISK_CATEGORY
+ACCESS_MEDIUM
+PAY_PROC_ID
+PAY_PROC_TYPE
+MERCHANT_AUTHORIZE
+MERCHANT_AUTHORIZE_DATE
+AUTO_SETTLEMENT
+BEARABLE_ENTITY
+CIN
+FAIL_REASON
+MERCHANT_FEE_BEARABLE_ABS
+MERCHANT_GST_BEARABLE_ABS
+CUSTOMER_FEE_BEARABLE_ABS
+CUSTOMER_GST_BEARABLE_ABS
+SUB_STATUS_DESCRIPTION
+PAYMENT_SUCCESS_DATE
+RFS_ID
+
+table Name : VIEW_SBIEPAY_AGG_BANKSTMT_REPORT
+
+MERCHANT_ID
+MERCHANT_CATEGORY
+MERCHANT_NAME
+ORDER_REF_NUMBER
+ATRN_NUM
+TRANSACTION_DATE
+ORDER_AMOUNT
+CURRENCY_CODE
+TRANSACTION_STATUS
+ETL_UPLOAD_DATE
+ETL_STATUS
+CHANNEL_BANK
+GATEWAY_TRACE_NUMBER
+PAY_MODE
+GATEWAY_STATUS
+
+
+Table name :VIEW_TRANSACTION_WISE_PAYOUT_FORMAT
+SETTLEMENT_FILE_NUMBER
+SETTLEMENT_TIME
+MERCHANT_ID
+MERCHANT_NAME
+ORDER_REF_NUMBER
+ATRN_NUM
+CREATED_DATE
+CURRENCY_CODE
+ORDER_AMOUNT
+SETTLEMENT_CURRENCY
+SETTLEMENT_AMOUNT
+COMMISSION_PAYABLE
+MERCHANT_GST_BEARABLE_ABS
+PAYOUT_AMOUNT
+CHANNEL_BANK
+GATEWAY_TRACE_NUMBER
+PAY_MODE
+PAY_PROC_ID
+OTHER_DETAILS
+BEARABLE_ENTITY
+CIN
+RFS_ID
+
+i need to write my above three querys as below 
+public static final String MERCHANT_PAYOUT = """
+                SELECT vmp.MERCHANT_ID AS mId,
+                vmp.MERCHANT_NAME as merchantName,
+                vmp.ORDER_AMOUNT as orderAmount,
+                vmp.CURRENCY_CODE as currencyCode,
+                vmp.SETTLEMENT_AMOUNT as settlementAmount,
+                vmp.SETTLEMENT_CURRENCY as settlementCurrency,
+                vmp.COMMISSION_PAYABLE as commissionPayable,
+                vmp.MERCHANT_GST_BEARABLE_ABS as merchantGstBearableAbs,
+                vmp.PAYOUT_AMOUNT as payoutAmount,
+                vmp.REFUND_ADJUSTED as refundAdjusted,
+                vmp.TDR_ON_REFUND_AMOUNT as tdrOnRefundAmount,
+                vmp.GST_ON_REFUND_AMOUNT as gstOnRefundAmount,
+                vmp.NET_REFUND_AMOUNT as netRefundAmount,
+                vmp.NET_PAYOUT_AMOUNT as netPayoutAmount,
+                vmp.PAYOUT_DATE as payoutDate,
+                vmp.TRANSACTION_COUNT as transactionCount,
+                vmp.CHARGEBACK_ADJUSTED as chargebackAdjusted
+                from VIEW_MERCHANT_WISE_PAYOUT_MIS_FORMAT vmp
+            """;
