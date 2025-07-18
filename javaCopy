@@ -202,3 +202,95 @@ public static final String MERCHANT_PAYOUT = """
                 vmp.CHARGEBACK_ADJUSTED as chargebackAdjusted
                 from VIEW_MERCHANT_WISE_PAYOUT_MIS_FORMAT vmp
             """;
+
+
+public static final String GET_VIEW_TRANSACTION_MIS = """
+    SELECT 
+        MERCHANT_ID AS mId,
+        MERCHANT_NAME AS merchantName,
+        MERCHANT_CATEGORY AS merchantCategory,
+        ORDER_REF_NUMBER AS orderRefNumber,
+        ATRN_NUM AS atrnNum,
+        INSTRUCTION_DATEAND_TIME AS instructionDateandTime,
+        CURRENCY_CODE AS currencyCode,
+        ORDER_AMOUNT AS orderAmount,
+        TOTAL_FEE_ABS AS totalFeeAbs,
+        GST_NUMBER AS gstNumber,
+        GATEWAY_POSTING_AMOUNT AS gatewayPostingAmount,
+        AMOUNT_SETTLED AS amountSettled,
+        AVAILABLE_REFUND_AMOUNT AS availableRefundAmount,
+        PAY_MODE AS payMode,
+        CHANNEL_BANK AS channelBank,
+        GATEWAY_TRACE_NUMBER AS gatewayTraceNumber,
+        TRANSACTION_STATUS AS transactionStatus,
+        REMARK AS remark,
+        MERCHANT_RISK_CATEGORY AS merchantRiskCategory,
+        ACCESS_MEDIUM AS accessMedium,
+        PAY_PROC_ID AS payProcId,
+        PAY_PROC_TYPE AS payProcType,
+        MERCHANT_AUTHORIZE AS merchantAuthorize,
+        MERCHANT_AUTHORIZE_DATE AS merchantAuthorizeDate,
+        AUTO_SETTLEMENT AS autoSettlement,
+        BEARABLE_ENTITY AS bearableEntity,
+        CIN AS cin,
+        FAIL_REASON AS failReason,
+        MERCHANT_FEE_BEARABLE_ABS AS merchantFeeBearableAbs,
+        MERCHANT_GST_BEARABLE_ABS AS merchantGstBearableAbs,
+        CUSTOMER_FEE_BEARABLE_ABS AS customerFeeBearableAbs,
+        CUSTOMER_GST_BEARABLE_ABS AS customerGstBearableAbs,
+        SUB_STATUS_DESCRIPTION AS sbuStatusDescription,
+        PAYMENT_SUCCESS_DATE AS paymentSuccessDate
+    FROM VIEW_TRANSACTION_MIS
+    WHERE MERCHANT_ID = :mId
+    """;
+
+
+public static final String GET_SBIEPAY_AGG_BANK_DETAILS = """
+    SELECT 
+        MERCHANT_ID AS mId,
+        MERCHANT_CATEGORY AS merchantCategory,
+        MERCHANT_NAME AS merchantName,
+        ORDER_REF_NUMBER AS orderRefNumber,
+        ATRN_NUM AS atrnNum,
+        TRANSACTION_DATE AS transactionDate,
+        ORDER_AMOUNT AS orderAmount,
+        CURRENCY_CODE AS currencyCode,
+        TRANSACTION_STATUS AS transactionStatus,
+        ETL_UPLOAD_DATE AS etlUploadDate,
+        ETL_STATUS AS etlStatus,
+        CHANNEL_BANK AS channelBank,
+        GATEWAY_TRACE_NUMBER AS gatewayTraceNumber,
+        PAY_MODE AS payMode,
+        GATEWAY_STATUS AS gatewayStatus
+    FROM VIEW_SBIEPAY_AGG_BANKSTMT_REPORT
+    WHERE MERCHANT_ID = :mId
+    """;
+
+
+public static final String GET_TRANSACTION_WISE_PAYOUT = """
+    SELECT 
+        SETTLEMENT_FILE_NUMBER AS settlementFileNumber,
+        SETTLEMENT_TIME AS settlementTime,
+        MERCHANT_ID AS mId,
+        MERCHANT_NAME AS merchantName,
+        ORDER_REF_NUMBER AS orderRefNumber,
+        ATRN_NUM AS atrnNum,
+        CREATED_DATE AS createdDate,
+        CURRENCY_CODE AS currencyCode,
+        ORDER_AMOUNT AS orderAmount,
+        SETTLEMENT_CURRENCY AS settlementCurrency,
+        SETTLEMENT_AMOUNT AS settlementAmount,
+        COMMISSION_PAYABLE AS commissionPayable,
+        MERCHANT_GST_BEARABLE_ABS AS merchantGstBearableAbs,
+        PAYOUT_AMOUNT AS payoutAmount,
+        CHANNEL_BANK AS channelBank,
+        GATEWAY_TRACE_NUMBER AS gatewayTraceNumber,
+        PAY_MODE AS payMode,
+        PAY_PROC_ID AS payProcId,
+        OTHER_DETAILS AS otherDetails,
+        BEARABLE_ENTITY AS bearableEntity,
+        CIN AS cin
+    FROM VIEW_TRANSACTION_WISE_PAYOUT_FORMAT
+    WHERE MERCHANT_ID = :mId
+    """;
+
