@@ -29,4 +29,29 @@ public class OpsReportRequest {
 i need to convert ReportRequestDto to OpsReportRequest by using MapStruct 
 and in OpsReportRequest set requestTime to System.currentTimeMillis()
 and set status to Status.PENDING  ( where Status is my enum class)
+----+--------------------
+
+import org.mapstruct.*;
+import java.util.UUID;
+
+@Mapper(componentModel = "spring")
+public interface ReportRequestMapper {
+
+    @Mapping(target = "oreId", ignore = true)
+    @Mapping(target = "reportType", source = "reportType")
+    @Mapping(target = "reportFilter", expression = "java(mapReportFiltersToString(dto.getReportFilters()))")
+    @Mapping(target = "requestTime", expression = "java(System.currentTimeMillis())")
+    @Mapping(target = "s3Path", ignore = true)  // Set as needed
+    @Mapping(target = "sftpPath", source = "sftpPath")
+    @Mapping(target = "status", constant = "PENDING")
+    @Mapping(target = "remark", ignore = true) // Set as needed
+    OpsReportRequest toEntity(ReportRequestDto dto);
+
+    // Custom mapping for complex fields (if needed)
+    default String mapReportFiltersToString(ReportFilters reportFilters) {
+        // Implement your logic to convert ReportFilters to String
+        return reportFilters != null ? reportFilters.toString() : null;
+    }
+}
+
 
