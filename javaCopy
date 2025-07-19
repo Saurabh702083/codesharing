@@ -1,57 +1,26 @@
-@Data
-@Builder
-public class ReportRequestDto {
-    private Report reportType;
-    private String sftpPath;
-    private ReportFilters reportFilters;
-}
-
-@Data
-@Entity
-@Builder
-@Table(name = "OPS_REPORT_REQUEST")
-public class OpsReportRequest {
-    @Id
-    @GeneratedValue(strategy = GenerationType.UUID)
-    private UUID oreId;
-    private Report reportType;
-    private String reportFilter;
-    private Long requestTime;
-    @Column(name="S3_PATH")
-    private String s3Path;
-    private String sftpPath;
-    @Enumerated(EnumType.STRING)
-    private Status status;
-    private String remark;
-
-}
-
-i need to convert ReportRequestDto to OpsReportRequest by using MapStruct 
-and in OpsReportRequest set requestTime to System.currentTimeMillis()
-and set status to Status.PENDING  ( where Status is my enum class)
-----+--------------------
-
-import org.mapstruct.*;
-import java.util.UUID;
-
-@Mapper(componentModel = "spring")
-public interface ReportRequestMapper {
-
-    @Mapping(target = "oreId", ignore = true)
-    @Mapping(target = "reportType", source = "reportType")
-    @Mapping(target = "reportFilter", expression = "java(mapReportFiltersToString(dto.getReportFilters()))")
-    @Mapping(target = "requestTime", expression = "java(System.currentTimeMillis())")
-    @Mapping(target = "s3Path", ignore = true)  // Set as needed
-    @Mapping(target = "sftpPath", source = "sftpPath")
-    @Mapping(target = "status", constant = "PENDING")
-    @Mapping(target = "remark", ignore = true) // Set as needed
-    OpsReportRequest toEntity(ReportRequestDto dto);
-
-    // Custom mapping for complex fields (if needed)
-    default String mapReportFiltersToString(ReportFilters reportFilters) {
-        // Implement your logic to convert ReportFilters to String
-        return reportFilters != null ? reportFilters.toString() : null;
+ public OpsReportRequest updateS3Path(UUID oreId, String s3Path){
+        if(reportGenerationRepository.existsByOreIdAndS3Path(oreId,s3Path)) {
+           throw new OpsException(ALREADY_EXIST_ERROR_CODE, MessageFormat.format(ALREADY_EXIST_ERROR_MESSAGE, S3_PATH));
+        }
+        return reportGenerationRepository.updateS3PathById(oreId,s3Path);
     }
+
+@Repository
+public interface ReportGenerationRepository extends JpaRepository<OpsReportRequest, UUID> {
+
+
+    @Transactional
+    @Query("UPDATE OpsReportRequest o SET o.s3Path= :s3Path WHERE o.oreId= :oreId")
+    OpsReportRequest updateS3PathById(UUID oreId , String s3Path);
+
+    boolean existsByOreIdAndS3Path(UUID oreId , String s3Path);
+
 }
+
+
+above is my code , its showing error as in my updateS3PathById its does not return OpsReportRequest
+so how to solve it.
+
+My requriment is i have to first check if s3Path exist for that oreId , if yes then it will throw an error and if no then update the s3Path for the oreId
 
 
