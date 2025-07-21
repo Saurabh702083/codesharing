@@ -6,7 +6,13 @@ now when AAT_PAYOUT report type is called we have to pass payoutId as a filter t
 table MERCHANT_ACCOUNT_PAYOUT based upon payoutId and ifscCode starting with SBIN and then generate the .txt file as 
 report and that txt file does not have header.
 
+suppose we get the data from MERCHANT_ACCOUNT_PAYOUT in abow formate but in txt file that we generate we have to write in format like below 
+1000310005ABC123XYZ123255066SBIN0000025430334464565
+1000410006ABC456XYZ456255077SBIN0000012330334464515
 
+it means we have to write full row in single line without any space and charater.
+
+once the report is generated in .txt formate then as usale we have tore the file info in reportManagement and the publish into kafka
 
 
 
