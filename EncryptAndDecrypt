@@ -2,4 +2,8 @@ Above is my code that will generate the report based upon reportType and then up
 now there is some additional condition has to be added. now two more Report type has to be added 
 AAT_PAYOUT 
 
+now when AAT_PAYOUT report type is called we have to pass payoutId as a filter to get the data. we have get the data from 
+table MERCHANT_ACCOUNT_PAYOUT based upon payoutId and ifscCode starting with SBIN and then generate the .txt file as 
+report and that txt file does not have header.
+
 
