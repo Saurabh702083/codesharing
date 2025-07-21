@@ -1,3 +1,465 @@
+ @Service
+@RequiredArgsConstructor
+public class ReconReportService {
+
+    private static final List<String> merchantPayoutHeader = List.of("MERCHANT ID", "MERCHANT NAME", "TRANSACTION AMOUNT", "TRANSACTION CURRENCY", "SETTLEMENT AMOUNT", "SETTLEMENT CURRENCY", "COMMISSION PAYABLE", "GST", "PAYOUT AMOUNT", "REFUND AMOUNT", "TDR ON REFUND AMOUNT", "GST ON REFUND AMOUNT", "NET REFUND AMOUNT", "NET PAYOUT AMOUNT", "PAYOUT DATE", "TRANSACTION COUNT", "CHARGEBACK AMOUNT");
+    private static final List<String> transactionRefundHeader = List.of("SETTLEMENT FILE NUMBER", "SETTLEMENT DATE", "MERCHANT ID", "MERCHANT NAME", "MERCHANT ORDER NUMBER", "TRANSACTION ID", "TRANSACTION BOOKING DATE & TIME", "TRANSACTION CURRENCY", "TRANSACTION AMOUNT", "REFUND CURRENCY", "REFUND AMOUNT", "COMMISSION PAYABLE", "GST", "NET REFUND AMOUNT", "GATEWAY NAME", "GATEWAY TRACE NO", "PAY MODE CODE", "REFUND TYPE", "REFUND BOOKING DATE", "ARRN NO");
+    private static final List<String> transactionMisHeader = List.of("MERCHANT ID","MERCHANT NAME","MERCHANT CATEGORY","MERCHANT ORDER NO","TRANSACTION ID","INSTRUCTION DATE AND TIME","TRANSACTION CURRENCY","MERCHANT ORDER AMOUNT","TOTAL FEE ABS","GST","GATEWAY POSTING AMOUNT","AMOUNT SETTLED","AVAILABLE REFUND AMOUNT","PAY MODE CODE","PAY GATEWAY","GATEWAY TRACE NUMBER","STATUS","REMARK","MERCHANT RISK CATEGORY","ACCESS MEDIUM","PAY PROC","PAY PROC TYPE","MERCHANT AUTHORIZE","MERCHANT AUTHORIZE DATE","AUTO SETTLEMENT","TRANSACTION FEE FLAG","CIN NUMBER","RESPONSE REASON","MERCHANT BEARABLE FEE","MERCHANT BEARABLE GST","CUSTOMER BEARABLE FEE","CUSTOMER BEARABLE GST","SUB STATUS DESCRIPTION","PAYMENT SUCCESS DATE");
+    private static final List<String> transactionPayoutHeader =List.of("SETTLEMENT FILE NUMBER","SETTLEMENT DATE","MERCHANT ID","MERCHANT NAME","MERCHANT ORDER NO","TRANSACTION ID","TRANSACTION BOOKING DATE & TIME","TRANSACTION CURRENCY","TRANSACTION AMOUNT","SETTLEMENT CURRENCY","SETTLEMENT AMOUNT","COMMISSION PAYABLE","GST","PAYOUT AMOUNT","GATEWAY NAME","GATEWAY TRACE NUMBER","PAY MODE CODE","PAY PROC","OTHER DETAILS","TRANSACTION FEE FLAG","CIN NUMBER");
+    private static final List<String> sbiepayAggBankHeader =List.of("MERCHANT ID","MERCHANT CATEGORY","MERCHANT NAME","MERCHANT ORDER NUMBER","TRANSACTION ID","TRANSACTION BOOKING DATE & TIME","TRANSACTION AMOUNT","TRANSACTION CURRENCY","TRANSACTION STATUS","ETL UPLOAD DATE","ETL STATUS","GATEWAY NAME","GATEWAY TRACE NUMBER","PAY MODE CODE","GATEWAY STATUS");
+    private final LoggerUtility log = LoggerFactoryUtility.getLogger(this.getClass());
+    private final FileGeneratorService fileGeneratorService;
+    private final MerchantPayoutDao merchantPayoutDao;
+    private final S3Service s3Service;
+    private final ReportManagementDao reportManagementDao;
+    private final ViewTransactionMisDao viewTransactionMisDao;
+    private final ViewTransactionWisePayoutDao viewTransactionWisePayoutDao;
+    private final SbiepayAggBankstmtReportDao sbiepayAggBankstmtReportDao;
+    private final ReconReportConfirmationPublisher conformationPublisher;
+    private final ObjectMapper objectMapper;
+
+
+    public void processReport(ReportDto reportDto) {
+        log.info("Processing ReportDto with reportType: {}", reportDto.getReportType());
+        String mId = reportDto.getReportFilters().getMId();
+        List<UUID> rfsIdList= reportDto.getReportFilters().getRfsId();
+        switch (reportDto.getReportType()) {
+            case TRANSACTION_MIS: generateTransactionMis(mId,reportDto.getOreId());
+            case TRANSACTION_WISE_PAYOUT_MIS: generateTransactionWisePayout(mId,reportDto.getOreId());
+            case SBIEPAY_AGG_BANKSTMT_REPORT: generateSbiepayAggBankDtl(mId,reportDto.getOreId());
+            case MERCHANT_WISE_PAYOUT_MIS: generateMerchantPayoutReport(reportDto.getOreId(),rfsIdList);
+            case TRANSACTION_WISE_REFUND_MIS: generateTransactionRefund(reportDto.getOreId(),rfsIdList);
+            default:
+                log.error("Unknown report type: {}", reportDto.getReportType());
+                throw new ReportingException(INVALID_ERROR_CODE, MessageFormat.format(INVALID_ERROR_MESSAGE, REPORT_TYPE,reportDto.getReportType()));
+        }
+    }
+
+    /**
+     * Generates Merchant Payout Report and uploads it to S3
+     *
+     * @param mId    String for report
+     * @param oreId List of UUIDs to fetch data
+     * @return ReportingResponse<String>
+     */
+    public void generateTransactionMis(String mId,UUID oreId){
+        List<ViewTransactionMis> list= viewTransactionMisDao.getViewTransactionData(mId);
+        validateNotEmpty(list);
+        List<List<Object>> fileData = list.stream().map(this::convertToListOfObject).toList();
+        buildReport(ReportFormat.CSV, transactionMisHeader, fileData, Report.TRANSACTION_MIS, oreId);
+
+    }
+
+    /**
+     * Generates Merchant Payout Report and uploads it to S3
+     *
+     * @param mId    String for report
+     * @param oreId List of UUIDs to fetch data
+     * @return ReportingResponse<String>
+     */
+    public void generateTransactionWisePayout(String mId,UUID oreId){
+        List<ViewTransactionWisePayoutFormat> list = viewTransactionWisePayoutDao.getViewTransactionPayoutData(mId);
+        validateNotEmpty(list);
+        List<List<Object>> fileData = list.stream().map(this::convertToListOfObject).toList();
+        buildReport(ReportFormat.CSV, transactionPayoutHeader, fileData, Report.TRANSACTION_WISE_PAYOUT_MIS, oreId);
+    }
+
+    /**
+     * Generates Merchant Payout Report and uploads it to S3
+     *
+     * @param mId    String for report
+     * @param oreId List of UUIDs to fetch data
+     * @return ReportingResponse<String>
+     */
+    public void generateSbiepayAggBankDtl(String mId,UUID oreId){
+        List<ViewSbiepayAggBankstmtReport> list = sbiepayAggBankstmtReportDao.getViewTransactionData(mId);
+        validateNotEmpty(list);
+        List<List<Object>> fileData = list.stream().map(this::convertToListOfObject).toList();
+        buildReport(ReportFormat.CSV, sbiepayAggBankHeader, fileData, Report.SBIEPAY_AGG_BANKSTMT_REPORT, oreId);
+    }
+    /**
+     * Generates Merchant Payout Report and uploads it to S3
+     *
+     * @param id    UUID for report
+     * @param rfsId List of UUIDs to fetch data
+     * @return ReportingResponse<String>
+     */
+    public void generateMerchantPayoutReport(UUID id, List<UUID> rfsId) {
+        log.info("Generating Merchant Payout Report for ReportID: {} and RfsIDs: {}", id, rfsId);
+        List<MerchantPayout> list = merchantPayoutDao.getMerchantPayoutData(rfsId);
+        log.info("Fetched Merchant Payout data of size: {}", list.size());
+        List<List<Object>> fileData = list.stream().map(this::convertToListOfObject).toList();
+        buildReport(ReportFormat.CSV, merchantPayoutHeader, fileData, Report.MERCHANT_WISE_PAYOUT_MIS, id);
+    }
+
+    /**
+     * Generates Transaction Refund Report and uploads it to S3
+     *
+     * @param id    UUID for report
+     * @param rfsId List of UUIDs to fetch data
+     * @return ReportingResponse<String>
+     */
+    public void generateTransactionRefund(UUID id, List<UUID> rfsId) {
+        log.info("Generating Transaction Refund Report for ReportID: {} and RfsIDs: {}", id, rfsId);
+        List<TransactionRefund> list = merchantPayoutDao.getTransactionRefundData(rfsId);
+        log.info("Fetched Transaction Refund data of size: {}", list.size());
+        List<List<Object>> fileData = list.stream().map(this::convertToListOfObject).toList();
+        buildReport(ReportFormat.CSV, transactionRefundHeader, fileData, Report.TRANSACTION_WISE_REFUND_MIS, id);
+    }
+
+    /**
+     * Builds the report, uploads it to S3, and saves report details in DB
+     *
+     * @param reportFormat Format of the report (CSV, XLSX etc.)
+     * @param header       Report headers
+     * @param fileData     Report data rows
+     * @param report       Report type
+     * @param id           Report UUID
+     */
+    protected void buildReport(ReportFormat reportFormat, List<String> header, List<List<Object>> fileData, Report report, UUID id) {
+        log.info("Building report: {} with format: {}", report, reportFormat);
+        FileModel fileModel = fileGeneratorService.buildFileModel(reportFormat, header, fileData, Map.of("headers", header, "rows", fileData));
+        ReportFile reportFile = fileGeneratorService.generateFile(reportFormat, report, fileModel);
+        String s3FileName = s3Service.uploadFile(reportFile.getName(), reportFile.getContent());
+        log.info("Report uploaded to S3 with file name: {}", s3FileName);
+        ReportManagementDto reportManagementDto = ReportManagementDto.builder().reportId(id).mId("0").durationFromDate(0L).durationToDate(0L).format(ReportFormat.CSV).status(ReportStatus.GENERATED).remarks("Report request from operation service").filePath(s3FileName).build();
+        reportManagementDao.saveReport(reportManagementDto);
+        log.info("Report data saved in DB for ReportID: {}", id);
+        publishReportConfirmationAlert(id, s3FileName, report);
+    }
+
+    /**
+     *
+     * @param id UUID
+     * @param s3FilePath String
+     * @param report Report
+     */
+    private void publishReportConfirmationAlert(UUID id, String s3FilePath, Report report) {
+        try {
+            String reportConfirmationMessage = objectMapper.writeValueAsString(
+                    ReportResponseDto.builder().oreId(id).s3FilePath(s3FilePath).build());
+            conformationPublisher.publish(report.getName() + "_" + id, reportConfirmationMessage);
+        } catch (Exception e) {
+            log.error("Error in publishing alert", e);
+        }
+    }
+
+
+    protected List<Object> convertToListOfObject(MerchantPayout merchantPayout) {
+        return List.of(
+                nullSafe(merchantPayout.getMId(), ""),
+                nullSafe(merchantPayout.getMerchantName(), ""),
+                nullSafe(merchantPayout.getOrderAmount(), BigDecimal.ZERO),
+                nullSafe(merchantPayout.getCurrencyCode(), ""),
+                nullSafe(merchantPayout.getSettlementAmount(), BigDecimal.ZERO),
+                nullSafe(merchantPayout.getSettlementCurrency(), ""),
+                nullSafe(merchantPayout.getCommissionPayable(), BigDecimal.ZERO),
+                nullSafe(merchantPayout.getMerchantGstBearableAbs(), BigDecimal.ZERO),
+                nullSafe(merchantPayout.getPayoutAmount(), BigDecimal.ZERO),
+                nullSafe(merchantPayout.getRefundAdjusted(), BigDecimal.ZERO),
+                nullSafe(merchantPayout.getTdrOnRefundAmount(), BigDecimal.ZERO),
+                nullSafe(merchantPayout.getGstOnRefundAmount(), BigDecimal.ZERO),
+                nullSafe(merchantPayout.getNetRefundAmount(), BigDecimal.ZERO),
+                nullSafe(merchantPayout.getNetPayoutAmount(), BigDecimal.ZERO),
+                nullSafe(merchantPayout.getPayoutDate(), ""),
+                nullSafe(merchantPayout.getTransactionCount(), BigDecimal.ZERO),
+                nullSafe(merchantPayout.getChargebackAdjusted(), BigDecimal.ZERO)
+        );
+    }
+
+    protected List<Object> convertToListOfObject(TransactionRefund transactionRefund) {
+        return List.of(
+                nullSafe(transactionRefund.getSettlementFileNumber(), ""),
+                nullSafe(transactionRefund.getSettlementTime(), ""),
+                nullSafe(transactionRefund.getMId(), ""),
+                nullSafe(transactionRefund.getMerchantName(), ""),
+                nullSafe(transactionRefund.getOrderRefNumber(), ""),
+                nullSafe(transactionRefund.getAtrnNum(), ""),
+                nullSafe(transactionRefund.getCreatedDate(), ""),
+                nullSafe(transactionRefund.getCurrencyCode(), ""),
+                nullSafe(transactionRefund.getOrderAmount(), BigDecimal.ZERO),
+                nullSafe(transactionRefund.getRefundCurrency(), ""),
+                nullSafe(transactionRefund.getSettlementAmount(), BigDecimal.ZERO),
+                nullSafe(transactionRefund.getCommissionPayable(), 0),
+                nullSafe(transactionRefund.getMerchantGstBearableAbs(), BigDecimal.ZERO),
+                nullSafe(transactionRefund.getNetRefundAmount(), 0),
+                nullSafe(transactionRefund.getChannelBank(), ""),
+                nullSafe(transactionRefund.getGatewayTraceNumber(), ""),
+                nullSafe(transactionRefund.getPayMode(), ""),
+                nullSafe(transactionRefund.getRefundType(), ""),
+                nullSafe(transactionRefund.getRefundBookingDate(), ""),
+                nullSafe(transactionRefund.getArrnNum(), "")
+        );
+    }
+
+    protected List<Object> convertToListOfObject(ViewTransactionMis viewTransactionMis) {
+        return List.of(
+                nullSafe(viewTransactionMis.getMId(), ""),
+                nullSafe(viewTransactionMis.getMerchantName(), ""),
+                nullSafe(viewTransactionMis.getMerchantCategory(), ""),
+                nullSafe(viewTransactionMis.getOrderRefNumber(), ""),
+                nullSafe(viewTransactionMis.getAtrnNum(), ""),
+                nullSafe(viewTransactionMis.getInstructionDateandTime(), 0L),
+                nullSafe(viewTransactionMis.getCurrencyCode(), ""),
+                nullSafe(viewTransactionMis.getOrderAmount(), BigDecimal.ZERO),
+                nullSafe(viewTransactionMis.getTotalFeeAbs(), BigDecimal.ZERO),
+                nullSafe(viewTransactionMis.getGstNumber(), ""),
+                nullSafe(viewTransactionMis.getGatewayPostingAmount(), 0),
+                nullSafe(viewTransactionMis.getAmountSettled(), BigDecimal.ZERO),
+                nullSafe(viewTransactionMis.getAvailableRefundAmount(), BigDecimal.ZERO),
+                nullSafe(viewTransactionMis.getPayMode(), ""),
+                nullSafe(viewTransactionMis.getChannelBank(), ""),
+                nullSafe(viewTransactionMis.getGatewayTraceNumber(), ""),
+                nullSafe(viewTransactionMis.getTransactionStatus(), ""),
+                nullSafe(viewTransactionMis.getRemark(), ""),
+                nullSafe(viewTransactionMis.getMerchantRiskCategory(), ""),
+                nullSafe(viewTransactionMis.getAccessMedium(), ""),
+                nullSafe(viewTransactionMis.getPayProcId(), ""),
+                nullSafe(viewTransactionMis.getPayProcType(), ""),
+                nullSafe(viewTransactionMis.getMerchantAuthorize(), ""),
+                nullSafe(viewTransactionMis.getMerchantAuthorizeDate(), 0L),
+                nullSafe(viewTransactionMis.getAutoSettlement(), ""),
+                nullSafe(viewTransactionMis.getBearableEntity(), ""),
+                nullSafe(viewTransactionMis.getCin(), ""),
+                nullSafe(viewTransactionMis.getFailReason(), ""),
+                nullSafe(viewTransactionMis.getMerchantFeeBearableAbs(), BigDecimal.ZERO),
+                nullSafe(viewTransactionMis.getMerchantGstBearableAbs(), BigDecimal.ZERO),
+                nullSafe(viewTransactionMis.getCustomerFeeBearableAbs(), BigDecimal.ZERO),
+                nullSafe(viewTransactionMis.getCustomerGstBearableAbs(), BigDecimal.ZERO),
+                nullSafe(viewTransactionMis.getSbuStatusDescription(), ""),
+                nullSafe(viewTransactionMis.getPaymentSuccessDate(), "")
+        );
+    }
+
+
+
+    protected List<Object> convertToListOfObject(ViewTransactionWisePayoutFormat payoutFormat) {
+        return List.of(
+                nullSafe(payoutFormat.getSettlementFileNumber(), ""),
+                nullSafe(payoutFormat.getSettlementTime(), ""),
+                nullSafe(payoutFormat.getMId(), ""),
+                nullSafe(payoutFormat.getMerchantName(), ""),
+                nullSafe(payoutFormat.getOrderRefNumber(), ""),
+                nullSafe(payoutFormat.getAtrnNum(), ""),
+                nullSafe(payoutFormat.getCreatedDate(), ""),
+                nullSafe(payoutFormat.getCurrencyCode(), ""),
+                nullSafe(payoutFormat.getOrderAmount(), BigDecimal.ZERO),
+                nullSafe(payoutFormat.getSettlementCurrency(), ""),
+                nullSafe(payoutFormat.getSettlementAmount(), BigDecimal.ZERO),
+                nullSafe(payoutFormat.getCommissionPayable(), BigDecimal.ZERO),
+                nullSafe(payoutFormat.getMerchantGstBearableAbs(), BigDecimal.ZERO),
+                nullSafe(payoutFormat.getPayoutAmount(), BigDecimal.ZERO),
+                nullSafe(payoutFormat.getChannelBank(), ""),
+                nullSafe(payoutFormat.getGatewayTraceNumber(), ""),
+                nullSafe(payoutFormat.getPayMode(), ""),
+                nullSafe(payoutFormat.getPayProcId(), ""),
+                nullSafe(payoutFormat.getOtherDetails(), ""),
+                nullSafe(payoutFormat.getBearableEntity(), ""),
+                nullSafe(payoutFormat.getCin(), "")
+        );
+    }
+
+
+    protected List<Object> convertToListOfObject(ViewSbiepayAggBankstmtReport aggBankstmtReport) {
+        return List.of(
+                nullSafe(aggBankstmtReport.getMId(), ""),
+                nullSafe(aggBankstmtReport.getMerchantCategory(), ""),
+                nullSafe(aggBankstmtReport.getMerchantName(), ""),
+                nullSafe(aggBankstmtReport.getOrderRefNumber(), ""),
+                nullSafe(aggBankstmtReport.getAtrnNum(), ""),
+                nullSafe(aggBankstmtReport.getTransactionDate(), ""),
+                nullSafe(aggBankstmtReport.getOrderAmount(), BigDecimal.ZERO),
+                nullSafe(aggBankstmtReport.getCurrencyCode(), ""),
+                nullSafe(aggBankstmtReport.getTransactionStatus(), ""),
+                nullSafe(aggBankstmtReport.getEtlUploadDate(), ""),
+                nullSafe(aggBankstmtReport.getEtlStatus(), ""),
+                nullSafe(aggBankstmtReport.getChannelBank(), ""),
+                nullSafe(aggBankstmtReport.getGatewayTraceNumber(), ""),
+                nullSafe(aggBankstmtReport.getPayMode(), ""),
+                nullSafe(aggBankstmtReport.getGatewayStatus(), "")
+        );
+    }
+
+    /**
+     * Validating report data list, if it is empty then throwing exception.
+     * @param list List
+     * @param <T> Order, Refund etc
+     */
+    private <T> void validateNotEmpty(List<T> list) {
+        if (CollectionUtils.isEmpty(list))
+            throw new ReportingException(NOT_FOUND_ERROR_CODE, NO_RECORD_FOUND);
+    }
+
+    private Object nullSafe(Object value, Object defaultValue) {
+        return ObjectUtils.isEmpty(value) ? defaultValue : value;
+    }
+}
+
+@Data
+@Builder
+@AllArgsConstructor
+@NoArgsConstructor
+public class ReportDto {
+    private UUID oreId;
+    private Report reportType;
+    private ReportFilters reportFilters;
+}
+
+@Data
+@Builder
+@AllArgsConstructor
+@NoArgsConstructor
+public class ReportFilters {
+    private List<UUID> rfsId;
+    private String mId;
+    private UUID payoutId;
+    private Long toDate;
+    private Long fromDate;
+}
+
+@Service
+@RequiredArgsConstructor
+public class FileGeneratorService {
+    private final LoggerUtility log = LoggerFactoryUtility.getLogger(this.getClass());
+    private final FileGenerator fileGenerator;
+    private final ZipFileGenerator zipFileGenerator;
+    private final S3Service s3Service;
+
+    public FileModel buildFileModel(ReportFormat reportFormat, List<String> header, List<List<Object>> fileData, Map<String, Object> pdfFileData) {
+        log.debug("Started buildFileModel for reportFormat: {}, header: {}, fileData: {}, pdfFileData: {}", reportFormat, header, fileData, pdfFileData);
+        return fileGenerator.buildFileModel(reportFormat, header, fileData, pdfFileData);
+    }
+}
+
+-------------------------------------------
+@Component
+@RequiredArgsConstructor
+public class FileGenerator {
+    private static final LoggerUtility logger = LoggerFactoryUtility.getLogger(FileGenerator.class);
+
+
+    private final PdfGenerator pdfGenerator;
+
+
+    public void downloadFile(HttpServletResponse response, ReportFormat reportFormat, Report report, String mId, FileModel fileModel) {
+        logger.info("Download requested for report format: {}, report: {}, mId: {}", reportFormat, report.getName(), mId);
+        switch (reportFormat) {
+            case CSV -> {
+                CSVFileModel csvFileModel = (CSVFileModel) fileModel;
+                CSVGenerator.downloadCsvFile(response, report.getName(), mId, csvFileModel.getHeaders(), csvFileModel.getFileData());
+                logger.debug("CSV file generation complete for report: {}", report.getName());
+            }
+            case XLS -> {
+                ExcelFileModel xlsFileModel = (ExcelFileModel) fileModel;
+                ExcelGenerator.downloadExcelFile(response, report.getName(), mId, xlsFileModel.getHeaders(), xlsFileModel.getFileData());
+                logger.debug("Excel file generation complete for report: {}", report.getName());
+            }
+            case PDF -> {
+                PdfFileModel pdfFileModel = (PdfFileModel) fileModel;
+                pdfGenerator.downloadPdfFile(response, report.getName(), mId, report.getTemplateName(), pdfFileModel.getFileData());
+                logger.debug("PDF file generation complete for report: {}", report.getName());
+            }
+            default -> {
+                logger.error("Unsupported report format: {}", reportFormat);
+                throw new IllegalArgumentException("Requested File Formatter not supported");
+            }
+        }
+    }
+
+
+   
+    public ReportFile generateFile(ReportFormat reportFormat, Report report, String mId, FileModel fileModel) {
+        logger.info("Generating file for report format: {}, report: {}, mId: {}", reportFormat, report.getName(), mId);
+        switch (reportFormat) {
+            case CSV -> {
+                CSVFileModel csvFileModel = (CSVFileModel) fileModel;
+                return CSVGenerator.csvFileGenerator(report.getName(), mId, csvFileModel.getHeaders(), csvFileModel.getFileData());
+            }
+            case XLS -> {
+                ExcelFileModel xlsFileModel = (ExcelFileModel) fileModel;
+                return ExcelGenerator.excelFileGenerator(report.getName(), mId, xlsFileModel.getHeaders(), xlsFileModel.getFileData());
+            }
+            case PDF -> {
+                PdfFileModel pdfFileModel = (PdfFileModel) fileModel;
+                return pdfGenerator.pdfFileGenerator(report.getName(), mId, report.getTemplateName(), pdfFileModel.getFileData());
+            }
+            default -> {
+                logger.error("Unsupported report format: {}", reportFormat);
+                throw new IllegalArgumentException("Requested File Formatter not supported");
+            }
+        }
+    }
+
+
+    public ReportFile generateFile(ReportFormat reportFormat, Report report, FileModel fileModel) {
+        logger.info("Generating file for report format: {}, report: {}, mId: {}", reportFormat, report.getName());
+        CSVFileModel csvFileModel = (CSVFileModel) fileModel;
+        return CSVGenerator.csvFileGenerator(report.getName(), csvFileModel.getHeaders(), csvFileModel.getFileData());
+    }
+
+
+    public FileModel buildFileModel(ReportFormat reportFormat, List<String> header, List<List<Object>> fileData, Map<String, Object> pdfFileData) {
+        logger.info("Building file model for report format: {}", reportFormat);
+        return switch (reportFormat) {
+            case CSV -> CSVFileModel.builder().headers(header).fileData(fileData).build();
+            case XLS -> ExcelFileModel.builder().headers(header).fileData(fileData).build();
+            case PDF -> PdfFileModel.builder().fileData(pdfFileData).build();
+            case null -> CSVFileModel.builder().headers(header).fileData(fileData).build();
+        };
+    }
+----------------------------------------------
+@Service
+@RequiredArgsConstructor
+public class FileGeneratorService {
+    private final LoggerUtility log = LoggerFactoryUtility.getLogger(this.getClass());
+    private final FileGenerator fileGenerator;
+    private final ZipFileGenerator zipFileGenerator;
+    private final S3Service s3Service;
+
+    public void downloadFile(HttpServletResponse response, ReportFormat reportFormat, Report report, String mId, FileModel fileModel) {
+        log.info("Started downloadFile for reportFormat: {}, report: {},mId: {},fileModel: {}", reportFormat, report.getName(),mId,fileModel);
+        fileGenerator.downloadFile(response, reportFormat, report, mId, fileModel);
+    }
+
+    public ReportFile generateFile(ReportFormat reportFormat, Report report, String mId, FileModel fileModel) {
+        log.info("Started fileGenerator for reportFormat: {}, report: {}, mId: {}, fileModel: {}", reportFormat, report.getName(),mId,fileModel);
+        return fileGenerator.generateFile(reportFormat, report, mId, fileModel);
+    }
+
+    public ReportFile generateFile(ReportFormat reportFormat, Report report, FileModel fileModel) {
+        log.info("Started fileGenerator for reportFormat: {}, report: {}", reportFormat, report.getName());
+        return fileGenerator.generateFile(reportFormat, report, fileModel);
+    }
+
+
+    public void generateZipFile(HttpServletResponse response, ReportFormat reportFormat, Report report, String mId, List<FileModel> fileModels) {
+        log.info("Started zipFileGenerator for reportFormat: {}, report: {}, mId: {}, fileModels: {}", reportFormat, report.getName(),mId,fileModels);
+        zipFileGenerator.generateZipFile(response, reportFormat, report, mId, fileModels);
+    }
+
+
+    public FileModel buildFileModel(ReportFormat reportFormat, List<String> header, List<List<Object>> fileData, Map<String, Object> pdfFileData) {
+        log.debug("Started buildFileModel for reportFormat: {}, header: {}, fileData: {}, pdfFileData: {}", reportFormat, header, fileData, pdfFileData);
+        return fileGenerator.buildFileModel(reportFormat, header, fileData, pdfFileData);
+    }
+
+
+    public void downloadFile(HttpServletResponse httpResponse, ReportFormat reportFormat, String filePath) {
+        log.info("Started downloadFile for reportFormat: {}, filePath: {}", reportFormat, filePath);
+        String contentType = switch (reportFormat) {
+            case CSV -> "text/csv";
+            case XLS -> "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+            case PDF -> MediaType.APPLICATION_PDF_VALUE;
+        };
+        ReportUtils.setHeader(httpResponse, contentType, FilenameUtils.getName(filePath));
+        s3Service.downloadFile(httpResponse, filePath);
+    }
+}
+
+
+
+
+
 
 
 
