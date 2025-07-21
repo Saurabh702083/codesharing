@@ -1,2 +1,5 @@
 Above is my code that will generate the report based upon reportType and then update it into reportManagement table and then publish it .
+now there is some additional condition has to be added. now two more Report type has to be added 
+AAT_PAYOUT 
+
 
