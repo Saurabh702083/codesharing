@@ -14,5 +14,58 @@ it means we have to write full row in single line without any space and charater
 
 once the report is generated in .txt formate then as usale we have tore the file info in reportManagement and the publish into kafka
 
+--------------------
+
+public void generateAatPayoutReport(UUID reportId, UUID payoutId) {
+    log.info("Generating AAT Payout report for payoutId: {}", payoutId);
+
+    List<MerchantAccountPayout> data = merchantAccountPayoutDao.getByPayoutId(payoutId);
+    validateNotEmpty(data); // already defined
+
+    // Generate TXT lines
+    List<String> lines = data.stream()
+        .map(this::formatAatPayoutLine)
+        .collect(Collectors.toList());
+
+    // Convert lines to file-compatible rows (one per list)
+    List<List<Object>> fileData = lines.stream()
+        .map(List::of)
+        .collect(Collectors.toList());
+
+    // Build plain text file without header
+    FileModel txtModel = TxtFileModel.builder()
+        .lines(lines) // custom model for Text
+        .build();
+
+    ReportFile reportFile = fileGenerator.generateTxtFile(Report.AAT_PAYOUT, txtModel);
+    String fileName = s3Service.uploadFile(reportFile.getName(), reportFile.getContent());
+
+    // Save to DB
+    ReportManagementDto reportDto = ReportManagementDto.builder()
+        .reportId(reportId)
+        .mId("0")
+        .durationFromDate(0L)
+        .durationToDate(0L)
+        .format(ReportFormat.TXT)
+        .status(ReportStatus.GENERATED)
+        .remarks("AAT Payout report")
+        .filePath(fileName)
+        .build();
+
+    reportManagementDao.saveReport(reportDto);
+    publishReportConfirmationAlert(reportId, fileName, Report.AAT_PAYOUT);
+}
 
 
+
+
+public ReportFile generateTxtFile(Report report, TxtFileModel txtFileModel) {
+    String fileName = String.format("%s%s_%s.txt", ReportingConstant.REPORT_ROOT_FOLDER,
+            report.getName(), LocalDateTime.now().format(FORMATTER_DD_MM_YY_HH_MM_SS));
+    String content = String.join("\n", txtFileModel.getLines());
+
+    return ReportFile.builder()
+            .name(fileName)
+            .content(content.getBytes(StandardCharsets.UTF_8))
+            .build();
+}
