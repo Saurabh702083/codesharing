@@ -456,6 +456,70 @@ public class FileGeneratorService {
     }
 }
 
+-------------------------------------------------
+@NoArgsConstructor(access = AccessLevel.PRIVATE)
+public class CSVGenerator {
+
+    private static final LoggerUtility log = LoggerFactoryUtility.getLogger(CSVGenerator.class);
+
+
+    protected static void downloadCsvFile(HttpServletResponse response, String reportName, String mId, List<String> headerName, List<List<Object>> objects) {
+        log.info("Started download CSV file for reportName: {}, headerName: {},  objects: {}", reportName, headerName, CollectionUtils.size(objects));
+        try {
+            String fileName = getFileName(reportName, mId);
+            String csvContent = generateCSV(headerName, objects);
+
+            setHeader(response, "text/csv", fileName);
+            OutputStream outputStream = response.getOutputStream();
+            outputStream.write(csvContent.getBytes(StandardCharsets.UTF_8));
+            outputStream.flush();
+        } catch (Exception e) {
+            log.error("Error occurred during CSV File downloading : {}", e.getMessage());
+            throw new ReportingException(ErrorConstants.FILE_GENERATION_ERROR_CODE, MessageFormat.format(ErrorConstants.FILE_GENERATION_ERROR_MESSAGE, "csv", e.getMessage()));
+        }
+    }
+
+    protected static ReportFile csvFileGenerator(String reportName, String mId, List<String> headerName, List<List<Object>> objects) {
+        log.info("Started csv file generator for reportName : {}, mId {}, headerName: {},  objects.size: {}", reportName, mId, headerName, CollectionUtils.size(objects));
+        String fileName = getFileName(reportName, mId);
+        String csvContent = generateCSV(headerName, objects);
+        return ReportFile.builder().name(fileName).content(csvContent.getBytes(StandardCharsets.UTF_8)).build();
+    }
+
+ 
+    protected static ReportFile csvFileGenerator(String reportName, List<String> headerName, List<List<Object>> objects) {
+        log.info("Started csv file generator for reportName : {}, mId {}, headerName: {},  objects.size: {}", reportName, headerName, CollectionUtils.size(objects));
+        String fileName = getFileName(reportName);
+        String csvContent = generateCSV(headerName, objects);
+        return ReportFile.builder().name(fileName).content(csvContent.getBytes(StandardCharsets.UTF_8)).build();
+    }
+
+
+    private static String getFileName(String reportName, String mId) {
+        return ReportingConstant.REPORT_ROOT_FOLDER + StringEscapeUtils.escapeJava(mId + "_" + reportName + "_" + System.currentTimeMillis() + ".csv");
+    }
+
+  
+    private static String getFileName(String reportName) {
+        return String.format("%s%s_%s.csv", ReportingConstant.REPORT_ROOT_FOLDER, StringEscapeUtils.escapeJava(reportName), LocalDateTime.now().format(FORMATTER_DD_MM_YY_HH_MM_SS));
+    }
+
+
+    private static String generateCSV(List<String> headers, List<List<Object>> objects) {
+        StringBuilder csvContent = new StringBuilder();
+        csvContent.append(String.join(",", headers)).append("\n");
+        for (List<Object> rowData : objects) {
+            String row = rowData.stream()
+                    .map(data -> ObjectUtils.isNotEmpty(data) ? data.toString() : StringUtils.EMPTY)
+                    .collect(Collectors.joining(","));
+            csvContent.append(row).append("\n");
+        }
+        return csvContent.toString();
+    }
+
+}
+
+
 
 
 
