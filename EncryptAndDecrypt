@@ -7,3 +7,6 @@ table MERCHANT_ACCOUNT_PAYOUT based upon payoutId and ifscCode starting with SBI
 report and that txt file does not have header.
 
 
+
+
+
