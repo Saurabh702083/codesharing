@@ -70,16 +70,43 @@ public ReportFile generateTxtFile(Report report, TxtFileModel txtFileModel) {
             .build();
 }
 ------------------------------------
-public class ReportDto {
-    private UUID oreId;
-    private Report reportType;
-    private ReportFilters reportFilters;
+@Repository
+@RequiredArgsConstructor
+public class MerchantAccountPayoutRepository {
+    private final LoggerUtility log = LoggerFactoryUtility.getLogger(this.getClass());
+    private final NamedParameterJdbcTemplate jdbcTemplate;
+
+    public List<MerchantAccountPayout> fetchAatMerchantPayout (UUID payoutId) {
+        log.info("Getting data for {} payoutId.", payoutId);
+        MapSqlParameterSource params = new MapSqlParameterSource().addValue("payoutId", payoutId.toString());
+        return jdbcTemplate.query(AAT_MERCHANT_ACCOUNT_PAYOUT, params, new MerchantAccountPayoutMapper());
+    }
 }
 
-public class ReportFilters {
-    private List<UUID> rfsId;
-    private String mId;
-    private UUID payoutId;
-    private Long toDate;
-    private Long fromDate;
-}
+public static final String AAT_MERCHANT_ACCOUNT_PAYOUT= """
+            SELECT m FROM MERCHANT_ACCOUNT_PAYOUT m
+            WHERE m.PAYOUT_ID= HEXTORAW(REPLACE(:payoutId, '-', '')) AND m.IFSC_CODE LIKE 'SBIN%'
+            """;
+
+Above is my code to get List<MerchantAccountPayout>, but there is now some change in it,
+now we have to get List<String> in place of List<MerchantAccountPayout> and the queary has also changed 
+SELECT
+                'R41' ||--TYPE
+                LPAD(REPLACE(TO_CHAR(FINAL_PAYOUT,'FM9999999990.00'),'.',''), 16, '0') ||--AMOUNT
+                LPAD((0), 16,0) ||--COMMISSION AMOUNT
+                LPAD(33324315125, 19, 0) ||--SBIACCNO
+                RPAD('SBIePay', 35)|| --REMITTER NAME
+                RPAD('State Bank of India Payment Aggregator', 35)||--REMITTER ADDRESS
+                LPAD(BANK_ACC_NUMBER,32)||--BENEFI ACC NO
+                RPAD('R S JUNIOR', 35)||--BENEFI NAME
+                RPAD('CBD MUMBAI', 35)||--BENEFI ADDRESS
+                RPAD(BANK_IFSC_CODE,11)||----BENEFI IFSC
+                RPAD('SETTLEMENTTOMERCHANTACCOUNT', 35)||
+                RPAD('URGENT', 35)||
+                RPAD('SBIePAY PAYMENT', 58)||
+                RPAD('OTHER INFO', 51) AS "PAYOUT DETAILS"
+             FROM MERCHANT_ACCOUNT_PAYOUT
+
+avove is query i test it in orcal database and it return 3 String . so i have to change my old with this one in my code and it should also return a 3 string 
+
+please make the neccesery changes init
