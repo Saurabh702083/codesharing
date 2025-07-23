@@ -112,3 +112,10 @@ avove is query i test it in orcal database and it return 3 String . so i have to
 please make the neccesery changes init
 
 ReflectiveMethodInvocation: public java.util.List com.epay.reporting.repository.view.MerchantAccountPayoutRepository.fetchNeftMerchantPayout(java.util.UUID); target is of class [com.epay.reporting.repository.view.MerchantAccountPayoutRepository]
+
+
+SELECT '01'||
+            LPAD(BANK_ACC_NUMBER,17,0)||
+            LPAD(REPLACE(TO_CHAR(FINAL_PAYOUT,'FM9999999990.00'),'.',''), 16, '0')||
+            'SETTLEMENTTOMERCHANTACCOUNT'
+            FROM  MERCHANT_ACCOUNT_PAYOUT
