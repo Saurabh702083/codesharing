@@ -69,3 +69,17 @@ public ReportFile generateTxtFile(Report report, TxtFileModel txtFileModel) {
             .content(content.getBytes(StandardCharsets.UTF_8))
             .build();
 }
+------------------------------------
+public class ReportDto {
+    private UUID oreId;
+    private Report reportType;
+    private ReportFilters reportFilters;
+}
+
+public class ReportFilters {
+    private List<UUID> rfsId;
+    private String mId;
+    private UUID payoutId;
+    private Long toDate;
+    private Long fromDate;
+}
