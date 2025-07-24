@@ -1,121 +1,210 @@
-Above is my code that will generate the report based upon reportType and then update it into reportManagement table and then publish it .
-now there is some additional condition has to be added. now two more Report type has to be added 
-AAT_PAYOUT 
-
-now when AAT_PAYOUT report type is called we have to pass payoutId as a filter to get the data. we have get the data from 
-table MERCHANT_ACCOUNT_PAYOUT based upon payoutId and ifscCode starting with SBIN and then generate the .txt file as 
-report and that txt file does not have header.
-
-suppose we get the data from MERCHANT_ACCOUNT_PAYOUT in abow formate but in txt file that we generate we have to write in format like below 
-1000310005ABC123XYZ123255066SBIN0000025430334464565
-1000410006ABC456XYZ456255077SBIN0000012330334464515
-
-it means we have to write full row in single line without any space and charater.
-
-once the report is generated in .txt formate then as usale we have tore the file info in reportManagement and the publish into kafka
-
---------------------
-
-public void generateAatPayoutReport(UUID reportId, UUID payoutId) {
-    log.info("Generating AAT Payout report for payoutId: {}", payoutId);
-
-    List<MerchantAccountPayout> data = merchantAccountPayoutDao.getByPayoutId(payoutId);
-    validateNotEmpty(data); // already defined
-
-    // Generate TXT lines
-    List<String> lines = data.stream()
-        .map(this::formatAatPayoutLine)
-        .collect(Collectors.toList());
-
-    // Convert lines to file-compatible rows (one per list)
-    List<List<Object>> fileData = lines.stream()
-        .map(List::of)
-        .collect(Collectors.toList());
-
-    // Build plain text file without header
-    FileModel txtModel = TxtFileModel.builder()
-        .lines(lines) // custom model for Text
-        .build();
-
-    ReportFile reportFile = fileGenerator.generateTxtFile(Report.AAT_PAYOUT, txtModel);
-    String fileName = s3Service.uploadFile(reportFile.getName(), reportFile.getContent());
-
-    // Save to DB
-    ReportManagementDto reportDto = ReportManagementDto.builder()
-        .reportId(reportId)
-        .mId("0")
-        .durationFromDate(0L)
-        .durationToDate(0L)
-        .format(ReportFormat.TXT)
-        .status(ReportStatus.GENERATED)
-        .remarks("AAT Payout report")
-        .filePath(fileName)
-        .build();
-
-    reportManagementDao.saveReport(reportDto);
-    publishReportConfirmationAlert(reportId, fileName, Report.AAT_PAYOUT);
-}
-
-
-
-
-public ReportFile generateTxtFile(Report report, TxtFileModel txtFileModel) {
-    String fileName = String.format("%s%s_%s.txt", ReportingConstant.REPORT_ROOT_FOLDER,
-            report.getName(), LocalDateTime.now().format(FORMATTER_DD_MM_YY_HH_MM_SS));
-    String content = String.join("\n", txtFileModel.getLines());
-
-    return ReportFile.builder()
-            .name(fileName)
-            .content(content.getBytes(StandardCharsets.UTF_8))
-            .build();
-}
-------------------------------------
-@Repository
+@Component
 @RequiredArgsConstructor
-public class MerchantAccountPayoutRepository {
-    private final LoggerUtility log = LoggerFactoryUtility.getLogger(this.getClass());
-    private final NamedParameterJdbcTemplate jdbcTemplate;
+public class TxtGenerator {
+    private static final LoggerUtility log = LoggerFactoryUtility.getLogger(TxtGenerator.class);
 
-    public List<MerchantAccountPayout> fetchAatMerchantPayout (UUID payoutId) {
-        log.info("Getting data for {} payoutId.", payoutId);
-        MapSqlParameterSource params = new MapSqlParameterSource().addValue("payoutId", payoutId.toString());
-        return jdbcTemplate.query(AAT_MERCHANT_ACCOUNT_PAYOUT, params, new MerchantAccountPayoutMapper());
+    protected static ReportFile txtFileGenerator(Report reportName, TxtFileModel txtFileModel) {
+        log.info("Started txt file generator for reportName : {}  objects.size: {}", reportName.getName(),  CollectionUtils.size(txtFileModel.getLines()));
+        String fileName = getFileName(reportName.getName());
+        String content = generateTxt(txtFileModel);
+        return ReportFile.builder().name(fileName).content(content.getBytes(StandardCharsets.UTF_8)).build();
+    }
+
+    private static String getFileName(String reportName) {
+        return String.format("%s%s_%s.txt", ReportingConstant.REPORT_ROOT_FOLDER,
+                reportName, LocalDateTime.now().format(FORMATTER_DD_MM_YY_HH_MM_SS));
+    }
+
+    private static String generateTxt(TxtFileModel txtFileModel){
+        return String.join("\n", txtFileModel.getLines());
     }
 }
 
-public static final String AAT_MERCHANT_ACCOUNT_PAYOUT= """
-            SELECT m FROM MERCHANT_ACCOUNT_PAYOUT m
-            WHERE m.PAYOUT_ID= HEXTORAW(REPLACE(:payoutId, '-', '')) AND m.IFSC_CODE LIKE 'SBIN%'
-            """;
+@Component
+@RequiredArgsConstructor
+public class FileGenerator {
+    private static final LoggerUtility logger = LoggerFactoryUtility.getLogger(FileGenerator.class);
+    private final PdfGenerator pdfGenerator;
 
-Above is my code to get List<MerchantAccountPayout>, but there is now some change in it,
-now we have to get List<String> in place of List<MerchantAccountPayout> and the queary has also changed 
-SELECT
-                'R41' ||--TYPE
-                LPAD(REPLACE(TO_CHAR(FINAL_PAYOUT,'FM9999999990.00'),'.',''), 16, '0') ||--AMOUNT
-                LPAD((0), 16,0) ||--COMMISSION AMOUNT
-                LPAD(33324315125, 19, 0) ||--SBIACCNO
-                RPAD('SBIePay', 35)|| --REMITTER NAME
-                RPAD('State Bank of India Payment Aggregator', 35)||--REMITTER ADDRESS
-                LPAD(BANK_ACC_NUMBER,32)||--BENEFI ACC NO
-                RPAD('R S JUNIOR', 35)||--BENEFI NAME
-                RPAD('CBD MUMBAI', 35)||--BENEFI ADDRESS
-                RPAD(BANK_IFSC_CODE,11)||----BENEFI IFSC
-                RPAD('SETTLEMENTTOMERCHANTACCOUNT', 35)||
-                RPAD('URGENT', 35)||
-                RPAD('SBIePAY PAYMENT', 58)||
-                RPAD('OTHER INFO', 51) AS "PAYOUT DETAILS"
-             FROM MERCHANT_ACCOUNT_PAYOUT
+    public void downloadFile(HttpServletResponse response, ReportFormat reportFormat, Report report, String mId, FileModel fileModel) {
+        logger.info("Download requested for report format: {}, report: {}, mId: {}", reportFormat, report.getName(), mId);
+        switch (reportFormat) {
+            case CSV -> {
+                CSVFileModel csvFileModel = (CSVFileModel) fileModel;
+                CSVGenerator.downloadCsvFile(response, report.getName(), mId, csvFileModel.getHeaders(), csvFileModel.getFileData());
+                logger.debug("CSV file generation complete for report: {}", report.getName());
+            }
+            case XLS -> {
+                ExcelFileModel xlsFileModel = (ExcelFileModel) fileModel;
+                ExcelGenerator.downloadExcelFile(response, report.getName(), mId, xlsFileModel.getHeaders(), xlsFileModel.getFileData());
+                logger.debug("Excel file generation complete for report: {}", report.getName());
+            }
+            case PDF -> {
+                PdfFileModel pdfFileModel = (PdfFileModel) fileModel;
+                pdfGenerator.downloadPdfFile(response, report.getName(), mId, report.getTemplateName(), pdfFileModel.getFileData());
+                logger.debug("PDF file generation complete for report: {}", report.getName());
+            }
+            default -> {
+                logger.error("Unsupported report format: {}", reportFormat);
+                throw new IllegalArgumentException("Requested File Formatter not supported");
+            }
+        }
+    }
 
-avove is query i test it in orcal database and it return 3 String . so i have to change my old with this one in my code and it should also return a 3 string 
+----------------------
 
-please make the neccesery changes init
+    public ReportFile generateFile(ReportFormat reportFormat, Report report, String mId, FileModel fileModel) {
+        logger.info("Generating file for report format: {}, report: {}, mId: {}", reportFormat, report.getName(), mId);
+        switch (reportFormat) {
+            case CSV -> {
+                CSVFileModel csvFileModel = (CSVFileModel) fileModel;
+                return CSVGenerator.csvFileGenerator(report.getName(), mId, csvFileModel.getHeaders(), csvFileModel.getFileData());
+            }
+            case XLS -> {
+                ExcelFileModel xlsFileModel = (ExcelFileModel) fileModel;
+                return ExcelGenerator.excelFileGenerator(report.getName(), mId, xlsFileModel.getHeaders(), xlsFileModel.getFileData());
+            }
+            case PDF -> {
+                PdfFileModel pdfFileModel = (PdfFileModel) fileModel;
+                return pdfGenerator.pdfFileGenerator(report.getName(), mId, report.getTemplateName(), pdfFileModel.getFileData());
+            }
+            default -> {
+                logger.error("Unsupported report format: {}", reportFormat);
+                throw new IllegalArgumentException("Requested File Formatter not supported");
+            }
+        }
+    }
 
-ReflectiveMethodInvocation: public java.util.List com.epay.reporting.repository.view.MerchantAccountPayoutRepository.fetchNeftMerchantPayout(java.util.UUID); target is of class [com.epay.reporting.repository.view.MerchantAccountPayoutRepository]
+    public ReportFile generateFile(ReportFormat reportFormat, Report report, FileModel fileModel) {
+        logger.info("Generating file for report format: {}, report: {}, mId: {}", reportFormat, report.getName());
+        CSVFileModel csvFileModel = (CSVFileModel) fileModel;
+        return CSVGenerator.csvFileGenerator(report.getName(), csvFileModel.getHeaders(), csvFileModel.getFileData());
+    }
+
+    public ReportFile generateFile(Report report, TxtFileModel txtFileModel){
+        logger.info("Generating file for report format: TXT, report: {}", report.getName());
+        return TxtGenerator.txtFileGenerator(report,txtFileModel);
+
+    }
+
+    public FileModel buildFileModel(ReportFormat reportFormat, List<String> header, List<List<Object>> fileData, Map<String, Object> pdfFileData) {
+        logger.info("Building file model for report format: {}", reportFormat);
+        return switch (reportFormat) {
+            case CSV -> CSVFileModel.builder().headers(header).fileData(fileData).build();
+            case XLS -> ExcelFileModel.builder().headers(header).fileData(fileData).build();
+            case PDF -> PdfFileModel.builder().fileData(pdfFileData).build();
+            case TXT -> null;
+            case null -> CSVFileModel.builder().headers(header).fileData(fileData).build();
+        };
+    }
+
+}
 
 
-SELECT '01'||
-            LPAD(BANK_ACC_NUMBER,17,0)||
-            LPAD(REPLACE(TO_CHAR(FINAL_PAYOUT,'FM9999999990.00'),'.',''), 16, '0')||
-            'SETTLEMENTTOMERCHANTACCOUNT'
-            FROM  MERCHANT_ACCOUNT_PAYOUT
+@Service
+@RequiredArgsConstructor
+public class FileGeneratorService {
+    private final LoggerUtility log = LoggerFactoryUtility.getLogger(this.getClass());
+    private final FileGenerator fileGenerator;
+    private final ZipFileGenerator zipFileGenerator;
+    private final S3Service s3Service;
+
+  
+    public void downloadFile(HttpServletResponse response, ReportFormat reportFormat, Report report, String mId, FileModel fileModel) {
+        log.info("Started downloadFile for reportFormat: {}, report: {},mId: {},fileModel: {}", reportFormat, report.getName(),mId,fileModel);
+        fileGenerator.downloadFile(response, reportFormat, report, mId, fileModel);
+    }
+  
+    public ReportFile generateFile(ReportFormat reportFormat, Report report, String mId, FileModel fileModel) {
+        log.info("Started fileGenerator for reportFormat: {}, report: {}, mId: {}, fileModel: {}", reportFormat, report.getName(),mId,fileModel);
+        return fileGenerator.generateFile(reportFormat, report, mId, fileModel);
+    }
+
+    public ReportFile generateFile(ReportFormat reportFormat, Report report, FileModel fileModel) {
+        log.info("Started fileGenerator for reportFormat: {}, report: {}", reportFormat, report.getName());
+        return fileGenerator.generateFile(reportFormat, report, fileModel);
+    }
+
+    public ReportFile generateFile(Report report, TxtFileModel txtFileModel) {
+        log.info("Started fileGenerator for reportFormat: TXT, report: {}", report.getName());
+        return fileGenerator.generateFile(report,txtFileModel);
+    }
+
+    public void generateZipFile(HttpServletResponse response, ReportFormat reportFormat, Report report, String mId, List<FileModel> fileModels) {
+        log.info("Started zipFileGenerator for reportFormat: {}, report: {}, mId: {}, fileModels: {}", reportFormat, report.getName(),mId,fileModels);
+        zipFileGenerator.generateZipFile(response, reportFormat, report, mId, fileModels);
+    }
+
+    public FileModel buildFileModel(ReportFormat reportFormat, List<String> header, List<List<Object>> fileData, Map<String, Object> pdfFileData) {
+        log.debug("Started buildFileModel for reportFormat: {}, header: {}, fileData: {}, pdfFileData: {}", reportFormat, header, fileData, pdfFileData);
+        return fileGenerator.buildFileModel(reportFormat, header, fileData, pdfFileData);
+    }
+    public void downloadFile(HttpServletResponse httpResponse, ReportFormat reportFormat, String filePath) {
+        log.info("Started downloadFile for reportFormat: {}, filePath: {}", reportFormat, filePath);
+        String contentType = switch (reportFormat) {
+            case CSV -> "text/csv";
+            case XLS -> "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+            case PDF -> MediaType.APPLICATION_PDF_VALUE;
+            case TXT -> "text/TXT";
+        };
+        ReportUtils.setHeader(httpResponse, contentType, FilenameUtils.getName(filePath));
+        s3Service.downloadFile(httpResponse, filePath);
+    }
+}
+---------------
+@Service
+@RequiredArgsConstructor
+public class ReconReportService {
+
+    protected static final List<String> merchantPayoutHeader = List.of("MERCHANT ID", "MERCHANT NAME", "TRANSACTION AMOUNT", "TRANSACTION CURRENCY", "SETTLEMENT AMOUNT", "SETTLEMENT CURRENCY", "COMMISSION PAYABLE", "GST", "PAYOUT AMOUNT", "REFUND AMOUNT", "TDR ON REFUND AMOUNT", "GST ON REFUND AMOUNT", "NET REFUND AMOUNT", "NET PAYOUT AMOUNT", "PAYOUT DATE", "TRANSACTION COUNT", "CHARGEBACK AMOUNT");
+    protected static final List<String> transactionRefundHeader = List.of("SETTLEMENT FILE NUMBER", "SETTLEMENT DATE", "MERCHANT ID", "MERCHANT NAME", "MERCHANT ORDER NUMBER", "TRANSACTION ID", "TRANSACTION BOOKING DATE & TIME", "TRANSACTION CURRENCY", "TRANSACTION AMOUNT", "REFUND CURRENCY", "REFUND AMOUNT", "COMMISSION PAYABLE", "GST", "NET REFUND AMOUNT", "GATEWAY NAME", "GATEWAY TRACE NO", "PAY MODE CODE", "REFUND TYPE", "REFUND BOOKING DATE", "ARRN NO");
+    protected static final List<String> transactionMisHeader = List.of("MERCHANT ID","MERCHANT NAME","MERCHANT CATEGORY","MERCHANT ORDER NO","TRANSACTION ID","INSTRUCTION DATE AND TIME","TRANSACTION CURRENCY","MERCHANT ORDER AMOUNT","TOTAL FEE ABS","GST","GATEWAY POSTING AMOUNT","AMOUNT SETTLED","AVAILABLE REFUND AMOUNT","PAY MODE CODE","PAY GATEWAY","GATEWAY TRACE NUMBER","STATUS","REMARK","MERCHANT RISK CATEGORY","ACCESS MEDIUM","PAY PROC","PAY PROC TYPE","MERCHANT AUTHORIZE","MERCHANT AUTHORIZE DATE","AUTO SETTLEMENT","TRANSACTION FEE FLAG","CIN NUMBER","RESPONSE REASON","MERCHANT BEARABLE FEE","MERCHANT BEARABLE GST","CUSTOMER BEARABLE FEE","CUSTOMER BEARABLE GST","SUB STATUS DESCRIPTION","PAYMENT SUCCESS DATE");
+    protected static final List<String> transactionPayoutHeader =List.of("SETTLEMENT FILE NUMBER","SETTLEMENT DATE","MERCHANT ID","MERCHANT NAME","MERCHANT ORDER NO","TRANSACTION ID","TRANSACTION BOOKING DATE & TIME","TRANSACTION CURRENCY","TRANSACTION AMOUNT","SETTLEMENT CURRENCY","SETTLEMENT AMOUNT","COMMISSION PAYABLE","GST","PAYOUT AMOUNT","GATEWAY NAME","GATEWAY TRACE NUMBER","PAY MODE CODE","PAY PROC","OTHER DETAILS","TRANSACTION FEE FLAG","CIN NUMBER");
+    protected static final List<String> sbiepayAggBankHeader =List.of("MERCHANT ID","MERCHANT CATEGORY","MERCHANT NAME","MERCHANT ORDER NUMBER","TRANSACTION ID","TRANSACTION BOOKING DATE & TIME","TRANSACTION AMOUNT","TRANSACTION CURRENCY","TRANSACTION STATUS","ETL UPLOAD DATE","ETL STATUS","GATEWAY NAME","GATEWAY TRACE NUMBER","PAY MODE CODE","GATEWAY STATUS");
+    private final LoggerUtility log = LoggerFactoryUtility.getLogger(this.getClass());
+    private final FileGeneratorService fileGeneratorService;
+    private final MerchantPayoutDao merchantPayoutDao;
+    private final LocalS3Service s3Service;
+    private final ReportManagementDao reportManagementDao;
+    private final ViewTransactionMisDao viewTransactionMisDao;
+    private final ViewTransactionWisePayoutDao viewTransactionWisePayoutDao;
+    private final SbiepayAggBankstmtReportDao sbiepayAggBankstmtReportDao;
+    private final ReconReportConfirmationPublisher conformationPublisher;
+    private final MerchantAccountPayoutDao merchantAccountPayoutDao;
+    private final ObjectMapper objectMapper;
+
+    /**
+     * This will generate the Report based on Report type.
+     * @param reportDto
+     */
+    public void processReport(ReportDto reportDto) {
+        log.info("Processing ReportDto with reportType: {}", reportDto.getReportType());
+        String mId = reportDto.getReportFilters().getMId();
+        List<UUID> rfsIdList= reportDto.getReportFilters().getRfsId();
+        switch (reportDto.getReportType()) {
+            case TRANSACTION_MIS -> generateTransactionMis(mId,reportDto.getOreId());
+            case TRANSACTION_WISE_PAYOUT_MIS -> generateTransactionWisePayout(mId,reportDto.getOreId());
+            case SBIEPAY_AGG_BANKSTMT_REPORT -> generateSbiepayAggBankDtl(mId,reportDto.getOreId());
+            case MERCHANT_WISE_PAYOUT_MIS -> generateMerchantPayoutReport(reportDto.getOreId(),rfsIdList);
+            case TRANSACTION_WISE_REFUND_MIS -> generateTransactionRefund(reportDto.getOreId(),rfsIdList);
+            case AAT_PAYOUT -> generateAatMerchantAccountPayout(reportDto.getReportFilters().getPayoutId(),reportDto.getOreId());
+            case NEFT_PAYOUT -> generateNeftMerchantAccountPayout(reportDto.getReportFilters().getPayoutId(),reportDto.getOreId());
+            default -> throw new ReportingException(INVALID_ERROR_CODE, MessageFormat.format(INVALID_ERROR_MESSAGE, REPORT_TYPE,reportDto.getReportType()));
+        }
+    }
+ public  void generateNeftMerchantAccountPayout(UUID payoutId, UUID oreId){
+        List<String> list = merchantAccountPayoutDao.neftMerchantAccountPayoutDao();
+        validateNotEmpty(list);
+        buildReport(ReportFormat.TXT,Report.NEFT_PAYOUT, oreId, list);
+    }
+
+  protected void buildReport(ReportFormat reportFormat, Report report, UUID id, List<String> lines) {
+        TxtFileModel fileModel = TxtFileModel.builder().lines(lines).build();
+        ReportFile reportFile = fileGeneratorService.generateFile(report, fileModel);
+        String s3FileName = s3Service.uploadFile(reportFile.getName(), reportFile.getContent());
+        log.info("Report uploaded to S3 with file name: {}", s3FileName);
+        ReportManagementDto reportDto = ReportManagementDto.builder().reportId(id).mId("0").durationFromDate(0L).durationToDate(0L).format(reportFormat).status(ReportStatus.GENERATED).remarks("Report request from operation service").filePath(s3FileName).build();
+        reportManagementDao.saveReport(reportDto);
+        log.info("Report data saved in DB for ReportID: {}", id);
+        publishReportConfirmationAlert(id, s3FileName, report);
+    }
