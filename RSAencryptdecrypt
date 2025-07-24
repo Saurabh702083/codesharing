@@ -1,159 +1,88 @@
-package EncryptionAndDecryption.example.EncryptionAndDecryption.RSAencryptdecrypt.service;
 
-//import com.sbi.epay.RSAencryptdecrypt.constant.RESEncryptDecryptConstant;
-//import com.sbi.epay.RSAencryptdecrypt.exception.RESEncryptDecryptException;
-//import com.sbi.epay.logging.utility.LoggerFactoryUtility;
-//import com.sbi.epay.logging.utility.LoggerUtility;
-//import lombok.AllArgsConstructor;
+@Builder
+@Data
+public class TxtFileModel {
+    private List<String> headers;  // optional, can be null
+    private List<List<String>> lines;  // each inner list is a row of strings (each column as string)
+}
 
-import javax.crypto.BadPaddingException;
-import javax.crypto.Cipher;
-import javax.crypto.IllegalBlockSizeException;
-import javax.crypto.NoSuchPaddingException;
-import java.security.InvalidAlgorithmParameterException;
-import java.security.InvalidKeyException;
-import java.security.NoSuchAlgorithmException;
-import java.security.PrivateKey;
-import java.util.Base64;
+public class TxtFileModelBuilder {
 
-import EncryptionAndDecryption.example.EncryptionAndDecryption.RSAencryptdecrypt.constant.RESEncryptDecryptConstant;
-import EncryptionAndDecryption.example.EncryptionAndDecryption.RSAencryptdecrypt.exception.RESEncryptDecryptException;
-import lombok.AllArgsConstructor;
+    /**
+     * Convert list of Objects into TxtFileModel lines based on headers.
+     * @param dataList List of objects
+     * @param headers List of property names or headers (in order)
+     * @param <T> Type of object
+     * @return TxtFileModel with header and lines
+     */
+    public static <T> TxtFileModel buildFromObjects(List<String> headers, List<T> dataList) {
+        List<List<String>> lines = new ArrayList<>();
+        if (dataList == null || dataList.isEmpty()) {
+            return TxtFileModel.builder().headers(headers).lines(lines).build();
+        }
+        // Reflectively read properties based on headers field names
+        for (T obj : dataList) {
+            List<String> row = new ArrayList<>();
+            for (String field : headers) {
+                try {
+                    Field f = obj.getClass().getDeclaredField(field);
+                    f.setAccessible(true);
+                    Object value = f.get(obj);
+                    row.add(value != null ? value.toString() : "");
+                } catch (NoSuchFieldException | IllegalAccessException e) {
+                    row.add("");
+                }
+            }
+            lines.add(row);
+        }
+        return TxtFileModel.builder().headers(headers).lines(lines).build();
+    }
 
-@AllArgsConstructor
-public class RSADecrypt {
-    RSAKeyGen rsaKeyGen;
-//    private  static final LoggerUtility log = LoggerFactoryUtility.getLogger(RSADecrypt.class);
+    /**
+     * Build from raw string lines without header.
+     */
+    public static TxtFileModel buildFromStrings(List<String> lines) {
+        List<List<String>> wrappedLines = lines == null ? Collections.emptyList() : lines.stream()
+            .map(List::of)  // wrap each line in a list (single column)
+            .collect(Collectors.toList());
+        return TxtFileModel.builder().headers(null).lines(wrappedLines).build();
+    }
+}
 
-    public static String decrypt(String data, PrivateKey privateKey) throws RESEncryptDecryptException {
-        try {
-//            log.debug("RSADecrypt decrypt key : {} keyToDecrypt: {}", data, RSAKeyGen.generateKeyPair().getPrivate());
-            Cipher cipher = Cipher.getInstance("RSA/ECB/OAEPWithSHA-256AndMGF1Padding");
-            cipher.init(Cipher.DECRYPT_MODE, privateKey);
-            byte[] decryptedBytes = cipher.doFinal(Base64.getDecoder().decode(data));
-            return new String(decryptedBytes);
-        } catch (NoSuchAlgorithmException | NoSuchPaddingException | InvalidKeyException | IllegalArgumentException | UnsupportedOperationException |
-                 IllegalStateException | IllegalBlockSizeException | BadPaddingException e) {
-//            log.error("RSADecrypt :: decrypt ", e);
-            throw new RESEncryptDecryptException(RESEncryptDecryptConstant.GENERIC_ERROR_CODE, RESEncryptDecryptConstant.GENERIC_ERROR_MESSAGE);
-        } catch (Exception e) {
-            throw new RuntimeException(e);
+
+class TxtGenerator {
+    private static final String DELIMITER = "\t"; // or comma or configurable
+
+    protected static ReportFile txtFileGenerator(Report reportName, TxtFileModel txtFileModel) {
+        log.info("Started txt file generator for reportName : {}  lines.size: {}", reportName.getName(), CollectionUtils.size(txtFileModel.getLines()));
+
+        String fileName = getFileName(reportName.getName());
+
+        StringBuilder sb = new StringBuilder();
+        if (txtFileModel.getHeaders() != null && !txtFileModel.getHeaders().isEmpty()) {
+            sb.append(String.join(DELIMITER, txtFileModel.getHeaders()));
+            sb.append("\n");
+        }
+        for (List<String> line : txtFileModel.getLines()) {
+            sb.append(String.join(DELIMITER, line));
+            sb.append("\n");
         }
 
+        String content = sb.toString();
+        return ReportFile.builder()
+                .name(fileName)
+                .content(content.getBytes(StandardCharsets.UTF_8))
+                .build();
     }
+    // getFileName remains unchanged
 }
----------------------------------------------
-package EncryptionAndDecryption.example.EncryptionAndDecryption.RSAencryptdecrypt.service;
-import EncryptionAndDecryption.example.EncryptionAndDecryption.RSAencryptdecrypt.constant.RESEncryptDecryptConstant;
-import EncryptionAndDecryption.example.EncryptionAndDecryption.RSAencryptdecrypt.exception.RESEncryptDecryptException;
-//import com.sbi.epay.RSAencryptdecrypt.constant.RESEncryptDecryptConstant;
-//
-//import com.sbi.epay.RSAencryptdecrypt.exception.RESEncryptDecryptException;
-//import com.sbi.epay.logging.utility.LoggerFactoryUtility;
-//import com.sbi.epay.logging.utility.LoggerUtility;
-import lombok.AllArgsConstructor;
-import lombok.RequiredArgsConstructor;
-import org.springframework.beans.factory.annotation.Autowired;
-
-import javax.crypto.BadPaddingException;
-import javax.crypto.Cipher;
-import javax.crypto.IllegalBlockSizeException;
-import javax.crypto.NoSuchPaddingException;
-import java.security.InvalidAlgorithmParameterException;
-import java.security.InvalidKeyException;
-import java.security.NoSuchAlgorithmException;
-import java.security.PublicKey;
-import java.util.Base64;
-@AllArgsConstructor
-public class RSAEncrypt {
-//     RSAKeyGen rsaKeyGen;
-//    private   final LoggerUtility log = LoggerFactoryUtility.getLogger(RSAEncrypt.class);
 
 
-    public static String encypt (String ASEkey ,PublicKey publicKey)throws RESEncryptDecryptException {
-        try {
-//            log.debug("RSAEncrypt encrypt key : {} keyToEncrypt: {}", ASEkey, RSAKeyGen.generateKeyPair().getPublic());
-            Cipher cipher = Cipher.getInstance("RSA/ECB/OAEPWithSHA-256AndMGF1Padding");
-            cipher.init(Cipher.ENCRYPT_MODE, publicKey);
-            byte[] encryptedBytes = cipher.doFinal(ASEkey.getBytes());
-            return Base64.getEncoder().encodeToString(encryptedBytes);
-        } catch
-        (NoSuchAlgorithmException | NoSuchPaddingException | InvalidKeyException | IllegalArgumentException |
-                 UnsupportedOperationException |
-                 IllegalStateException | IllegalBlockSizeException | BadPaddingException e) {
-//            log.error("RSAEncrypt :: encrypt ", e);
-            throw new RESEncryptDecryptException(RESEncryptDecryptConstant.GENERIC_ERROR_CODE, RESEncryptDecryptConstant.GENERIC_ERROR_MESSAGE);
-        } catch (Exception e) {
-            throw new RuntimeException(e);
-        }
-    }
-}
----------------------------------------
-package EncryptionAndDecryption.example.EncryptionAndDecryption.RSAencryptdecrypt.service;
-
-import lombok.AllArgsConstructor;
-import lombok.NoArgsConstructor;
-
-import java.security.KeyPairGenerator;
-import java.security.KeyPair;
-import java.security.PrivateKey;
-import java.security.PublicKey;
-@AllArgsConstructor
-public class RSAKeyGen {
-
-    public static KeyPair generateKeyPair() throws Exception {
-        KeyPairGenerator keyGen = KeyPairGenerator.getInstance("RSA");
-        keyGen.initialize(2048);
-        KeyPair pair = keyGen.generateKeyPair();
-//        PublicKey pubKey = pair.getPublic();
-//        PrivateKey privKey = pair.getPrivate();
-        return pair;
-
-    }
-}
-----------------------------------------
-package EncryptionAndDecryption.example.EncryptionAndDecryption.RSAencryptdecrypt;
-
-import EncryptionAndDecryption.example.EncryptionAndDecryption.RSAencryptdecrypt.service.RSADecrypt;
-import EncryptionAndDecryption.example.EncryptionAndDecryption.RSAencryptdecrypt.service.RSAEncrypt;
-import EncryptionAndDecryption.example.EncryptionAndDecryption.RSAencryptdecrypt.service.RSAKeyGen;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.CommandLineRunner;
-import org.springframework.boot.SpringApplication;
-import org.springframework.boot.autoconfigure.SpringBootApplication;
-
-import java.security.KeyPair;
-import java.security.PrivateKey;
-import java.security.PublicKey;
-
-@SpringBootApplication
-public class RsAencryptdecryptApplication implements CommandLineRunner {
-
-	public static void main(String[] args) {
-		SpringApplication.run(RsAencryptdecryptApplication.class, args);
+TxtFileModel model = TxtFileModelBuilder.buildFromStrings(myLines);
+ReportFile reportFile = TxtGenerator.txtFileGenerator(report, model);
 
 
-	}
-
-
-	@Override
-	public void run(String... args) throws Exception {
-		RSAKeyGen keyGen= new RSAKeyGen();
-		KeyPair pair =keyGen.generateKeyPair();
-		PublicKey pubKey= pair.getPublic();
-		PrivateKey privKey = pair.getPrivate();
-
-
-
-		String enpryptedValue= RSAEncrypt.encypt("This is my ASE key ",pubKey);
-		System.out.println("My encrpted value is :" + enpryptedValue);
-
-		String decryptValue= RSADecrypt.decrypt(enpryptedValue, privKey);
-		System.out.println("My decrypted value is :" +decryptValue );
-
-
-
-	}
-}
------------------------------------------------------------------------------------------------------------------
-
+List<String> headers = List.of("merchantId", "merchantName", "amount");
+List<MyPojo> data = ...;
+TxtFileModel model = TxtFileModelBuilder.buildFromObjects(headers, data);
+ReportFile reportFile = TxtGenerator.txtFileGenerator(report, model);
