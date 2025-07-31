@@ -1,1 +1,27 @@
+ public List<String> fetchAatMerchantPayout1(){
+        return jdbcTemplate.query(AAT_MERCHANT_ACCOUNT_PAYOUT1,((rs, rowNum) -> rs.getString(PAYOUT_DETAILS)));
+    }
+
+public static final String AAT_MERCHANT_ACCOUNT_PAYOUT1 = """
+            SELECT '01'||
+            LPAD(BANK_ACC_NUMBER,17,0)||
+            LPAD(REPLACE(TO_CHAR(FINAL_PAYOUT,'FM9999999990.00'),'.',''), 16, '0')||
+            'SETTLEMENTTOMERCHANTACCOUNT'
+            FROM  MERCHANT_ACCOUNT_PAYOUT
+            """;
+Above is my jdbc method to get the list<String>.
+and the query is given by DB team for oracal and i am just using it in my return jdbcTemplete query
+
+now there has been some change now i wanted to get same list<String but based upon List<UUID> mpid and db team has 
+given new quey based on new requriment so i want to make the changes in my code based upon new requriment 
+
+new query is 
+SELECT '01'||
+LPAD(A.ACCOUNT_NUMBER,17,0)||
+LPAD(REPLACE(TO_CHAR((A.PAYOUT_AMOUNT-A.REFUNDED_AMOUNT),'FM9999999990.00'),'.',''), 16, '0')||
+'SETTLEMENTTOMERCHANTACCOUNT'
+FROM  MERCHANT_PAYOUT A,AGGMERCHANTBANKACCOUNTS B WHERE  A.ACCOUNT_ID=B.ACCOUNTID
+AND A.ACCOUNT_NUMBER=B.ACCOUNTNUMBER 
+AND A.MP_ID IN :mpid;
+
 
