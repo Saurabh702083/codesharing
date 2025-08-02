@@ -24,9 +24,21 @@ FROM  MERCHANT_PAYOUT A,AGGMERCHANTBANKACCOUNTS B WHERE  A.ACCOUNT_ID=B.ACCOUNTI
 AND A.ACCOUNT_NUMBER=B.ACCOUNTNUMBER 
 AND A.MP_ID IN :mpid;
 ---------------------------------------------------
-public List<MerchantPayout> getMerchantPayout() {
-        return namedParameterJdbcTemplate.query(ReconQueries.MERCHANT_PAYOUT, new BeanPropertyRowMapper<>(MerchantPayout.class));
-    }public static final String MERCHANT_PAYOUT = """
+@Repository
+@RequiredArgsConstructor
+public class MerchantPayoutRepository {
+
+    private final NamedParameterJdbcTemplate namedParameterJdbcTemplate;
+
+    public List<MerchantPayout> fetchMerchantPayout(List<UUID> mpId) {
+        List<String> mpIdString=mpId.stream().map(id -> id.toString().replace("-","").toUpperCase()).toList();
+        MapSqlParameterSource params = new MapSqlParameterSource();
+        params.addValue("mpId", mpIdString);
+        return namedParameterJdbcTemplate.query(ReconQueries.MERCHANT_PAYOUT, params,new BeanPropertyRowMapper<>(MerchantPayout.class));
+    }
+}
+
+ public static final String MERCHANT_PAYOUT = """
                 SELECT vmp.MERCHANT_ID AS mId,
                 vmp.MERCHANT_NAME as merchantName,
                 vmp.ORDER_AMOUNT as orderAmount,
@@ -45,36 +57,55 @@ public List<MerchantPayout> getMerchantPayout() {
                 vmp.TRANSACTION_COUNT as transactionCount,
                 vmp.CHARGEBACK_ADJUSTED as chargebackAdjusted
                 from VIEW_MERCHANT_WISE_PAYOUT_MIS_FORMAT vmp
+                WHERE  HEXTORAW(vmp.MP_ID) IN (:mpId)
             """;
 
-above is my old jdbc method to get the data from VIEW_MERCHANT_WISE_PAYOUT_MIS_FORMAT now there has been change now i want to get all the data based upon list<UUID> mpId.
-below is my change DB colume from DB 
+@Data
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
+public class MerchantPayout {
 
-SETTLEMENT_FILE_NUMBER	CHAR()
-SETTLEMENT_TIME	VARCHAR2(19)
-MERCHANT_ID	VARCHAR2(20)
-MERCHANT_NAME	VARCHAR2(100)
-ORDER_REF_NUMBER	VARCHAR2(50)
-ATRN_NUM	VARCHAR2(50)
-CREATED_DATE	VARCHAR2(19)
-CURRENCY_CODE	VARCHAR2(50)
-ORDER_AMOUNT	NUMBER(20,2)
-SETTLEMENT_CURRENCY	VARCHAR2(50)
-SETTLEMENT_AMOUNT	NUMBER
-COMMISSION_PAYABLE	NUMBER
-MERCHANT_GST_BEARABLE_ABS	NUMBER(20,2)
-PAYOUT_AMOUNT	NUMBER
-CHANNEL_BANK	VARCHAR2(100)
-GATEWAY_TRACE_NUMBER	CHAR()
-PAY_MODE	VARCHAR2(50)
-PAY_PROC_ID	VARCHAR2(20)
-OTHER_DETAILS	CLOB
-BEARABLE_ENTITY	CHAR(1)
-CIN	VARCHAR2(50)
-RF_ID	RAW
-MP_ID	RAW
+    private String mId;
+    private String merchantName;
+    private BigDecimal  orderAmount;
+    private String currencyCode;
+    private BigDecimal settlementAmount;
+    private String settlementCurrency;
+    private BigDecimal commissionPayable;
+    private BigDecimal merchantGstBearableAbs;
+    private BigDecimal payoutAmount;
+    private BigDecimal refundAdjusted;
+    private BigDecimal tdrOnRefundAmount;
+    private BigDecimal gstOnRefundAmount;
+    private BigDecimal netRefundAmount;
+    private BigDecimal netPayoutAmount;
+    private BigDecimal payoutDate;
+    private BigDecimal transactionCount;
+    private BigDecimal chargebackAdjusted;
 
+}
 
-please make the changes in code 
+above is my code but while featching data i am geting below error
 
+PreparedStatementCallback; uncategorized SQLException for SQL [    SELECT vmp.MERCHANT_ID AS mId,
+    vmp.MERCHANT_NAME as merchantName,
+    vmp.ORDER_AMOUNT as orderAmount,
+    vmp.CURRENCY_CODE as currencyCode,
+    vmp.SETTLEMENT_AMOUNT as settlementAmount,
+    vmp.SETTLEMENT_CURRENCY as settlementCurrency,
+    vmp.COMMISSION_PAYABLE as commissionPayable,
+    vmp.MERCHANT_GST_BEARABLE_ABS as merchantGstBearableAbs,
+    vmp.PAYOUT_AMOUNT as payoutAmount,
+    vmp.REFUND_ADJUSTED as refundAdjusted,
+    vmp.TDR_ON_REFUND_AMOUNT as tdrOnRefundAmount,
+    vmp.GST_ON_REFUND_AMOUNT as gstOnRefundAmount,
+    vmp.NET_REFUND_AMOUNT as netRefundAmount,
+    vmp.NET_PAYOUT_AMOUNT as netPayoutAmount,
+    vmp.PAYOUT_DATE as payoutDate,
+    vmp.TRANSACTION_COUNT as transactionCount,
+    vmp.CHARGEBACK_ADJUSTED as chargebackAdjusted
+    from VIEW_MERCHANT_WISE_PAYOUT_MIS_FORMAT vmp
+    WHERE  HEXTORAW(vmp.MP_ID) IN (?)
+]; SQL state [99999]; error code [17059]; Fail to convert to internal representation
 
