@@ -1,27 +1,14 @@
 
-@Component
-@RequiredArgsConstructor
-public class TxtGenerator {
-    private final LoggerUtility log = LoggerFactoryUtility.getLogger(this.getClass());
+--liquibase formatted sql
+--changeset Operation:105
 
-    public ReportFile txtFileGenerator(Report reportName, TxtFileModel txtFileModel) {
-        log.info("Started txt file generator for reportName : {}  objects.size: {}", reportName.getName(),  CollectionUtils.size(txtFileModel.getLines()));
-        String fileName = getFileName(reportName.getName());
-        String content = generateTxt(txtFileModel);
-        return ReportFile.builder().name(fileName).content(content.getBytes(StandardCharsets.UTF_8)).build();
-    }
-
-    private String getFileName(String reportName) {
-        return String.format("%s%s_%s.txt", ReportingConstant.REPORT_ROOT_FOLDER,
-                reportName, LocalDateTime.now().format(FORMATTER_DD_MM_YY_HH_MM_SS));
-    }
-
-    private String generateTxt(TxtFileModel txtFileModel){
-        return String.join("\n", txtFileModel.getLines());
-    }
-}
-
-Above is my code to generate Report based upon Report Type. Based upon report type and requriment its generate CSV ot TXT file. And right now in my code of there is any error in fetching the data from DB it will throw up an error .
-so my new requriment is that if there is any error in fecthing the data it should ideal generate black file. and in case of csv file it should generate blank file with header if we gets empty list while fetching the data and in case of txt file it should generate
-blanck txt file as there is no header in txt file if while featching the data we gets empty list of string.
+CREATE TABLE PAYOUT_INFO(
+    PI_ID                      RAW(16) DEFAULT SYS_GUID() PRIMARY KEY,
+    PAYOUT_REPORT_ID           RAW(16),
+    TXN_MIS_REPORT_ID          RAW(16),
+    MERCHANT_MIS_REPORT_ID     RAW(16),
+    REFUND_MIS_REPORT_ID       RAW(16),
+    CREATED_DATE               NUMBER NOT NULL,
+    UPDATED_DATE               NUMBER
+    );
 
