@@ -1,9 +1,4 @@
-Below is my code for reconcillation process. 
-In this we will Check the records from ReconFileDetails and MerchantTransaction 
-if ATRN of ReconFileDetailsDto matches in MerchantTransactionDto then we convert these into matched and duplicate record and if ATRN matches but amount does not then we will put them in unmatched record
-and if ATRN of ReconFileDetailsDto matches in MerchantTransactionDto does not matches then we will put them in unmatched record.
 
-After that we are updating the status of these record.
 ---------------
 @Getter
 @Setter
@@ -165,10 +160,7 @@ public static final String UPDATE_RECON_STATUS = """
             """;
 ---------------------------------------------------------
 
-Now there has been change in condition. in unmatched senario when atrn does not matches then at that time we have to update the reamark as well as "ATRN DOES NOT MATCHES"
-and when amount does not matches then in unmatched senario we have to update the reamark as "AMOUNT DOES NOT MATCHED FOR ATRN"
 
---liquibase formatted sql
 --changeset Operation:105
 
 CREATE TABLE PAYOUT_INFO(
