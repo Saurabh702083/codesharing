@@ -1,4 +1,162 @@
+@Getter
+@Setter
+public class ReconRecordStatusDto {
+    private final List<ReconFileDetailsDto> matched = new LinkedList<>();
+    private final List<ReconFileDetailsDto> duplicate = new LinkedList<>();
+    private final List<ReconFileDetailsDto> unmatched = new LinkedList<>();
 
+    public void addMatched(ReconFileDetailsDto reconFileDetailsDto) {
+        matched.add(reconFileDetailsDto);
+    }
+
+    public void addUnmatched(List<ReconFileDetailsDto> reconFileDetailsDtos) {
+        unmatched.addAll(reconFileDetailsDtos);
+    }
+
+    public void addDuplicate(ReconFileDetailsDto reconFileDetailsDto){
+        duplicate.add(reconFileDetailsDto);
+    }
+}
+---------------------------------------
+
+@Service
+@RequiredArgsConstructor
+public class JavaReconciliationService {
+    private final LoggerUtility logger = LoggerFactoryUtility.getLogger(this.getClass());
+
+    private final MerchantTransactionDao merchantTransactionDao;
+    private final ReconProcessDao reconProcessDao;
+    private final ReconResultProcessorService reconResultProcessorService;
+
+    public void reconProcessing(UUID rfId) {
+        // Step-1: Fetch recon file details using rfId.
+        logger.info("Step-1: Fetching recon file details for rfId: {}", rfId);
+        Map<String, List<ReconFileDetailsDto>> reconFileDetailsMap = reconProcessDao.getAllReconFileData(rfId).stream().collect(Collectors.groupingBy(ReconFileDetailsDto::getAtrnNum));
+
+        // Step-2: Fetch transaction data.
+        logger.info("Step-2: Fetching transaction data from table: {}", MERCHANT_TRANSACTION);
+        Map<String, MerchantTransactionDto> merchantTransactionByAtrns = getMerchantPaymentsByAtrns(reconFileDetailsMap.keySet());
+
+        // Step-3: Classify the data into matched, duplicate, and unmatched.
+        logger.info("Step-3: Classifying recon data.");
+        ReconRecordStatusDto reconRecordStatusDto = findMatchedUnmatchedAndDuplicateReconRecords(reconFileDetailsMap, merchantTransactionByAtrns);
+
+        // Step-4: Update Recon Status.
+        logger.info("Step-4: Update Recon Status.");
+        updateReconStatuses(reconRecordStatusDto);
+
+        // Step-5: Update Recon Status Count.
+        logger.info("Step-5: Update Recon Status Count.");
+        reconProcessDao.updateReconFile(rfId, reconRecordStatusDto);
+
+        // Step-6 Publish process data into kafka
+        logger.info("Step-6: Publish recon processed data into kafka.");
+        reconResultProcessorService.publishReconProcessedData(rfId);
+    }
+
+    private Map<String, MerchantTransactionDto> getMerchantPaymentsByAtrns(Set<String> atrnNum) {
+        logger.info("Fetching matched ATRNs data from MerchantOrderPayment");
+        List<String> atrns = atrnNum.stream().toList();
+        List<MerchantTransactionDto> payments = new ArrayList<>();
+        for (int i = 0; i < atrns.size(); i += IN_CLAUSE_MAX_SIZE) {
+            int end = Math.min(i + IN_CLAUSE_MAX_SIZE, atrns.size());
+            payments.addAll(merchantTransactionDao.getMerchantTxn(atrns.subList(i, end)));
+        }
+        return payments.stream().collect(Collectors.toMap(MerchantTransactionDto::getAtrnNum, Function.identity(), (existing, replacement) -> {
+            logger.warn("Duplicate ATRN detected: {}", existing.getAtrnNum());
+            return existing;
+        }));
+    }
+
+    private ReconRecordStatusDto findMatchedUnmatchedAndDuplicateReconRecords(Map<String, List<ReconFileDetailsDto>> reconPaymentMap, Map<String, MerchantTransactionDto> marchantTxnMap) {
+        ReconRecordStatusDto result = new ReconRecordStatusDto();
+        reconPaymentMap.forEach((atrn, reconList) -> {
+            if (marchantTxnMap.containsKey((atrn))) {
+                processReconData(reconList, marchantTxnMap.get(atrn), result);
+            } else {
+                result.addUnmatched(reconList);
+            }
+        });
+        return result;
+    }
+
+    private void processReconData(List<ReconFileDetailsDto> reconFileDtlsDtos, MerchantTransactionDto payment, ReconRecordStatusDto result) {
+        if (CollectionUtils.isNotEmpty(reconFileDtlsDtos)) {
+            boolean isDuplicate = false;
+            for (ReconFileDetailsDto reconFileDtlsDto : reconFileDtlsDtos) {
+                if (isDuplicate) {
+                    result.addDuplicate(reconFileDtlsDto);
+                } else if (reconFileDtlsDto.getTransactionAmount().compareTo(payment.getTransactionAmount()) == 0) {
+                    result.addMatched(reconFileDtlsDto);
+                    isDuplicate = true;
+                } else {
+                    result.addUnmatched(List.of(reconFileDtlsDto));
+                    isDuplicate = true;
+                }
+            }
+        }
+    }
+
+    private void updateReconStatuses(ReconRecordStatusDto result) {
+        batchUpdateStatus(result.getMatched(), ReconStatus.MATCHED);
+        batchUpdateStatus(result.getUnmatched(), ReconStatus.UNMATCHED);
+        batchUpdateStatus(result.getDuplicate(), ReconStatus.DUPLICATE);
+    }
+
+    @Transactional
+    private void batchUpdateStatus(List<ReconFileDetailsDto> list, ReconStatus status) {
+        List<UUID> batchAtrns;
+        for (int i = 0; i < list.size(); i += IN_CLAUSE_MAX_SIZE) {
+            int end = Math.min(i + IN_CLAUSE_MAX_SIZE, list.size());
+            batchAtrns = list.subList(i, end).stream().map(ReconFileDetailsDto::getRfdId).toList();
+            reconProcessDao.updateReconStatus(status, batchAtrns);
+        }
+    }
+
+}
+
+----------------------------------
+@Component
+@RequiredArgsConstructor
+public class ReconProcessDao {
+    private final LoggerUtility logger = LoggerFactoryUtility.getLogger(ReconProcessDao.class);
+    private static final Map<String, String> MAPPING_COLUMNS = Map.of(DEBIT_AMT, PAYMENT_AMOUNT);
+
+    private final SparkDataRepository sparkDataRepository;
+    private final ReconFileDetailsDao reconFileDetailsDao;
+    private final ReconFileDao reconFileDao;
+    private final ReconDataJdbcRepository reconDataJdbcRepository;
+
+public void updateReconStatus(ReconStatus status, List<UUID> listOfRfdId) {
+        switch (status){
+            case ReconStatus.MATCHED -> reconDataJdbcRepository.updateMatchedReconStatus(listOfRfdId);
+            case ReconStatus.UNMATCHED, ReconStatus.DUPLICATE -> reconDataJdbcRepository.updateReconStatus(status, listOfRfdId);
+            default -> logger.error("Status is not matching with config.");
+        }
+    }
+
+--------------------------------------
+@Repository
+@RequiredArgsConstructor
+public class ReconDataJdbcRepository {
+
+    private final LoggerUtility log = LoggerFactoryUtility.getLogger(this.getClass());
+    private final NamedParameterJdbcTemplate jdbcTemplate;
+ @Transactional
+    public void updateReconStatus(ReconStatus status, List<UUID> listOfRfdId) {
+        log.info("Updating {} status.", status);
+        MapSqlParameterSource[] batchParams = listOfRfdId.stream().map(rfdId -> new MapSqlParameterSource().addValue("status", status.name()).addValue("rfdId", rfdId.toString().replace("-", "").toUpperCase())).toArray(MapSqlParameterSource[]::new);
+        jdbcTemplate.batchUpdate(UPDATE_RECON_STATUS, batchParams);
+    }
+---------------------------------------------
+@UtilityClass
+public class JdbcQuery {
+public static final String UPDATE_RECON_STATUS = """
+            UPDATE RECON_FILE_DTLS rfd
+            SET rfd.RECON_STATUS = :status
+            WHERE  HEXTORAW(rfd.RFD_ID) IN (HEXTORAW(:rfdId))
+            """;
+---------------------------------------------------------
 --liquibase formatted sql
 --changeset Operation:105
 
