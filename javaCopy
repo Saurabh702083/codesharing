@@ -81,6 +81,7 @@ public class TxtGenerator {
 public class TxtFileModel {
     private List<String> lines;
 }
+but now there is change in my requirement now I have to generate txt file for List<List<Object>> data.
 
+so based upon this new requirement I need to change in my code as well 
 
-List<List<Object>> data
