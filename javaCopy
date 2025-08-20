@@ -1,3 +1,5 @@
+below is my code for generating txt file for list<String> lines :-
+
 private void generateTxtReport(Report report, UUID rrId, List<String> lines) {
         ReportFile reportFile = fileGeneratorService.generateFile(report, TxtFileModel.builder().lines(lines).build());
         uploadFileOnS3(reportFile, rrId, ReportFormat.TXT, report);
@@ -81,6 +83,9 @@ public class TxtGenerator {
 public class TxtFileModel {
     private List<String> lines;
 }
+
+
+_______________
 but now there is change in my requirement now I have to generate txt file for List<List<Object>> data.
 
 so based upon this new requirement I need to change in my code as well 
