@@ -1,175 +1,78 @@
-
----------------
-@Getter
-@Setter
-public class ReconRecordStatusDto {
-    private final List<ReconFileDetailsDto> matched = new LinkedList<>();
-    private final List<ReconFileDetailsDto> duplicate = new LinkedList<>();
-    private final List<ReconFileDetailsDto> unmatched = new LinkedList<>();
-
-    public void addMatched(ReconFileDetailsDto reconFileDetailsDto) {
-        matched.add(reconFileDetailsDto);
+private void generateTxtReport(Report report, UUID rrId, List<String> lines) {
+        ReportFile reportFile = fileGeneratorService.generateFile(report, TxtFileModel.builder().lines(lines).build());
+        uploadFileOnS3(reportFile, rrId, ReportFormat.TXT, report);
     }
-
-    public void addUnmatched(List<ReconFileDetailsDto> reconFileDetailsDtos) {
-        unmatched.addAll(reconFileDetailsDtos);
-    }
-
-    public void addDuplicate(ReconFileDetailsDto reconFileDetailsDto){
-        duplicate.add(reconFileDetailsDto);
-    }
-}
----------------------------------------
 
 @Service
 @RequiredArgsConstructor
-public class JavaReconciliationService {
-    private final LoggerUtility logger = LoggerFactoryUtility.getLogger(this.getClass());
+public class FileGeneratorService {
+    private final LoggerUtility log = LoggerFactoryUtility.getLogger(this.getClass());
+    private final FileGenerator fileGenerator;
+    private final ZipFileGenerator zipFileGenerator;
+    private final S3Service s3Service;
 
-    private final MerchantTransactionDao merchantTransactionDao;
-    private final ReconProcessDao reconProcessDao;
-    private final ReconResultProcessorService reconResultProcessorService;
-
-    public void reconProcessing(UUID rfId) {
-        // Step-1: Fetch recon file details using rfId.
-        logger.info("Step-1: Fetching recon file details for rfId: {}", rfId);
-        Map<String, List<ReconFileDetailsDto>> reconFileDetailsMap = reconProcessDao.getAllReconFileData(rfId).stream().collect(Collectors.groupingBy(ReconFileDetailsDto::getAtrnNum));
-
-        // Step-2: Fetch transaction data.
-        logger.info("Step-2: Fetching transaction data from table: {}", MERCHANT_TRANSACTION);
-        Map<String, MerchantTransactionDto> merchantTransactionByAtrns = getMerchantPaymentsByAtrns(reconFileDetailsMap.keySet());
-
-        // Step-3: Classify the data into matched, duplicate, and unmatched.
-        logger.info("Step-3: Classifying recon data.");
-        ReconRecordStatusDto reconRecordStatusDto = findMatchedUnmatchedAndDuplicateReconRecords(reconFileDetailsMap, merchantTransactionByAtrns);
-
-        // Step-4: Update Recon Status.
-        logger.info("Step-4: Update Recon Status.");
-        updateReconStatuses(reconRecordStatusDto);
-
-        // Step-5: Update Recon Status Count.
-        logger.info("Step-5: Update Recon Status Count.");
-        reconProcessDao.updateReconFile(rfId, reconRecordStatusDto);
-
-        // Step-6 Publish process data into kafka
-        logger.info("Step-6: Publish recon processed data into kafka.");
-        reconResultProcessorService.publishReconProcessedData(rfId);
+ public ReportFile generateFile(Report report, TxtFileModel txtFileModel) {
+        log.info("Started fileGenerator for reportFormat: TXT, report: {}", report.getName());
+        return fileGenerator.generateFile(report, txtFileModel);
     }
 
-    private Map<String, MerchantTransactionDto> getMerchantPaymentsByAtrns(Set<String> atrnNum) {
-        logger.info("Fetching matched ATRNs data from MerchantOrderPayment");
-        List<String> atrns = atrnNum.stream().toList();
-        List<MerchantTransactionDto> payments = new ArrayList<>();
-        for (int i = 0; i < atrns.size(); i += IN_CLAUSE_MAX_SIZE) {
-            int end = Math.min(i + IN_CLAUSE_MAX_SIZE, atrns.size());
-            payments.addAll(merchantTransactionDao.getMerchantTxn(atrns.subList(i, end)));
-        }
-        return payments.stream().collect(Collectors.toMap(MerchantTransactionDto::getAtrnNum, Function.identity(), (existing, replacement) -> {
-            logger.warn("Duplicate ATRN detected: {}", existing.getAtrnNum());
-            return existing;
-        }));
+   public ReportFile generateFile(Report report, TxtFileModel txtFileModel) {
+        log.info("Started fileGenerator for reportFormat: TXT, report: {}", report.getName());
+        return fileGenerator.generateFile(report, txtFileModel);
     }
 
-    private ReconRecordStatusDto findMatchedUnmatchedAndDuplicateReconRecords(Map<String, List<ReconFileDetailsDto>> reconPaymentMap, Map<String, MerchantTransactionDto> marchantTxnMap) {
-        ReconRecordStatusDto result = new ReconRecordStatusDto();
-        reconPaymentMap.forEach((atrn, reconList) -> {
-            if (marchantTxnMap.containsKey((atrn))) {
-                processReconData(reconList, marchantTxnMap.get(atrn), result);
-            } else {
-                result.addUnmatched(reconList);
-            }
-        });
-        return result;
-    }
-
-    private void processReconData(List<ReconFileDetailsDto> reconFileDtlsDtos, MerchantTransactionDto payment, ReconRecordStatusDto result) {
-        if (CollectionUtils.isNotEmpty(reconFileDtlsDtos)) {
-            boolean isDuplicate = false;
-            for (ReconFileDetailsDto reconFileDtlsDto : reconFileDtlsDtos) {
-                if (isDuplicate) {
-                    result.addDuplicate(reconFileDtlsDto);
-                } else if (reconFileDtlsDto.getTransactionAmount().compareTo(payment.getTransactionAmount()) == 0) {
-                    result.addMatched(reconFileDtlsDto);
-                    isDuplicate = true;
-                } else {
-                    result.addUnmatched(List.of(reconFileDtlsDto));
-                    isDuplicate = true;
-                }
-            }
-        }
-    }
-
-    private void updateReconStatuses(ReconRecordStatusDto result) {
-        batchUpdateStatus(result.getMatched(), ReconStatus.MATCHED);
-        batchUpdateStatus(result.getUnmatched(), ReconStatus.UNMATCHED);
-        batchUpdateStatus(result.getDuplicate(), ReconStatus.DUPLICATE);
-    }
-
-    @Transactional
-    private void batchUpdateStatus(List<ReconFileDetailsDto> list, ReconStatus status) {
-        List<UUID> batchAtrns;
-        for (int i = 0; i < list.size(); i += IN_CLAUSE_MAX_SIZE) {
-            int end = Math.min(i + IN_CLAUSE_MAX_SIZE, list.size());
-            batchAtrns = list.subList(i, end).stream().map(ReconFileDetailsDto::getRfdId).toList();
-            reconProcessDao.updateReconStatus(status, batchAtrns);
-        }
-    }
-
-}
-
-----------------------------------
 @Component
 @RequiredArgsConstructor
-public class ReconProcessDao {
-    private final LoggerUtility logger = LoggerFactoryUtility.getLogger(ReconProcessDao.class);
-    private static final Map<String, String> MAPPING_COLUMNS = Map.of(DEBIT_AMT, PAYMENT_AMOUNT);
+public class FileGenerator {
+    private static final LoggerUtility logger = LoggerFactoryUtility.getLogger(FileGenerator.class);
 
-    private final SparkDataRepository sparkDataRepository;
-    private final ReconFileDetailsDao reconFileDetailsDao;
-    private final ReconFileDao reconFileDao;
-    private final ReconDataJdbcRepository reconDataJdbcRepository;
 
-public void updateReconStatus(ReconStatus status, List<UUID> listOfRfdId) {
-        switch (status){
-            case ReconStatus.MATCHED -> reconDataJdbcRepository.updateMatchedReconStatus(listOfRfdId);
-            case ReconStatus.UNMATCHED, ReconStatus.DUPLICATE -> reconDataJdbcRepository.updateReconStatus(status, listOfRfdId);
-            default -> logger.error("Status is not matching with config.");
-        }
+    private final PdfGenerator pdfGenerator;
+    private final TxtGenerator txtGenerator;
+public ReportFile generateFile(Report report, TxtFileModel txtFileModel){
+        logger.info("Generating file for report format: TXT, report: {}", report.getName());
+        return txtGenerator.txtFileGenerator(report,txtFileModel);
     }
 
---------------------------------------
-@Repository
+@Component
 @RequiredArgsConstructor
-public class ReconDataJdbcRepository {
-
+public class TxtGenerator {
     private final LoggerUtility log = LoggerFactoryUtility.getLogger(this.getClass());
-    private final NamedParameterJdbcTemplate jdbcTemplate;
- @Transactional
-    public void updateReconStatus(ReconStatus status, List<UUID> listOfRfdId) {
-        log.info("Updating {} status.", status);
-        MapSqlParameterSource[] batchParams = listOfRfdId.stream().map(rfdId -> new MapSqlParameterSource().addValue("status", status.name()).addValue("rfdId", rfdId.toString().replace("-", "").toUpperCase())).toArray(MapSqlParameterSource[]::new);
-        jdbcTemplate.batchUpdate(UPDATE_RECON_STATUS, batchParams);
+
+    /**
+     * Generates a TXT file from the provided data and saves it to the file system.
+     *
+     * @param reportName - Name of the report
+     * @return - Generated TXT file
+     */
+    public ReportFile txtFileGenerator(Report reportName, TxtFileModel txtFileModel) {
+        log.info("Started txt file generator for reportName : {}  objects.size: {}", reportName.getName(),  CollectionUtils.size(txtFileModel.getLines()));
+        String fileName = getFileName(reportName.getName());
+        String content = generateTxt(txtFileModel);
+        return ReportFile.builder().name(fileName).content(content.getBytes(StandardCharsets.UTF_8)).build();
     }
----------------------------------------------
-@UtilityClass
-public class JdbcQuery {
-public static final String UPDATE_RECON_STATUS = """
-            UPDATE RECON_FILE_DTLS rfd
-            SET rfd.RECON_STATUS = :status
-            WHERE  HEXTORAW(rfd.RFD_ID) IN (HEXTORAW(:rfdId))
-            """;
----------------------------------------------------------
+
+    /**
+     * Constructs the file name for the TXT file based on the report name.
+     *
+     * @param reportName - Name of the report
+     * @return - Generated file name
+     */
+    private String getFileName(String reportName) {
+        return String.format("%s%s_%s.txt", ReportingConstant.REPORT_ROOT_FOLDER,
+                reportName, LocalDateTime.now().format(FORMATTER_DD_MM_YY_HH_MM_SS));
+    }
+
+    /**
+     * Generates the TXT content as a string without header.
+     *
+     * @param txtFileModel - List of data rows for the txt
+     * @return - Txt content as a string
+     */
+    private String generateTxt(TxtFileModel txtFileModel){
+        return String.join("\n", txtFileModel.getLines());
+    }
+}
 
 
---changeset Operation:105
-
-CREATE TABLE PAYOUT_INFO(
-    PI_ID                      RAW(16) DEFAULT SYS_GUID() PRIMARY KEY,
-    PAYOUT_REPORT_ID           RAW(16),
-    TXN_MIS_REPORT_ID          RAW(16),
-    MERCHANT_MIS_REPORT_ID     RAW(16),
-    REFUND_MIS_REPORT_ID       RAW(16),
-    CREATED_DATE               NUMBER NOT NULL,
-    UPDATED_DATE               NUMBER
-    );
-
+List<List<Object>> data
