@@ -74,5 +74,13 @@ public class TxtGenerator {
     }
 }
 
+@Data
+@AllArgsConstructor
+@NoArgsConstructor
+@Builder
+public class TxtFileModel {
+    private List<String> lines;
+}
+
 
 List<List<Object>> data
