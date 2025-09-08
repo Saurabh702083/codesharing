@@ -1,92 +1,81 @@
-below is my code for generating txt file for list<String> lines :-
+Below is my code in which i get the list<UUID> merchantPayouts based on two condition refundAdjusted = true and payoutStatus = READY_FOR_PAYOUT
 
-private void generateTxtReport(Report report, UUID rrId, List<String> lines) {
-        ReportFile reportFile = fileGeneratorService.generateFile(report, TxtFileModel.builder().lines(lines).build());
-        uploadFileOnS3(reportFile, rrId, ReportFormat.TXT, report);
-    }
 
 @Service
 @RequiredArgsConstructor
-public class FileGeneratorService {
+public class PayoutReportService {
+
     private final LoggerUtility log = LoggerFactoryUtility.getLogger(this.getClass());
-    private final FileGenerator fileGenerator;
-    private final ZipFileGenerator zipFileGenerator;
-    private final S3Service s3Service;
+    private final ReportRequestDao reportRequestDao;
+    private final ReportRequestPublisher reportRequestPublisher;
+    private final SftpClientService sftpClientService;
 
- public ReportFile generateFile(Report report, TxtFileModel txtFileModel) {
-        log.info("Started fileGenerator for reportFormat: TXT, report: {}", report.getName());
-        return fileGenerator.generateFile(report, txtFileModel);
+    public void reportGenerationRequest() {
+        log.info("Getting list of MpId based upon payoutStatus and refund adjusted.");
+        List<UUID> merchantPayouts = reportRequestDao.getAllMerchantPayoutForReport();
+        if (CollectionUtils.isEmpty(merchantPayouts)) {
+            log.info("No Pending Merchant Payout for Report generation");
+            return;
+        }
+        PayoutInfoDto payoutInfoDto = createReportAndBuildPayoutInfo(merchantPayouts);
+        log.info("Report request completed, saving payout info.");
+        reportRequestDao.savePayoutInfo(payoutInfoDto, merchantPayouts);
     }
-
-   public ReportFile generateFile(Report report, TxtFileModel txtFileModel) {
-        log.info("Started fileGenerator for reportFormat: TXT, report: {}", report.getName());
-        return fileGenerator.generateFile(report, txtFileModel);
-    }
-
-@Component
-@RequiredArgsConstructor
-public class FileGenerator {
-    private static final LoggerUtility logger = LoggerFactoryUtility.getLogger(FileGenerator.class);
-
-
-    private final PdfGenerator pdfGenerator;
-    private final TxtGenerator txtGenerator;
-public ReportFile generateFile(Report report, TxtFileModel txtFileModel){
-        logger.info("Generating file for report format: TXT, report: {}", report.getName());
-        return txtGenerator.txtFileGenerator(report,txtFileModel);
-    }
-
-@Component
-@RequiredArgsConstructor
-public class TxtGenerator {
-    private final LoggerUtility log = LoggerFactoryUtility.getLogger(this.getClass());
-
-    /**
-     * Generates a TXT file from the provided data and saves it to the file system.
-     *
-     * @param reportName - Name of the report
-     * @return - Generated TXT file
-     */
-    public ReportFile txtFileGenerator(Report reportName, TxtFileModel txtFileModel) {
-        log.info("Started txt file generator for reportName : {}  objects.size: {}", reportName.getName(),  CollectionUtils.size(txtFileModel.getLines()));
-        String fileName = getFileName(reportName.getName());
-        String content = generateTxt(txtFileModel);
-        return ReportFile.builder().name(fileName).content(content.getBytes(StandardCharsets.UTF_8)).build();
-    }
-
-    /**
-     * Constructs the file name for the TXT file based on the report name.
-     *
-     * @param reportName - Name of the report
-     * @return - Generated file name
-     */
-    private String getFileName(String reportName) {
-        return String.format("%s%s_%s.txt", ReportingConstant.REPORT_ROOT_FOLDER,
-                reportName, LocalDateTime.now().format(FORMATTER_DD_MM_YY_HH_MM_SS));
-    }
-
-    /**
-     * Generates the TXT content as a string without header.
-     *
-     * @param txtFileModel - List of data rows for the txt
-     * @return - Txt content as a string
-     */
-    private String generateTxt(TxtFileModel txtFileModel){
-        return String.join("\n", txtFileModel.getLines());
-    }
-}
-
-@Data
+	}
+	
+	@Component
 @AllArgsConstructor
-@NoArgsConstructor
-@Builder
-public class TxtFileModel {
-    private List<String> lines;
-}
+public class ReportRequestDao {
+    private final LoggerUtility log = LoggerFactoryUtility.getLogger(this.getClass());
+    private final ReportRequestRepository reportRequestRepository;
+    private final MerchantPayoutDao merchantPayoutDao;
+    private final PayoutInfoDao payoutInfoDao;
+    private final ReportRequestMapper reportRequestMapper;
+    private final ReconFileDetailsDao reconFileDetailsDao;
 
 
-_______________
-but now there is change in my requirement now I have to generate txt file for List<List<Object>> data.
+    public List<UUID> getAllMerchantPayoutForReport() {
+        return merchantPayoutDao.getAllMerchantPayoutForReport();
+    }
+	}
+	
+	@Component
+@RequiredArgsConstructor
+public class MerchantPayoutDao {
 
-so based upon this new requirement I need to change in my code as well 
+    private final LoggerUtility log = LoggerFactoryUtility.getLogger(this.getClass());
+
+    private final MerchantPayoutJdbcRepository merchantPayoutJdbcRepository;
+    private final MerchantPayoutRepository merchantPayoutRepository;
+
+
+    public List<UUID> getAllMerchantPayoutForReport() {
+        return merchantPayoutRepository.findByRefundedAdjustTrueAndPayoutStatus(PayoutStatus.READY_FOR_PAYOUT);
+    }
+	}
+	
+	@Repository
+public interface MerchantPayoutRepository extends JpaRepository<MerchantPayout, UUID> {
+
+    @Query("SELECT m.mpId FROM MerchantPayout m WHERE m.refundAdjusted = true and m.payoutStatus = :payoutStatus")
+    List<UUID> findByRefundedAdjustTrueAndPayoutStatus(@Param("payoutStatus") PayoutStatus payoutStatus);
+	}
+	
+	CREATE TABLE MERCHANT_PAYOUT(
+    MP_ID               RAW(16) DEFAULT SYS_GUID() PRIMARY KEY,
+    PI_ID               RAW(16),
+    MERCHANT_ID         VARCHAR2(10),
+    PAYOUT_AMOUNT       NUMBER(20, 2),
+    REFUNDED_AMOUNT     NUMBER(20,2),
+    REFUND_ADJUSTED     NUMBER(1),
+    BANK_ID             VARCHAR2(20),
+    ACCOUNT_ID          VARCHAR2(50),
+    ACCOUNT_NUMBER      VARCHAR2(50),
+    PAYOUT_STATUS       VARCHAR2(20) DEFAULT 'PENDING' CHECK (PAYOUT_STATUS IN ('PENDING','IN_PROCESS','SUCCESS','FAIL','READY_FOR_PAYOUT')) ENABLE,
+    CREATED_DATE        NUMBER NOT NULL,
+    UPDATED_DATE        NUMBER
+    );
+	
+	now there is some change in condition i want get get the data from DB based upon last Updated_time it should get the data after two mins of delay.
+	i means to say we need to change in query and get the data after two min of last updated_time.
 
