@@ -1,8 +1,11 @@
-https://neosofttechnologiesmail-my.sharepoint.com/:f:/g/personal/binoy_medhi_neosofttech_com/En35FMBnFlVNkEv5swpW7fYB0QHK_BFyKospf7bEJdfixA?e=2ytwjQs
+@GetMapping("/token")
+    @Operation(summary = "Merchant User Token Validation", description = "Validates the token provided in the authorization header.")
+    public MerchantResponse<String> validateToken(){
+        log.info("Received request for Token Validation");
+        return MerchantResponse.<String>builder().status(RESPONSE_SUCCESS).data(List.of("Token validated successfully.")).build();
+    }
 
-https://neosofttechnologiesmail-my.sharepoint.com/personal/binoy_medhi_neosofttech_com/_layouts/15/onedrive.aspx?ga=1
 
---------------------------------------------------------------
 
 
 
