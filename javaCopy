@@ -1,4 +1,4 @@
-@GetMapping("/token")
+@GetMapping("http://localhost:9093/api/merchant/v1/validation/token")
     @Operation(summary = "Merchant User Token Validation", description = "Validates the token provided in the authorization header.")
     public MerchantResponse<String> validateToken(){
         log.info("Received request for Token Validation");
