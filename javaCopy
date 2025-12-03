@@ -1,88 +1,95 @@
-@GetMapping("http://localhost:9093/api/merchant/v1/validation/token")
-    @Operation(summary = "Merchant User Token Validation", description = "Validates the token provided in the authorization header.")
-    public MerchantResponse<String> validateToken(){
-        log.info("Received request for Token Validation");
-        return MerchantResponse.<String>builder().status(RESPONSE_SUCCESS).data(List.of("Token validated successfully.")).build();
+Below is my code in which i want to make some modification, 
+i want to check if in businessDto id is passed then i have to get BusinessInfo based upon id and then set BusinessDto data into BusinessInfo and then save into database.
+and if in businessDto id is not passed or its a empty then run my exixting code.
+
+@Component
+@RequiredArgsConstructor
+public class BusinessInfoDao {
+    private final LoggerUtility logger = LoggerFactoryUtility.getLogger(this.getClass());
+    private final BusinessInfoMapper businessInfoMapper;
+    private final BusinessInfoRepository businessInfoRepository;
+
+    public BusinessDto saveBusinessInfo(BusinessDto businessDto) {
+        logger.info("DAO Layer: Starting saveBusinessInfo operation for mif ID: {}", businessDto.getMerchantMIFId());
+        BusinessInfo savedBusinessInfo = businessInfoRepository.save(businessInfoMapper.mapRequestToEntity(businessDto));
+        logger.info("BusinessInfo entity saved successfully. Business Info ID: {}", savedBusinessInfo.getId());
+        return businessInfoMapper.mapEntityToResponse(savedBusinessInfo);
     }
 
+@Data
+@NoArgsConstructor
+@Builder
+@AllArgsConstructor
+public class BusinessDto {
+    private UUID id;
+    private String merchantMIFId;
+    private PanDetailsDto panDetailsDto;
+    private String gstIn;
+    private String tan;
+    private String legalName;
+    private String brandName;
+    private String constitution;
+    private String website;
+    private String dateOfEstablishment;
+    private String currentAnnualTurnover;
+    private String officeAddress;
+    private String country;
+    private String state;
+    private String cityOrArea;
+    private String pincode;
+    private String natureOfBusiness;
+    private String companyProfile;
+    private String productOrServiceIntendedToSell;
+    private String recoveryOfTxnCharges;
 
+}
 
-package com.sbiepay.fileapi.exception;
+@Audited
+@AuditTable(value = "BUSINESS_INFO_AUDIT")
+@Table(name = "BUSINESS_INFO")
+@Entity
+@AllArgsConstructor
+@NoArgsConstructor
+@Builder
+@Setter
+@Getter
+public class BusinessInfo extends AuditEntity {
+    @Id
+    @GeneratedValue(strategy = GenerationType.UUID)
+    private UUID id;
+    @Column(name = "MERCHANT_MIF_ID")
+    private String merchantMIFId;
+    @Lob
+    private String pan;
+    private String gstIn;
+    private String tan;
+    private String legalName;
+    private String brandName;
+    private String constitution;
+    private String website;
+    @Column(name = "DATE_OF_ESTABLISHMENT")
+    private String dateOfEstablishment;
+    @Column(name = "CURRENT_ANNUAL_TURNOVER")
+    private String currentAnnualTurnover;
+    private String officeAddress;
+    private String country;
+    private String state;
+    private String cityOrArea;
+    private String pincode;
+    private String natureOfBusiness;
+    private String companyProfile;
+    private String productOrServiceIntendedToSell;
+    private String recoveryOfTxnCharges;
+    @Version
+    private int version;
 
-public class FileStorageException extends RuntimeException {
-    public FileStorageException(String message) {
-        super(message);
+    @PrePersist
+    @PreUpdate
+    public void setEntityNameForRevision() {
+        AuditRevisionListener.setEntityName(this.getClass().getSimpleName());
     }
 }
 
-
-package com.sbiepay.fileapi.exception;
-
-public class TokenValidationException extends RuntimeException {
-    public TokenValidationException(String message) {
-        super(message);
-    }
-}
-
-
-package com.sbiepay.fileapi.exception;
-
-import com.sbiepay.fileapi.dto.ErrorResponse;
-import org.springframework.http.HttpStatus;
-import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.ControllerAdvice;
-import org.springframework.web.bind.annotation.ExceptionHandler;
-
-@ControllerAdvice
-public class GlobalExceptionHandler {
-
-    @ExceptionHandler(FileStorageException.class)
-    public ResponseEntity<ErrorResponse> handleFileException(FileStorageException ex) {
-        return new ResponseEntity<>(new ErrorResponse("FILE_UPLOAD_ERROR", ex.getMessage()), HttpStatus.INTERNAL_SERVER_ERROR);
-    }
-
-    @ExceptionHandler(TokenValidationException.class)
-    public ResponseEntity<ErrorResponse> handleTokenException(TokenValidationException ex) {
-        return new ResponseEntity<>(new ErrorResponse("INVALID_TOKEN", ex.getMessage()), HttpStatus.UNAUTHORIZED);
-    }
-
-    @ExceptionHandler(Exception.class)
-    public ResponseEntity<ErrorResponse> handleGeneric(Exception ex) {
-        return new ResponseEntity<>(new ErrorResponse("INTERNAL_ERROR", ex.getMessage()), HttpStatus.INTERNAL_SERVER_ERROR);
-    }
-}
-
-
-
-package com.sbiepay.fileapi.exception;
-
-import com.sbiepay.fileapi.dto.ErrorResponse;
-import org.springframework.http.HttpStatus;
-import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.ExceptionHandler;
-import org.springframework.web.bind.annotation.RestControllerAdvice;
-
-@RestControllerAdvice
-public class GlobalExceptionHandler {
-
-    @ExceptionHandler(FileStorageException.class)
-    public ResponseEntity<ErrorResponse> handleFileException(FileStorageException ex) {
-        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                .body(new ErrorResponse("FILE_UPLOAD_ERROR", ex.getMessage()));
-    }
-
-    @ExceptionHandler(TokenValidationException.class)
-    public ResponseEntity<ErrorResponse> handleTokenException(TokenValidationException ex) {
-        return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
-                .body(new ErrorResponse("INVALID_TOKEN", ex.getMessage()));
-    }
-
-    @ExceptionHandler(Exception.class)
-    public ResponseEntity<ErrorResponse> handleGeneric(Exception ex) {
-        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                .body(new ErrorResponse("INTERNAL_ERROR", ex.getMessage()));
-    }
-}
 
 
 
