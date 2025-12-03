@@ -90,7 +90,24 @@ public class BusinessInfo extends AuditEntity {
     }
 }
 
+@Mapper(builder = @Builder(disableBuilder = true), componentModel = "spring")
+public interface BusinessInfoMapper {
 
+    @Mapping(source = "panDetailsDto", target = "pan", qualifiedByName = "objectToString")
+    BusinessInfo mapRequestToEntity(BusinessDto businessDto);
 
+    BusinessDto mapEntityToResponse(BusinessInfo businessInfo);
+
+    @Named("objectToString")
+    default String objectToString(PanDetailsDto panDetailsDto) {
+        ObjectMapper objectMapper = new ObjectMapper();
+        try {
+            return objectMapper.writeValueAsString(panDetailsDto);
+        } catch (JsonProcessingException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+}
 
 
