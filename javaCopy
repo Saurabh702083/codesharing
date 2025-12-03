@@ -111,3 +111,102 @@ public interface BusinessInfoMapper {
 }
 
 
+@Component
+@RequiredArgsConstructor
+public class BusinessInfoDao {
+
+    private final LoggerUtility logger = LoggerFactoryUtility.getLogger(this.getClass());
+    private final BusinessInfoMapper businessInfoMapper;
+    private final BusinessInfoRepository businessInfoRepository;
+
+    public BusinessDto saveBusinessInfo(BusinessDto businessDto) {
+        logger.info("DAO Layer: Starting saveBusinessInfo operation for mif ID: {}", businessDto.getMerchantMIFId());
+
+        BusinessInfo businessInfo;
+
+        // ✅ UPDATE FLOW: ID present in DTO
+        if (businessDto.getId() != null) {
+            logger.info("ID present in BusinessDto. Updating existing BusinessInfo with id: {}", businessDto.getId());
+
+            businessInfo = businessInfoRepository.findById(businessDto.getId())
+                    .orElseThrow(() -> new IllegalArgumentException(
+                            "BusinessInfo not found for id: " + businessDto.getId()
+                    ));
+
+            // Copy all updatable fields from DTO into the managed entity
+            businessInfoMapper.updateEntityFromDto(businessDto, businessInfo);
+
+        } else {
+            // ✅ CREATE FLOW: no ID in DTO → new entity
+            logger.info("No ID in BusinessDto. Creating new BusinessInfo record.");
+            businessInfo = businessInfoMapper.mapRequestToEntity(businessDto);
+        }
+
+        BusinessInfo savedBusinessInfo = businessInfoRepository.save(businessInfo);
+        logger.info("BusinessInfo entity saved successfully. Business Info ID: {}", savedBusinessInfo.getId());
+
+        return businessInfoMapper.mapEntityToResponse(savedBusinessInfo);
+    }
+}
+
+
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.mapstruct.BeanMapping;
+import org.mapstruct.Builder;
+import org.mapstruct.Mapper;
+import org.mapstruct.Mapping;
+import org.mapstruct.MappingTarget;
+import org.mapstruct.Named;
+import org.mapstruct.NullValuePropertyMappingStrategy;
+
+@Mapper(
+        builder = @Builder(disableBuilder = true),
+        componentModel = "spring"
+)
+public interface BusinessInfoMapper {
+
+    // ✅ For CREATE
+    @Mapping(source = "panDetailsDto", target = "pan", qualifiedByName = "objectToString")
+    BusinessInfo mapRequestToEntity(BusinessDto businessDto);
+
+    // ✅ For RESPONSE (optional: map JSON string back to PanDetailsDto)
+    @Mapping(source = "pan", target = "panDetailsDto", qualifiedByName = "stringToObject")
+    BusinessDto mapEntityToResponse(BusinessInfo businessInfo);
+
+    // ✅ For UPDATE (copy DTO data into existing entity)
+    @BeanMapping(nullValuePropertyMappingStrategy = NullValuePropertyMappingStrategy.IGNORE)
+    @Mapping(source = "panDetailsDto", target = "pan", qualifiedByName = "objectToString")
+    void updateEntityFromDto(BusinessDto businessDto, @MappingTarget BusinessInfo businessInfo);
+
+
+    // ====== Converters for pan <-> panDetailsDto ======
+
+    @Named("objectToString")
+    default String objectToString(PanDetailsDto panDetailsDto) {
+        if (panDetailsDto == null) {
+            return null;
+        }
+        ObjectMapper objectMapper = new ObjectMapper();
+        try {
+            return objectMapper.writeValueAsString(panDetailsDto);
+        } catch (JsonProcessingException e) {
+            throw new RuntimeException("Error converting PanDetailsDto to JSON string", e);
+        }
+    }
+
+    @Named("stringToObject")
+    default PanDetailsDto stringToObject(String panJson) {
+        if (panJson == null || panJson.isBlank()) {
+            return null;
+        }
+        ObjectMapper objectMapper = new ObjectMapper();
+        try {
+            return objectMapper.readValue(panJson, PanDetailsDto.class);
+        } catch (JsonProcessingException e) {
+            throw new RuntimeException("Error converting JSON string to PanDetailsDto", e);
+        }
+    }
+}
+
+
