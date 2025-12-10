@@ -1,3 +1,486 @@
+package com.example.gst.dto;
+
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Pattern;
+import lombok.Data;
+
+import java.util.List;
+
+@Data
+public class InvoiceSyncRequest {
+
+    @NotBlank
+    // YYYYMM (e.g. 202511)
+    @Pattern(regexp = "^[0-9]{6}$", message = "monthYear must be in YYYYMM format")
+    private String monthYear;
+
+    @NotBlank
+    @Pattern(regexp = "CUSTOMER|MERCHANT", message = "type must be CUSTOMER or MERCHANT")
+    private String type; // or use enum directly in controller binding
+
+    // Optional list of GSTINs to filter
+    private List<String> gstins;
+}
+
+
+package com.example.gst.model;
+
+public enum InvoiceType {
+    CUSTOMER,
+    MERCHANT
+}
+
+package com.example.gst.entity;
+
+import com.example.gst.model.InvoiceType;
+import jakarta.persistence.*;
+import lombok.*;
+
+import java.time.LocalDateTime;
+
+@Entity
+@Table(name = "invoice_file")
+@Getter
+@Setter
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
+public class InvoiceFile {
+
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+
+    @Column(name = "month_year", nullable = false, length = 6)
+    private String monthYear; // YYYYMM
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "invoice_type", nullable = false, length = 20)
+    private InvoiceType type;
+
+    @Column(name = "gstin", length = 20)
+    private String gstin;
+
+    @Column(name = "file_name", nullable = false)
+    private String fileName;
+
+    @Column(name = "s3_path", nullable = false, length = 500)
+    private String s3Path;
+
+    @Column(name = "created_at", nullable = false)
+    private LocalDateTime createdAt;
+}
+
+
+package com.example.gst.repository;
+
+import com.example.gst.entity.InvoiceFile;
+import org.springframework.data.jpa.repository.JpaRepository;
+
+public interface InvoiceFileRepository extends JpaRepository<InvoiceFile, Long> {
+}
+
+package com.example.gst.sftp;
+
+import java.io.InputStream;
+
+public interface SftpClient {
+
+    /**
+     * Returns zip InputStream for the given monthYear (YYYYMM).
+     * Caller is responsible for closing the stream.
+     */
+    InputStream getMonthlyZip(String monthYear);
+}
+
+
+package com.example.gst.sftp;
+
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.context.annotation.Profile;
+import org.springframework.stereotype.Component;
+
+import java.io.FileInputStream;
+import java.io.FileNotFoundException;
+import java.io.InputStream;
+import java.nio.file.Files;
+import java.nio.file.Path;
+
+@Slf4j
+@Component
+@Profile("local")
+public class LocalSftpClient implements SftpClient {
+
+    // Adjust this path as you prefer
+    private static final String BASE_DIR = "/tmp/gst-invoices";
+
+    @Override
+    public InputStream getMonthlyZip(String monthYear) {
+        try {
+            Path zipPath = Path.of(BASE_DIR, monthYear + ".zip");
+            log.info("Reading local zip file: {}", zipPath.toAbsolutePath());
+            if (!Files.exists(zipPath)) {
+                throw new RuntimeException("Zip file not found for monthYear: " + monthYear);
+            }
+            return new FileInputStream(zipPath.toFile());
+        } catch (FileNotFoundException e) {
+            throw new RuntimeException("Error opening local zip file for monthYear: " + monthYear, e);
+        }
+    }
+}
+
+
+package com.example.gst.sftp;
+
+import com.jcraft.jsch.ChannelSftp;
+import com.jcraft.jsch.JSch;
+import com.jcraft.jsch.Session;
+import jakarta.annotation.PostConstruct;
+import jakarta.annotation.PreDestroy;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.annotation.Profile;
+import org.springframework.stereotype.Component;
+
+import java.io.InputStream;
+import java.util.Properties;
+
+@Slf4j
+@Component
+@Profile("dev")
+public class RemoteSftpClient implements SftpClient {
+
+    @Value("${sftp.host}")
+    private String host;
+
+    @Value("${sftp.port:22}")
+    private int port;
+
+    @Value("${sftp.username}")
+    private String username;
+
+    @Value("${sftp.password}")
+    private String password;
+
+    @Value("${sftp.base-directory:/gst-invoices}")
+    private String baseDirectory;
+
+    private Session session;
+    private ChannelSftp sftpChannel;
+
+    @PostConstruct
+    public void init() {
+        try {
+            JSch jsch = new JSch();
+            session = jsch.getSession(username, host, port);
+            session.setPassword(password);
+
+            Properties config = new Properties();
+            config.put("StrictHostKeyChecking", "no");
+            session.setConfig(config);
+
+            session.connect();
+            log.info("SFTP session connected to {}:{}", host, port);
+
+            sftpChannel = (ChannelSftp) session.openChannel("sftp");
+            sftpChannel.connect();
+            log.info("SFTP channel opened");
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to initialize SFTP connection", e);
+        }
+    }
+
+    @Override
+    public InputStream getMonthlyZip(String monthYear) {
+        try {
+            String remotePath = baseDirectory + "/" + monthYear + ".zip";
+            log.info("Fetching remote SFTP zip file: {}", remotePath);
+            return sftpChannel.get(remotePath);
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to fetch SFTP zip for monthYear: " + monthYear, e);
+        }
+    }
+
+    @PreDestroy
+    public void cleanup() {
+        if (sftpChannel != null && sftpChannel.isConnected()) {
+            sftpChannel.disconnect();
+        }
+        if (session != null && session.isConnected()) {
+            session.disconnect();
+        }
+    }
+}
+
+
+package com.example.gst.s3;
+
+import java.io.InputStream;
+
+public interface S3StorageService {
+
+    /**
+     * Uploads given stream and returns the full S3 path/URL.
+     */
+    String upload(String key, InputStream inputStream, long contentLength, String contentType);
+}
+
+
+package com.example.gst.s3;
+
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.annotation.Profile;
+import org.springframework.stereotype.Service;
+import software.amazon.awssdk.core.sync.RequestBody;
+import software.amazon.awssdk.services.s3.S3Client;
+import software.amazon.awssdk.services.s3.model.PutObjectRequest;
+
+import java.io.InputStream;
+
+@Slf4j
+@Service
+@RequiredArgsConstructor
+public class AwsS3StorageService implements S3StorageService {
+
+    private final S3Client s3Client;
+
+    @Value("${aws.s3.bucket-name}")
+    private String bucketName;
+
+    @Override
+    public String upload(String key, InputStream inputStream, long contentLength, String contentType) {
+        try {
+            PutObjectRequest putObjectRequest = PutObjectRequest.builder()
+                    .bucket(bucketName)
+                    .key(key)
+                    .contentType(contentType)
+                    .build();
+
+            s3Client.putObject(putObjectRequest, RequestBody.fromInputStream(inputStream, contentLength));
+
+            String s3Path = "s3://" + bucketName + "/" + key;
+            log.info("Uploaded file to {}", s3Path);
+            return s3Path;
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to upload to S3 for key: " + key, e);
+        }
+    }
+}
+
+
+
+package com.example.gst.service;
+
+import com.example.gst.dto.InvoiceSyncRequest;
+import com.example.gst.entity.InvoiceFile;
+import com.example.gst.model.InvoiceType;
+import com.example.gst.repository.InvoiceFileRepository;
+import com.example.gst.s3.S3StorageService;
+import com.example.gst.sftp.SftpClient;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.stereotype.Service;
+import org.springframework.util.CollectionUtils;
+import org.springframework.util.StringUtils;
+
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.InputStream;
+import java.time.LocalDateTime;
+import java.util.List;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipInputStream;
+
+@Slf4j
+@Service
+@RequiredArgsConstructor
+public class InvoiceSyncService {
+
+    private final SftpClient sftpClient;
+    private final S3StorageService s3StorageService;
+    private final InvoiceFileRepository invoiceFileRepository;
+
+    public int processInvoices(InvoiceSyncRequest request) {
+        String monthYear = request.getMonthYear();
+        InvoiceType type = InvoiceType.valueOf(request.getType());
+        List<String> gstins = request.getGstins();
+
+        log.info("Processing invoices for monthYear={}, type={}, gstins={}", monthYear, type, gstins);
+
+        try (InputStream zipStream = sftpClient.getMonthlyZip(monthYear);
+             ZipInputStream zis = new ZipInputStream(zipStream)) {
+
+            int processedCount = 0;
+            ZipEntry entry;
+
+            while ((entry = zis.getNextEntry()) != null) {
+                String entryName = entry.getName();
+                if (entry.isDirectory()) {
+                    continue;
+                }
+
+                // We only care about PDFs
+                if (!entryName.toLowerCase().endsWith(".pdf")) {
+                    continue;
+                }
+
+                // Parse info from file name
+                InvoiceType entryType = extractTypeFromFileName(entryName);
+                String gstinFromFile = extractGstinFromFileName(entryName);
+
+                // Skip if type doesn't match
+                if (entryType != type) {
+                    continue;
+                }
+
+                // If request has GSTIN list, ensure this file’s GSTIN is in that list
+                if (!CollectionUtils.isEmpty(gstins)) {
+                    if (!StringUtils.hasText(gstinFromFile) || !gstins.contains(gstinFromFile)) {
+                        continue;
+                    }
+                }
+
+                // Read the PDF bytes from current zip entry
+                byte[] pdfBytes = readAllBytes(zis);
+
+                // Build S3 key: e.g. invoices/202511/CUSTOMER/<GSTIN>/file.pdf
+                String s3Key = buildS3Key(monthYear, type, gstinFromFile, entryName);
+
+                // Upload to S3
+                try (InputStream pdfStream = new ByteArrayInputStream(pdfBytes)) {
+                    String s3Path = s3StorageService.upload(
+                            s3Key,
+                            pdfStream,
+                            pdfBytes.length,
+                            "application/pdf"
+                    );
+
+                    // Save in DB
+                    InvoiceFile invoiceFile = InvoiceFile.builder()
+                            .monthYear(monthYear)
+                            .type(type)
+                            .gstin(gstinFromFile)
+                            .fileName(entryName)
+                            .s3Path(s3Path)
+                            .createdAt(LocalDateTime.now())
+                            .build();
+
+                    invoiceFileRepository.save(invoiceFile);
+                    processedCount++;
+                }
+
+                zis.closeEntry();
+            }
+
+            log.info("Processed {} invoice files", processedCount);
+            return processedCount;
+
+        } catch (Exception e) {
+            log.error("Error while processing invoices", e);
+            throw new RuntimeException("Error while processing invoices", e);
+        }
+    }
+
+    private String buildS3Key(String monthYear, InvoiceType type, String gstin, String fileName) {
+        StringBuilder key = new StringBuilder("invoices/")
+                .append(monthYear)
+                .append("/")
+                .append(type.name())
+                .append("/");
+        if (StringUtils.hasText(gstin)) {
+            key.append(gstin).append("/");
+        }
+        key.append(fileName);
+        return key.toString();
+    }
+
+    // TODO: adjust according to your real filename pattern
+    private InvoiceType extractTypeFromFileName(String fileName) {
+        String upper = fileName.toUpperCase();
+        if (upper.startsWith("CUSTOMER_")) {
+            return InvoiceType.CUSTOMER;
+        } else if (upper.startsWith("MERCHANT_")) {
+            return InvoiceType.MERCHANT;
+        } else {
+            // fallback: maybe type is part of name
+            if (upper.contains("CUSTOMER")) {
+                return InvoiceType.CUSTOMER;
+            } else if (upper.contains("MERCHANT")) {
+                return InvoiceType.MERCHANT;
+            }
+        }
+        // default behavior: treat as type from request – but here we return null and skip
+        return null;
+    }
+
+    // TODO: adjust to your filename pattern, e.g. CUSTOMER_<GSTIN>_xxx.pdf
+    private String extractGstinFromFileName(String fileName) {
+        // naive example: split by '_' and assume second token is GSTIN
+        String nameOnly = fileName.substring(fileName.lastIndexOf('/') + 1); // remove folder if any
+        String[] parts = nameOnly.split("_");
+        if (parts.length >= 2) {
+            return parts[1];
+        }
+        return null;
+    }
+
+    private byte[] readAllBytes(ZipInputStream zis) throws Exception {
+        ByteArrayOutputStream buffer = new ByteArrayOutputStream();
+        byte[] tmp = new byte[4096];
+        int read;
+        while ((read = zis.read(tmp)) != -1) {
+            buffer.write(tmp, 0, read);
+        }
+        return buffer.toByteArray();
+    }
+}
+
+
+package com.example.gst.controller;
+
+import com.example.gst.dto.InvoiceSyncRequest;
+import com.example.gst.service.InvoiceSyncService;
+import jakarta.validation.Valid;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.*;
+
+@Slf4j
+@RestController
+@RequestMapping("/api/v1/invoices")
+@RequiredArgsConstructor
+public class InvoiceSyncController {
+
+    private final InvoiceSyncService invoiceSyncService;
+
+    @PostMapping("/sync")
+    public ResponseEntity<SyncResponse> syncInvoices(@Valid @RequestBody InvoiceSyncRequest request) {
+        log.info("Received invoice sync request: {}", request);
+
+        int processedCount = invoiceSyncService.processInvoices(request);
+
+        SyncResponse response = new SyncResponse(
+                "SUCCESS",
+                "Invoices processed and stored successfully",
+                processedCount
+        );
+
+        return ResponseEntity.ok(response);
+    }
+
+    public record SyncResponse(
+            String status,
+            String message,
+            int processedCount
+    ) {}
+}
+
+
+----------------------------- xxxx--------------------------+---+------
+
 // dto/InvoiceType.java
 package com.example.gst.dto;
 
