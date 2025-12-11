@@ -1,3 +1,6 @@
+Invoice-27AAACS8577K2ZO-01AAHCK1432E1Z9-Oct-2025-1AAHCK1432E1Z9-99999-T1025272O7.pdf
+-------------------------------------------------------------------------
+
 package com.example.gst.dto;
 
 import jakarta.validation.constraints.NotBlank;
