@@ -1,3 +1,63 @@
+
+package com.example.gst.util;
+
+import com.example.gst.model.InvoiceType;
+
+public class InvoiceFileNameParser {
+
+    /**
+     * Parses invoice filename of format:
+     * Invoice-<SBI_GSTIN>-<TYPE>-<MONTH_YEAR>-<PARTY_GSTIN>-99999-<REF>.pdf
+     */
+    public static ParsedInvoiceFile parse(String fileName) {
+
+        if (!fileName.startsWith("Invoice-") || !fileName.endsWith(".pdf")) {
+            throw new IllegalArgumentException("Invalid invoice filename format: " + fileName);
+        }
+
+        // Remove .pdf
+        String withoutExt = fileName.substring(0, fileName.length() - 4);
+
+        // Split by "-"
+        String[] parts = withoutExt.split("-");
+
+        /**
+         * parts[0] = "Invoice"
+         * parts[1] = SBI GSTIN
+         * parts[2] = TYPE INDICATOR ("0" or "Mxxxx")
+         * parts[3] = MONTH (Oct)
+         * parts[4] = YEAR (2025)
+         * parts[5] = PARTY GSTIN
+         * parts[6] = 99999
+         * parts[7] = INVOICE_REF
+         */
+
+        if (parts.length < 8) {
+            throw new IllegalArgumentException("Invalid filename structure: " + fileName);
+        }
+
+        String sbiGstin = parts[1];
+        String typeIndicator = parts[2];
+        String monthYear = parts[3] + "-" + parts[4];
+        String partyGstin = parts[5];
+        String invoiceRef = parts[7];
+
+        // Determine type
+        InvoiceType fileType = typeIndicator.equals("0")
+                ? InvoiceType.CUSTOMER
+                : InvoiceType.MERCHANT;
+
+        return ParsedInvoiceFile.builder()
+                .invoiceType(fileType)
+                .sbiGstin(sbiGstin)
+                .partyGstin(partyGstin)
+                .invoiceReference(invoiceRef)
+                .monthYear(monthYear)
+                .originalFileName(fileName)
+                .build();
+    }
+}
+
 Invoice-27AAACS8577K2ZO-01AAHCK1432E1Z9-Oct-2025-1AAHCK1432E1Z9-99999-T1025272O7.pdf
 Invoice-27AAACS8577K2ZO-0-Oct-2025-1AAHCK1432E1Z9-99999-T1025272O7.pdf
 Invoice-27AAACS8577K2ZO-M12ACDF5345-Oct-2025-1AAHCK1432E1Z9-99999-T1025272O7.pdf
