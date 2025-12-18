@@ -1,394 +1,41 @@
-@Service
-@RequiredArgsConstructor
-public class GstInvoiceService {
-
-    private static final int MAX_CONCURRENT_UPLOADS = 50;
-    private static final int MAX_RETRIES = 3;
-
-    private final ExecutorService virtualThreadExecutor;
-    private final Semaphore semaphore =
-            new Semaphore(MAX_CONCURRENT_UPLOADS);
-
-    private final SftpClientService sftpClientService;
-    private final GstInvoiceDownloadProducer gstInvoiceDownloadProducer;
-    private final ObjectMapper objectMapper;
-    private final FileService fileService;
-    private final GstInvoiceValidation gstInvoiceValidation;
-
-    private final LoggerUtility logger =
-            LoggerFactoryUtility.getLogger(this.getClass());
-
-    public void invoiceRequest(GstInvoiceRequest request) {
-
-        gstInvoiceValidation.validateGstInvoiceRequest(request);
-
-        GstInvoiceType invoiceType =
-                GstInvoiceType.valueOf(request.getInvoiceType());
-
-        boolean hasGstin =
-                !CollectionUtils.isEmpty(request.getGstns());
-
-        processZip(
-                request.getMonthYear(),
-                request.getGstns(),
-                hasGstin,
-                invoiceType
-        );
-    }
-
-    private void processZip(
-            String monthYear,
-            List<String> gstns,
-            boolean hasGstin,
-            GstInvoiceType invoiceType) {
-
-        try (ZipInputStream zis =
-                     new ZipInputStream(
-                             sftpClientService.getMonthlyZip(monthYear))) {
-
-            ZipEntry entry;
-
-            while ((entry = zis.getNextEntry()) != null) {
-
-                if (entry.isDirectory()
-                        || !entry.getName().toLowerCase().endsWith(".pdf")) {
-                    zis.closeEntry();
-                    continue;
-                }
-
-                ParsedInvoiceFile parsed =
-                        InvoiceFileParser.safeParse(entry.getName(), monthYear);
-
-                if (parsed == null) {
-                    zis.closeEntry();
-                    continue;
-                }
-
-                if (!isEntryTypeMatching(
-                        parsed.getInvoiceType(),
-                        invoiceType,
-                        hasGstin)
-                        || !isGstnValid(
-                        parsed.getPartyGstIn(),
-                        gstns,
-                        hasGstin)) {
-
-                    zis.closeEntry();
-                    continue;
-                }
-
-                byte[] pdfBytes =
-                        ZipFileReader.readZipInputStream(zis);
-
-                virtualThreadExecutor.submit(() ->
-                        executeWithSemaphore(parsed, pdfBytes)
-                );
-
-                zis.closeEntry();
-            }
-
-        } catch (Exception ex) {
-            throw new CommunicationException(
-                    ZIP_FILE_ERROR_CODE,
-                    ex.getMessage()
-            );
-        }
-    }
-
-    private void executeWithSemaphore(
-            ParsedInvoiceFile parsed,
-            byte[] pdfBytes) {
-
-        try {
-            semaphore.acquire();
-            uploadWithRetry(parsed, pdfBytes);
-        } catch (InterruptedException ex) {
-            Thread.currentThread().interrupt();
-        } finally {
-            semaphore.release();
-        }
-    }
-
-    private void uploadWithRetry(
-            ParsedInvoiceFile parsed,
-            byte[] pdfBytes) {
-
-        for (int attempt = 1; attempt <= MAX_RETRIES; attempt++) {
-            try {
-                String s3Path =
-                        fileService.uploadFile(
-                                parsed.getFileName(),
-                                pdfBytes
-                        );
-
-                publishInvoice(parsed, s3Path);
-                return;
-
-            } catch (Exception ex) {
-                logger.error(
-                        "Upload attempt {} failed for file {}",
-                        attempt,
-                        parsed.getFileName(),
-                        ex
-                );
-
-                if (attempt == MAX_RETRIES) {
-                    logger.error(
-                            "Max retries exceeded for file {}",
-                            parsed.getFileName()
-                    );
-                }
-            }
-        }
-    }
-
-    private void publishInvoice(
-            ParsedInvoiceFile parsed,
-            String s3Path) throws Exception {
-
-        S3UploadInvoiceResponse response =
-                S3UploadInvoiceResponse.builder()
-                        .invoiceType(parsed.getInvoiceType())
-                        .gstIn(parsed.getPartyGstIn())
-                        .monthYear(parsed.getMonthYear())
-                        .s3Key(s3Path)
-                        .build();
-
-        gstInvoiceDownloadProducer.publish(
-                parsed.getInvoiceType() + "_" + UUID.randomUUID(),
-                objectMapper.writeValueAsString(response)
-        );
-    }
-
-    private boolean isEntryTypeMatching(
-            GstInvoiceType entryType,
-            GstInvoiceType type,
-            boolean hasGstin) {
-
-        return !hasGstin || entryType == type;
-    }
-
-    private boolean isGstnValid(
-            String gstinFromFile,
-            List<String> gstins,
-            boolean hasGstin) {
-
-        return !hasGstin
-                || (StringUtils.hasText(gstinFromFile)
-                && gstins.contains(gstinFromFile));
-    }
-}
-
-
-
-
-
-yBelow is my code that will get read zip file from sftp and then upload it on the s3.
+Below is my code can you please check method names, classes as per requriment and code as per pro stander and make class and method as per good practice in java  
 
 @RestController
 @RequiredArgsConstructor
 @RequestMapping("/gst/invoice")
-public class gstInvoiceController {
+public class gstInvoiceDownloadController {
     private final LoggerUtility logger = LoggerFactoryUtility.getLogger(this.getClass());
-    private final GstInvoiceService gstInvoiceService;
+    private final GstInvoiceDownloadService gstInvoiceDownloadService;
 
     @PostMapping("/download")
-    public CommunicationResponse<String> gstInvoiceRequest(@RequestBody GstInvoiceRequest gstInvoiceRequest){
-        logger.info("Request to get gst invoice from SFTP to s3.");@Service
-@RequiredArgsConstructor
-public class GstInvoiceService {
-
-    private static final int MAX_CONCURRENT_UPLOADS = 50;
-    private static final int MAX_RETRIES = 3;
-
-    private final ExecutorService virtualThreadExecutor;
-    private final Semaphore semaphore =
-            new Semaphore(MAX_CONCURRENT_UPLOADS);
-
-    private final SftpClientService sftpClientService;
-    private final GstInvoiceDownloadProducer gstInvoiceDownloadProducer;
-    private final ObjectMapper objectMapper;
-    private final FileService fileService;
-    private final GstInvoiceValidation gstInvoiceValidation;
-
-    private final LoggerUtility logger =
-            LoggerFactoryUtility.getLogger(this.getClass());
-
-    public void invoiceRequest(GstInvoiceRequest request) {
-
-        gstInvoiceValidation.validateGstInvoiceRequest(request);
-
-        GstInvoiceType invoiceType =
-                GstInvoiceType.valueOf(request.getInvoiceType());
-
-        boolean hasGstin =
-                !CollectionUtils.isEmpty(request.getGstns());
-
-        processZip(
-                request.getMonthYear(),
-                request.getGstns(),
-                hasGstin,
-                invoiceType
-        );
-    }
-
-    private void processZip(
-            String monthYear,
-            List<String> gstns,
-            boolean hasGstin,
-            GstInvoiceType invoiceType) {
-
-        try (ZipInputStream zis =
-                     new ZipInputStream(
-                             sftpClientService.getMonthlyZip(monthYear))) {
-
-            ZipEntry entry;
-
-            while ((entry = zis.getNextEntry()) != null) {
-
-                if (entry.isDirectory()
-                        || !entry.getName().toLowerCase().endsWith(".pdf")) {
-                    zis.closeEntry();
-                    continue;
-                }
-
-                ParsedInvoiceFile parsed =
-                        InvoiceFileParser.safeParse(entry.getName(), monthYear);
-
-                if (parsed == null) {
-                    zis.closeEntry();
-                    continue;
-                }
-
-                if (!isEntryTypeMatching(
-                        parsed.getInvoiceType(),
-                        invoiceType,
-                        hasGstin)
-                        || !isGstnValid(
-                        parsed.getPartyGstIn(),
-                        gstns,
-                        hasGstin)) {
-
-                    zis.closeEntry();
-                    continue;
-                }
-
-                byte[] pdfBytes =
-                        ZipFileReader.readZipInputStream(zis);
-
-                virtualThreadExecutor.submit(() ->
-                        executeWithSemaphore(parsed, pdfBytes)
-                );
-
-                zis.closeEntry();
-            }
-
-        } catch (Exception ex) {
-            throw new CommunicationException(
-                    ZIP_FILE_ERROR_CODE,
-                    ex.getMessage()
-            );
-        }
-    }
-
-    private void executeWithSemaphore(
-            ParsedInvoiceFile parsed,
-            byte[] pdfBytes) {
-
-        try {
-            semaphore.acquire();
-            uploadWithRetry(parsed, pdfBytes);
-        } catch (InterruptedException ex) {
-            Thread.currentThread().interrupt();
-        } finally {
-            semaphore.release();
-        }
-    }
-
-    private void uploadWithRetry(
-            ParsedInvoiceFile parsed,
-            byte[] pdfBytes) {
-
-        for (int attempt = 1; attempt <= MAX_RETRIES; attempt++) {
-            try {
-                String s3Path =
-                        fileService.uploadFile(
-                                parsed.getFileName(),
-                                pdfBytes
-                        );
-
-                publishInvoice(parsed, s3Path);
-                return;
-
-            } catch (Exception ex) {
-                logger.error(
-                        "Upload attempt {} failed for file {}",
-                        attempt,
-                        parsed.getFileName(),
-                        ex
-                );
-
-                if (attempt == MAX_RETRIES) {
-                    logger.error(
-                            "Max retries exceeded for file {}",
-                            parsed.getFileName()
-                    );
-                }
-            }
-        }
-    }
-
-    private void publishInvoice(
-            ParsedInvoiceFile parsed,
-            String s3Path) throws Exception {
-
-        S3UploadInvoiceResponse response =
-                S3UploadInvoiceResponse.builder()
-                        .invoiceType(parsed.getInvoiceType())
-                        .gstIn(parsed.getPartyGstIn())
-                        .monthYear(parsed.getMonthYear())
-                        .s3Key(s3Path)
-                        .build();
-
-        gstInvoiceDownloadProducer.publish(
-                parsed.getInvoiceType() + "_" + UUID.randomUUID(),
-                objectMapper.writeValueAsString(response)
-        );
-    }
-
-    private boolean isEntryTypeMatching(
-            GstInvoiceType entryType,
-            GstInvoiceType type,
-            boolean hasGstin) {
-
-        return !hasGstin || entryType == type;
-    }
-
-    private boolean isGstnValid(
-            String gstinFromFile,
-            List<String> gstins,
-            boolean hasGstin) {
-
-        return !hasGstin
-                || (StringUtils.hasText(gstinFromFile)
-                && gstins.contains(gstinFromFile));
-    }
-}u
-       return gstInvoiceService.invoiceRequest(gstInvoiceRequest);
+    public CommunicationResponse<String> gstInvoiceDownload(@RequestBody GstInvoiceRequest gstInvoiceRequest){
+        logger.info("Request to get gst invoice from SFTP to s3.");
+       return gstInvoiceDownloadService.downloadGstInvoice(gstInvoiceRequest);
     }
 
 }
+---------------
 
-
+/**
+ * Class Name: GstInvoiceRequestService
+ * Description: This class will help in getting file from sftp and uploading on s3.
+ * Author: Saurabh mahto
+ * <p>
+ * Copyright (c) 2025 [State Bank of India]
+ * All rights reserved
+ * Version: 1.0
+ */
 @Service
 @RequiredArgsConstructor
-public class GstInvoiceService {
+public class GstInvoiceDownloadService {
     private final LoggerUtility logger = LoggerFactoryUtility.getLogger(this.getClass());
     private final SftpClientService sftpClientService;
     private final GstInvoiceDownloadProducer gstInvoiceDownloadProducer;
     private final ObjectMapper objectMapper;
     private final FileService fileService;
     private final GstInvoiceValidation gstInvoiceValidation;
+    private final ExecutorService virtualThreadExecutor;
+    private final Semaphore semaphore = new Semaphore(MAX_CONCURRENT_UPLOADS);
 
     /**
      * Processes the invoice request and uploads the relevant PDF files to S3.
@@ -396,11 +43,11 @@ public class GstInvoiceService {
      * @param gstInvoiceRequest the GST invoice request
      * @return a communication response indicating the status of the operation
      */
-    public CommunicationResponse<String> invoiceRequest(GstInvoiceRequest gstInvoiceRequest) {
+    public CommunicationResponse<String> downloadGstInvoice(GstInvoiceRequest gstInvoiceRequest) {
         gstInvoiceValidation.validateGstInvoiceRequest(gstInvoiceRequest);
         GstInvoiceType type = GstInvoiceType.valueOf(gstInvoiceRequest.getInvoiceType());
         logger.info("Generate invoice for invoiceType:{}", gstInvoiceRequest.getInvoiceType());
-        boolean hasGstn = isGstnListNotEmpty(gstInvoiceRequest.getGstns());
+        boolean hasGstn = !CollectionUtils.isEmpty(gstInvoiceRequest.getGstns());
         logger.info("Processing invoices for monthYear={}, type={}, gstIns={}", gstInvoiceRequest.getMonthYear(), type, gstInvoiceRequest.getGstns());
         getAndProcessZipFile(gstInvoiceRequest.getMonthYear(),gstInvoiceRequest.getGstns(),hasGstn,type);
         return CommunicationResponse.<String>builder().data(List.of("Invoice has been successfully sent")).status(RESPONSE_SUCCESS).build();
@@ -431,15 +78,18 @@ public class GstInvoiceService {
                     continue;
                 }
                 ParsedInvoiceFile parsedInvoiceFile = InvoiceFileParser.parse(entry.getName(), monthYear);
+                if(parsedInvoiceFile==null){
+                    logger.warn("Skipping invalid invoice file: {}", entry.getName());
+                    zis.closeEntry();
+                    continue;
+                }
                 logger.info("Processing invoice upload for fileName : {}, InvoiceType : {}, GstIn : {}", parsedInvoiceFile.getFileName(), parsedInvoiceFile.getInvoiceType(), parsedInvoiceFile.getPartyGstIn());
                 if (!isEntryTypeMatching(parsedInvoiceFile.getInvoiceType(), type, hasGstin) || !isGstnValid(parsedInvoiceFile.getPartyGstIn(), gstns, hasGstin)) {
                     continue;
                 }
                 logger.info("Uploading gstIn invoice to s3 for gstIn :{}", parsedInvoiceFile.getPartyGstIn());
                 byte[] pdfBytes = ZipFileReader.readZipInputStream(zis);
-                String s3Path = uploadFileOnS3(pdfBytes, parsedInvoiceFile.getFileName());
-                logger.info("Sending invoice s3 path {} to report service for GSTIN : {}", s3Path, parsedInvoiceFile.getPartyGstIn());
-                publishInvoice(parsedInvoiceFile, s3Path);
+                virtualThreadExecutor.submit(() -> executeWithSemaphore(parsedInvoiceFile, pdfBytes));
                 zis.closeEntry();
             }
         }catch (Exception ex) {
@@ -448,18 +98,32 @@ public class GstInvoiceService {
 
     }
 
-    /**
-     * Uploads the PDF file to S3.
-     *
-     * @param fileName   the name of the file entry
-     * @throws Exception if an error occurs during upload
-     */
-    private String uploadFileOnS3(byte[] pdfBytes, String fileName )  {
-        try {
 
-            return fileService.uploadFile(fileName, pdfBytes);
-        } catch (Exception ex) {
-            throw new CommunicationException(S3_UPLOAD_ERROR_CODE, MessageFormat.format(S3_UPLOAD_ERROR_MESSAGE,ex.getMessage()));
+    private void executeWithSemaphore(ParsedInvoiceFile parsed, byte[] pdfBytes) {
+        try {
+            semaphore.acquire();
+            uploadWithRetry(parsed, pdfBytes);
+        } catch (InterruptedException ex) {
+            Thread.currentThread().interrupt();
+        } finally {
+            semaphore.release();
+        }
+    }
+
+    private void uploadWithRetry(ParsedInvoiceFile parsed, byte[] pdfBytes) {
+        for (int attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+            try {
+                String s3Path = fileService.uploadFile(parsed.getFileName(), pdfBytes);
+                publishInvoice(parsed, s3Path);
+                return;
+
+            } catch (Exception ex) {
+                logger.error("Upload attempt {} failed for file {}", attempt, parsed.getFileName(), ex.getMessage());
+
+                if (attempt == MAX_RETRIES) {
+                    logger.error("Max retries exceeded for file {}", parsed.getFileName());
+                }
+            }
         }
     }
 
@@ -482,9 +146,6 @@ public class GstInvoiceService {
     }
 
 
-    private boolean isGstnListNotEmpty(List<String> gstins) {
-        return !CollectionUtils.isEmpty(gstins);
-    }
 
     private boolean isEntryNotPdf(ZipEntry entry) {
         return !entry.getName().toLowerCase().endsWith(".pdf");
@@ -503,27 +164,66 @@ public class GstInvoiceService {
     }
 }
 
-public class InvoiceFileParser {
+/**
+ * Class Name: GstInvoiceRequestValidation
+ * *
+ * Description: Validates gst invoice request..
+ * *
+ * Author: Saurabh mahto
+ * Copyright (c) 202s [State Bank of India]
+ * All rights reserved
+ * *
+ * Version:1.0
+ */
+@Component
+@RequiredArgsConstructor
+public class GstInvoiceValidation extends BaseValidator{
 
+    private static final DateTimeFormatter MONTH_YEAR_FORMATTER = DateTimeFormatter.ofPattern(MONTH_YEAR_FORMAT);
+    private final CommunicationConfig config;
 
-    public static ParsedInvoiceFile parse(String filePath, String monthYear) {
-        String fileName=filePath.replace("EPY_INVOICES_"+monthYear+"/","");
-        if (!fileName.startsWith("Invoice-") || !fileName.endsWith(".pdf")) {
-            throw new CommunicationException("","Invalid invoice filename format: " + fileName);
-        }
-        String withoutExt = fileName.substring(0, fileName.length() - 4);
-        String[] parts = withoutExt.split("-");
-        String sbiGstIn = parts[1];
-        String typeIndicator = parts[2];
-        String yearMonth = parts[3] + "-" + parts[4];
-        String partyGstIn = parts[5];
-        String invoiceRef = parts[7];
-
-        GstInvoiceType fileType = typeIndicator.equals("0") ? GstInvoiceType.CUSTOMER_GST_INVOICE : GstInvoiceType.MERCHANT_GST_INVOICE;
-
-        return ParsedInvoiceFile.builder().invoiceType(fileType).sbiGstIn(sbiGstIn).partyGstIn(partyGstIn).invoiceReference(invoiceRef).monthYear(yearMonth).fileName(fileName).build();
+    public void validateGstInvoiceRequest(GstInvoiceRequest gstInvoiceRequest){
+        errorDtoList = new ArrayList<>();
+        validateMandatoryFields(gstInvoiceRequest);
+        validateLeadingTrailingSpaces(gstInvoiceRequest);
+        validateFields(gstInvoiceRequest);
     }
+
+    private void validateMandatoryFields(GstInvoiceRequest gstInvoiceRequest){
+        checkMandatoryField(gstInvoiceRequest.getMonthYear(), MONTH_YEAR);
+        throwIfErrors();
+    }
+
+    private void validateLeadingTrailingSpaces(GstInvoiceRequest gstInvoiceRequest){
+        checkForLeadingTrailingAndSingleSpace(gstInvoiceRequest.getMonthYear(), MONTH_YEAR);
+        checkForLeadingTrailingAndSingleSpace(gstInvoiceRequest.getInvoiceType(), INVOICE_TYPE);
+        throwIfErrors();
+    }
+
+    private void validateFields(GstInvoiceRequest gstInvoiceRequest){
+        validateMonthYear(gstInvoiceRequest.getMonthYear());
+        validateFieldValue(gstInvoiceRequest.getInvoiceType(), Arrays.stream(GstInvoiceType.values()).map(Enum::name).toList(), INVOICE_TYPE);
+        validateMaxGstnList(gstInvoiceRequest.getGstns());
+        throwIfErrors();
+    }
+
+
+    private void validateMonthYear(String monthYear) {
+        try {
+            YearMonth.parse(monthYear, MONTH_YEAR_FORMATTER);
+        } catch (DateTimeException e) {
+            throw new ValidationException(INVALID_ERROR_CODE_NO_REASON, MessageFormat.format(INVALID_ERROR_MESSAGE,MONTH_YEAR ,"Expected YYYYMM"));
+        }
+    }
+
+    private void validateMaxGstnList(List<String> gstns){
+        if(config.getMaxGstnAllowed() >gstns.size()){
+            throw new ValidationException(MAX_GST_ALLOWED_ERROR_CODE,MessageFormat.format(MAX_GSTN_CAN_BE_PROCCESSED_AT_A_TIME,config.getMaxGstnAllowed()));
+        }
+    }
+
 }
+
 
 
 @Service
@@ -535,7 +235,9 @@ public class SftpClientService {
 
     @Value("${sftp.gstIn.baseDir}")
     private String GST_INVOICE_BASE_DIR;
- public InputStream getMonthlyZip(String monthYear) {
+
+
+    public InputStream getMonthlyZip(String monthYear) {
         try {
             Path zipPath = Path.of(GST_INVOICE_BASE_DIR, "EPY_INVOICES_"+monthYear + ".zip");
             logger.info("Reading local zip file: {}", zipPath.toAbsolutePath());
@@ -548,7 +250,33 @@ public class SftpClientService {
         }
     }
 }
+-------
 
+public class InvoiceFileParser {
+
+
+    public static ParsedInvoiceFile parse(String filePath, String monthYear) {
+        try {
+            String fileName = filePath.replace("EPY_INVOICES_" + monthYear + "/", "");
+            if (!fileName.startsWith("Invoice-") || !fileName.endsWith(".pdf")) {
+                return null;
+            }
+            String withoutExt = fileName.substring(0, fileName.length() - 4);
+            String[] parts = withoutExt.split("-");
+            String sbiGstIn = parts[1];
+            String typeIndicator = parts[2];
+            String yearMonth = parts[3] + "-" + parts[4];
+            String partyGstIn = parts[5];
+            String invoiceRef = parts[7];
+
+            GstInvoiceType fileType = typeIndicator.equals("0") ? GstInvoiceType.CUSTOMER_GST_INVOICE : GstInvoiceType.MERCHANT_GST_INVOICE;
+
+            return ParsedInvoiceFile.builder().invoiceType(fileType).sbiGstIn(sbiGstIn).partyGstIn(partyGstIn).invoiceReference(invoiceRef).monthYear(yearMonth).fileName(fileName).build();
+        } catch (Exception ex){
+            return null;
+        }
+    }
+}
 
 @Component
 @RequiredArgsConstructor
@@ -564,231 +292,4 @@ public class ZipFileReader {
         return buffer.toByteArray();
     }
 
-}
-
-
-In above code i need to make some changes 
-1. i want to make upload on s3 and publish part async. as there will be throusnd of files inside the zip, and it will take some time if we process this one by one , 
-for this we can use virtual thread to do this task async or we can upload in bulk.
-2. in parse method we have to handle  below senario , as if some file which is not pdf it will throw error , we have to skip that file not throw an error as it will not process other remaining file
-if (!fileName.startsWith("Invoice-") || !fileName.endsWith(".pdf")) {
-            throw new CommunicationException("","Invalid invoice filename format: " + fileName);
-        }
-
-
-
-
-
-@Configuration
-public class AsyncConfig {
-
-    @Bean
-    public ExecutorService virtualThreadExecutor() {
-        return Executors.newVirtualThreadPerTaskExecutor();
-    }
-}
-
-
-
-@Service
-@RequiredArgsConstructor
-public class GstInvoiceService {
-
-    private final LoggerUtility logger =
-            LoggerFactoryUtility.getLogger(this.getClass());
-
-    private final SftpClientService sftpClientService;
-    private final GstInvoiceDownloadProducer gstInvoiceDownloadProducer;
-    private final ObjectMapper objectMapper;
-    private final FileService fileService;
-    private final GstInvoiceValidation gstInvoiceValidation;
-    private final ExecutorService virtualThreadExecutor;
-
-    public CommunicationResponse<String> invoiceRequest(
-            GstInvoiceRequest gstInvoiceRequest) {
-
-        gstInvoiceValidation.validateGstInvoiceRequest(gstInvoiceRequest);
-
-        GstInvoiceType type =
-                GstInvoiceType.valueOf(gstInvoiceRequest.getInvoiceType());
-
-        boolean hasGstin =
-                !CollectionUtils.isEmpty(gstInvoiceRequest.getGstns());
-
-        logger.info(
-                "Processing invoices for monthYear={}, type={}, gstins={}",
-                gstInvoiceRequest.getMonthYear(),
-                type,
-                gstInvoiceRequest.getGstns()
-        );
-
-        getAndProcessZipFile(
-                gstInvoiceRequest.getMonthYear(),
-                gstInvoiceRequest.getGstns(),
-                hasGstin,
-                type
-        );
-
-        return CommunicationResponse.<String>builder()
-                .data(List.of("Invoice processing started successfully"))
-                .status(RESPONSE_SUCCESS)
-                .build();
-    }
-
-    private void getAndProcessZipFile(
-            String monthYear,
-            List<String> gstns,
-            boolean hasGstin,
-            GstInvoiceType invoiceType) {
-
-        InputStream zipStream =
-                sftpClientService.getMonthlyZip(monthYear);
-
-        try (ZipInputStream zis = new ZipInputStream(zipStream)) {
-            processZipEntries(zis, invoiceType, gstns, hasGstin, monthYear);
-        } catch (IOException ex) {
-            throw new CommunicationException(
-                    ZIP_FILE_ERROR_CODE,
-                    ex.getMessage()
-            );
-        }
-    }
-
-    private void processZipEntries(
-            ZipInputStream zis,
-            GstInvoiceType type,
-            List<String> gstns,
-            boolean hasGstin,
-            String monthYear) {
-
-        try {
-            ZipEntry entry;
-
-            while ((entry = zis.getNextEntry()) != null) {
-
-                if (entry.isDirectory()
-                        || !entry.getName().toLowerCase().endsWith(".pdf")) {
-                    zis.closeEntry();
-                    continue;
-                }
-
-                ParsedInvoiceFile parsedInvoiceFile =
-                        InvoiceFileParser.safeParse(entry.getName(), monthYear);
-
-                if (parsedInvoiceFile == null) {
-                    logger.warn("Skipping invalid invoice file: {}",
-                            entry.getName());
-                    zis.closeEntry();
-                    continue;
-                }
-
-                if (!isEntryTypeMatching(
-                        parsedInvoiceFile.getInvoiceType(),
-                        type,
-                        hasGstin)
-                        || !isGstnValid(
-                        parsedInvoiceFile.getPartyGstIn(),
-                        gstns,
-                        hasGstin)) {
-
-                    zis.closeEntry();
-                    continue;
-                }
-
-                // Read ZIP entry synchronously
-                byte[] pdfBytes =
-                        ZipFileReader.readZipInputStream(zis);
-
-                // ASYNC upload + publish
-                virtualThreadExecutor.submit(() ->
-                        uploadAndPublishAsync(parsedInvoiceFile, pdfBytes)
-                );
-
-                zis.closeEntry();
-            }
-        } catch (Exception ex) {
-            throw new CommunicationException(
-                    ZIP_FILE_ERROR_CODE,
-                    ex.getMessage()
-            );
-        }
-    }
-
-    private void uploadAndPublishAsync(
-            ParsedInvoiceFile parsedInvoiceFile,
-            byte[] pdfBytes) {
-
-        try {
-            logger.info(
-                    "Async upload started for GSTIN: {}",
-                    parsedInvoiceFile.getPartyGstIn()
-            );
-
-            String s3Path = fileService.uploadFile(
-                    parsedInvoiceFile.getFileName(),
-                    pdfBytes
-            );
-
-            publishInvoice(parsedInvoiceFile, s3Path);
-
-            logger.info(
-                    "Async upload completed for GSTIN: {}",
-                    parsedInvoiceFile.getPartyGstIn()
-            );
-
-        } catch (Exception ex) {
-            logger.error(
-                    "Async upload failed for file: {}",
-                    parsedInvoiceFile.getFileName(),
-                    ex
-            );
-        }
-    }
-
-    private void publishInvoice(
-            ParsedInvoiceFile parsedInvoiceFile,
-            String s3Path) {
-
-        try {
-            S3UploadInvoiceResponse response =
-                    S3UploadInvoiceResponse.builder()
-                            .invoiceType(parsedInvoiceFile.getInvoiceType())
-                            .gstIn(parsedInvoiceFile.getPartyGstIn())
-                            .monthYear(parsedInvoiceFile.getMonthYear())
-                            .s3Key(s3Path)
-                            .build();
-
-            String message =
-                    objectMapper.writeValueAsString(response);
-
-            gstInvoiceDownloadProducer.publish(
-                    parsedInvoiceFile.getInvoiceType()
-                            + "_" + UUID.randomUUID(),
-                    message
-            );
-
-            logger.info("Published invoice to report service");
-
-        } catch (Exception ex) {
-            logger.error("Error while publishing invoice", ex);
-        }
-    }
-
-    private boolean isEntryTypeMatching(
-            GstInvoiceType entryType,
-            GstInvoiceType type,
-            boolean hasGstin) {
-
-        return !hasGstin || entryType == type;
-    }
-
-    private boolean isGstnValid(
-            String gstinFromFile,
-            List<String> gstins,
-            boolean hasGstin) {
-
-        return !hasGstin
-                || (StringUtils.hasText(gstinFromFile)
-                && gstins.contains(gstinFromFile));
-    }
 }
