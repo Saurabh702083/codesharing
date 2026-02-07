@@ -1,88 +1,379 @@
-
-@Builder
+This is my controller:-
+@PreAuthorize("hasAnyRole('MERCHANT_ONBOARD')")
+    @PostMapping("/{MIFId}/{moduleCode}")
+    @Operation(summary = "Update MIF based on moduleCode", description = "This API used to update particular MIF linked with user.")
+    public AdminPortalResponse<String> updateMerchantMIFInfo(@PathVariable("MIFId") String merchantMIFId, @PathVariable("moduleCode") String moduleCode, @RequestBody MerchantOnboardingRequest merchantOnboardingRequest) {
+        logger.info("Update Merchant Onboarding merchantMIFId {} Form : merchantOnboardingRequest {}", merchantMIFId, merchantOnboardingRequest);
+        return merchantOnboardingService.updateMerchantMIFInfo(merchantMIFId, moduleCode, merchantOnboardingRequest);
+    }
+	
+This is my RequestBody:-
 @Data
-public class TxtFileModel {
-    private List<String> headers;  // optional, can be null
-    private List<List<String>> lines;  // each inner list is a row of strings (each column as string)
+@Builder
+@Jacksonized
+public class MerchantOnboardingRequest {
+    private BusinessDto businessDto;
+    private ContactDto contactDto;
+    private WebsiteDto websiteDto;
+    private BankTxnDto bankTxnDto;
+    private BankAccountInfoDto bankAccountInfoDto;
+    private TifDto tifDto;
+    private VsccDto vsccDto;
+    private DocumentDto documentDto;
 }
 
-public class TxtFileModelBuilder {
+This is my request field for documentDto:-	
+@Data
+@NoArgsConstructor
+@Builder
+@AllArgsConstructor
+public class DocumentDto {
+    private String merchantMIFId;
+    private String mifFileName;
+    private String tifFileName;
+    private String vsccFileName;
+    private String panFileName;
+    private String signFileName;
+    private String signProofFileName;
+    private String cancelledChequeFileName;
+    private String accountStatementFileName;
+    private String bankCertificateFileName;
+    private String telephoneBillFileName;
+    private String sbiAgreementFileName;
+    private String proprietorLetterFileName;
+    private String leaseAgreementFileName;
+    private String electricityBillFileName;
+}
 
-    /**
-     * Convert list of Objects into TxtFileModel lines based on headers.
-     * @param dataList List of objects
-     * @param headers List of property names or headers (in order)
-     * @param <T> Type of object
-     * @return TxtFileModel with header and lines
-     */
-    public static <T> TxtFileModel buildFromObjects(List<String> headers, List<T> dataList) {
-        List<List<String>> lines = new ArrayList<>();
-        if (dataList == null || dataList.isEmpty()) {
-            return TxtFileModel.builder().headers(headers).lines(lines).build();
+this is my service logic :-
+public AdminPortalResponse<String> updateMerchantMIFInfo(String merchantMIFId, String moduleCode, MerchantOnboardingRequest merchantOnboardingRequest) {
+        merchantOnboardingValidator.validateMerchantOnboardingRequest(merchantOnboardingRequest, merchantMIFId, moduleCode);
+        logger.info("Merchant onboarding request validation successfully.");
+        merchantOnboardingDao.saveMerchantMIFInfo(merchantOnboardingRequest, MIFModuleCode.getMIFModuleCode(moduleCode));
+        logger.debug("Returning AdminResponse with status code: {}", SUCCESS_RESPONSE_CODE);
+        return AdminPortalResponse.<String>builder().status(SUCCESS_RESPONSE_CODE).data(List.of("Data Update Successfully")).build();
+    }
+
+below is my implimantation for logic to save data of documentDto :-
+ @Component
+@RequiredArgsConstructor
+public class MerchantOnboardingDao {
+ public void saveMerchantMIFInfo(MerchantOnboardingRequest merchantOnboardingRequest, MIFModuleCode mifModuleCode) {
+        switch (mifModuleCode) {
+            case MIFModuleCode.BUSINESS_INFO ->
+                    businessInfoDao.updateBusinessInfo(merchantOnboardingRequest.getBusinessDto());
+            case MIFModuleCode.CONTACT_INFO ->
+                    contactInfoDao.updateContactInfo(merchantOnboardingRequest.getContactDto());
+            case MIFModuleCode.WEBSITE_INFO ->
+                    websiteInfoDao.updateWebsiteInfo(merchantOnboardingRequest.getWebsiteDto());
+            case MIFModuleCode.TRANSACTION_INFO ->
+                    bankTxnInfoDao.updateBankTxnInfo(merchantOnboardingRequest.getBankTxnDto());
+            case MIFModuleCode.BANK_ACCOUNT_INFO ->
+                    bankAccountInfoDao.updateBankAccountInfo(merchantOnboardingRequest.getBankAccountInfoDto());
+            case MIFModuleCode.TIF_INFO -> tifInfoDao.updateTifInfo(merchantOnboardingRequest.getTifDto());
+            case MIFModuleCode.VSCC_INFO -> vsccDao.updateVSCCInfo(merchantOnboardingRequest.getVsccDto());
+            case MIFModuleCode.DOC_INFO -> documentDao.updateDocumentInfo(merchantOnboardingRequest.getDocumentDto());
+
+            default ->
+                    throw new AdminPortalException(ErrorConstants.INVALID_ERROR_CODE_NO_REASON, MessageFormat.format(ErrorConstants.INVALID_ERROR_MESSAGE_NO_REASON, "MIF Module Code", mifModuleCode));
         }
-        // Reflectively read properties based on headers field names
-        for (T obj : dataList) {
-            List<String> row = new ArrayList<>();
-            for (String field : headers) {
-                try {
-                    Field f = obj.getClass().getDeclaredField(field);
-                    f.setAccessible(true);
-                    Object value = f.get(obj);
-                    row.add(value != null ? value.toString() : "");
-                } catch (NoSuchFieldException | IllegalAccessException e) {
-                    row.add("");
+    }	
+
+@Component
+@RequiredArgsConstructor
+public class DocumentInfoDao extends BaseValidator {
+    private final LoggerUtility logger = LoggerFactoryUtility.getLogger(this.getClass());
+    private final DocumentInfoRepository documentInfoRepository;
+    private final DocumentInfoMapper documentInfoMapper;
+    private final DocumentInfoValidator documentInfoValidator;
+    private final SandBoxServiceClient sandBoxServiceClient;
+    private final FileService s3Service;
+
+    public DocumentDto saveDocumentInfo(DocumentDto documentDto) {
+        logger.info("DAO Layer: Starting saveDocument operation for mif ID: {}", documentDto.getMerchantMIFId());
+        DocumentInfo saveddocumentInfo = documentInfoRepository.save(documentInfoMapper.mapRequestToEntity(documentDto));
+        logger.info("DocumentInfo entity saved successfully. Document Info ID: {}", saveddocumentInfo.getId());
+        return documentInfoMapper.mapEntityToResponse(saveddocumentInfo);
+    }
+
+    public DocumentDto updateDocumentInfo(DocumentDto documentDto) {
+        logger.info("DAO Layer: Starting updateDocument operation for mif ID: {}", documentDto.getMerchantMIFId());
+        DocumentInfo documentInfo = documentInfoRepository.findByMerchantMIFId(documentDto.getMerchantMIFId()).orElseThrow(() -> new AdminPortalException(NOT_FOUND_ERROR_CODE, MessageFormat.format(NOT_FOUND_ERROR_MESSAGE, "Merchant MifId")));
+        return updateEachDocument(documentDto, documentInfo);
+    }
+
+    public DocumentDto updateEachDocument(DocumentDto documentDto, DocumentInfo existingDocumentInfo) {
+        logger.info("DAO Layer: DocumentInfoDto invoked for mId: {}", documentDto.getMerchantMIFId());
+        DocumentInfo documentInfo = documentInfoMapper.mapRequestToEntity(documentDto);
+        boolean isUpdating = false;
+        clearErrorList();
+
+        // Step-1 Set existing id in documentInfo entity
+        if (existingDocumentInfo.getId() != null) {
+            documentInfo.setId(existingDocumentInfo.getId());
+            documentInfo.setVersion(existingDocumentInfo.getVersion());
+            isUpdating = true;
+        }
+
+        // Step-2: Validate and upload each document. If upload success on s3 then set document file and path to Entity.
+        setDocumentValue(documentInfo, documentDto.getMerchantMIFId(), MIF, documentDto.getMifFileName(), existingDocumentInfo.getMifFileName(), existingDocumentInfo.getMifS3Path());
+
+        setDocumentValue(documentInfo, documentDto.getMerchantMIFId(), TIF, documentDto.getTifFileName(), existingDocumentInfo.getTifFileName(), existingDocumentInfo.getTifS3Path());
+
+        setDocumentValue(documentInfo, documentDto.getMerchantMIFId(), VSCC, documentDto.getVsccFileName(), existingDocumentInfo.getVsccFileName(), existingDocumentInfo.getVsccS3Path());
+
+        setDocumentValue(documentInfo, documentDto.getMerchantMIFId(), PAN, documentDto.getPanFileName(), existingDocumentInfo.getPanFileName(), existingDocumentInfo.getPanS3Path());
+
+        setDocumentValue(documentInfo, documentDto.getMerchantMIFId(), SIGN, documentDto.getSignFileName(), existingDocumentInfo.getSignFileName(), existingDocumentInfo.getSignS3Path());
+
+        setDocumentValue(documentInfo, documentDto.getMerchantMIFId(), SIGN_PROOF, documentDto.getSignProofFileName(), existingDocumentInfo.getSignProofFileName(), existingDocumentInfo.getSignProofS3Path());
+
+        setDocumentValue(documentInfo, documentDto.getMerchantMIFId(), CANCELLED_CHEQUE, documentDto.getCancelledChequeFileName(), existingDocumentInfo.getCancelledChequeFileName(), existingDocumentInfo.getCancelledChequeS3Path());
+
+        setDocumentValue(documentInfo, documentDto.getMerchantMIFId(), ACCOUNT_STATEMENT, documentDto.getAccountStatementFileName(), existingDocumentInfo.getAccountStatementFileName(), existingDocumentInfo.getAccountStatementS3Path());
+
+        setDocumentValue(documentInfo, documentDto.getMerchantMIFId(), BANK_CERTIFICATE, documentDto.getBankCertificateFileName(), existingDocumentInfo.getBankCertificateFileName(), existingDocumentInfo.getBankCertificateS3Path());
+
+        setDocumentValue(documentInfo, documentDto.getMerchantMIFId(), TELEPHONE_BILL, documentDto.getTelephoneBillFileName(), existingDocumentInfo.getTelephoneBillFileName(), existingDocumentInfo.getTelephoneBillS3Path());
+
+        setDocumentValue(documentInfo, documentDto.getMerchantMIFId(), SBI_AGREEMENT, documentDto.getSbiAgreementFileName(), existingDocumentInfo.getSbiAgreementFileName(), existingDocumentInfo.getSbiAgreementS3Path());
+
+        setDocumentValue(documentInfo, documentDto.getMerchantMIFId(), PROPRIETOR_LETTER, documentDto.getProprietorLetterFileName(), existingDocumentInfo.getProprietorLetterFileName(), existingDocumentInfo.getProprietorLetterS3Path());
+
+        setDocumentValue(documentInfo, documentDto.getMerchantMIFId(), LEASE_AGREEMENT, documentDto.getLeaseAgreementFileName(), existingDocumentInfo.getLeaseAgreementFileName(), existingDocumentInfo.getLeaseAgreementS3Path());
+
+        setDocumentValue(documentInfo, documentDto.getMerchantMIFId(), ELECTRICITY_BILL, documentDto.getElectricityBillFileName(), existingDocumentInfo.getElectricityBillFileName(), existingDocumentInfo.getElectricityBillS3Path());
+
+        // Step-3: Save uploaded document data in DB.
+        logger.info("DAO Layer: Starting {} DocumentInfo operation for mif ID: {}", isUpdating ? "Update" : "Save", documentDto.getMerchantMIFId());
+        logger.debug("DAO Layer: saving document data in DB: " + documentInfo.toString());
+        DocumentInfo savedDocumentInfo = documentInfoRepository.save(documentInfo);
+        throwIfErrors();
+        logger.info("DocumentInfo entity {} successfully. Document Info mifId: {}", isUpdating ? "Updated" : "Saved", documentDto.getMerchantMIFId());
+        return documentInfoMapper.mapEntityToResponse(savedDocumentInfo);
+    }
+
+    private void setDocumentValue(DocumentInfo documentInfo, String mifId, DocumentType documentType, String dtoFileName, String dbFileName, String dbFilePath) {
+        // Step-1: Get S3 upload response
+        String savedFilePath = uploadDocumentToS3(mifId, documentType, dtoFileName, dbFileName, dbFilePath);
+
+        // Step-2: Set each saved file path to entity
+        switch (documentType) {
+            case MIF -> {
+                documentInfo.setMifS3Path(savedFilePath);
+                if (ObjectUtils.isEmpty(savedFilePath)) {
+                    documentInfo.setMifFileName(null);
                 }
             }
-            lines.add(row);
+            case TIF -> {
+                documentInfo.setTifS3Path(savedFilePath);
+                if (ObjectUtils.isEmpty(savedFilePath)) {
+                    documentInfo.setTifFileName(null);
+                }
+            }
+            case VSCC -> {
+                documentInfo.setVsccS3Path(savedFilePath);
+                if (ObjectUtils.isEmpty(savedFilePath)) {
+                    documentInfo.setVsccFileName(null);
+                }
+            }
+            case PAN -> {
+                documentInfo.setPanS3Path(savedFilePath);
+                if (ObjectUtils.isEmpty(savedFilePath)) {
+                    documentInfo.setPanFileName(null);
+                }
+            }
+            case SIGN -> {
+                documentInfo.setSignS3Path(savedFilePath);
+                if (ObjectUtils.isEmpty(savedFilePath)) {
+                    documentInfo.setSignFileName(null);
+                }
+            }
+            case SIGN_PROOF -> {
+                documentInfo.setSignProofS3Path(savedFilePath);
+                if (ObjectUtils.isEmpty(savedFilePath)) {
+                    documentInfo.setSignProofFileName(null);
+                }
+            }
+            case CANCELLED_CHEQUE -> {
+                documentInfo.setCancelledChequeS3Path(savedFilePath);
+                if (ObjectUtils.isEmpty(savedFilePath)) {
+                    documentInfo.setCancelledChequeFileName(null);
+                }
+            }
+            case ACCOUNT_STATEMENT -> {
+                documentInfo.setAccountStatementS3Path(savedFilePath);
+                if (ObjectUtils.isEmpty(savedFilePath)) {
+                    documentInfo.setAccountStatementFileName(null);
+                }
+            }
+            case BANK_CERTIFICATE -> {
+                documentInfo.setBankCertificateS3Path(savedFilePath);
+                if (ObjectUtils.isEmpty(savedFilePath)) {
+                    documentInfo.setBankCertificateFileName(null);
+                }
+            }
+            case TELEPHONE_BILL -> {
+                documentInfo.setTelephoneBillS3Path(savedFilePath);
+                if (ObjectUtils.isEmpty(savedFilePath)) {
+                    documentInfo.setTelephoneBillFileName(null);
+                }
+            }
+            case SBI_AGREEMENT -> {
+                documentInfo.setSbiAgreementS3Path(savedFilePath);
+                if (ObjectUtils.isEmpty(savedFilePath)) {
+                    documentInfo.setSbiAgreementFileName(null);
+                }
+            }
+            case PROPRIETOR_LETTER -> {
+                documentInfo.setProprietorLetterS3Path(savedFilePath);
+                if (ObjectUtils.isEmpty(savedFilePath)) {
+                    documentInfo.setProprietorLetterFileName(null);
+                }
+            }
+            case LEASE_AGREEMENT -> {
+                documentInfo.setLeaseAgreementS3Path(savedFilePath);
+                if (ObjectUtils.isEmpty(savedFilePath)) {
+                    documentInfo.setLeaseAgreementFileName(null);
+                }
+            }
+            case ELECTRICITY_BILL -> {
+                documentInfo.setElectricityBillS3Path(savedFilePath);
+                if (ObjectUtils.isEmpty(savedFilePath)) {
+                    documentInfo.setElectricityBillFileName(null);
+                }
+            }
         }
-        return TxtFileModel.builder().headers(headers).lines(lines).build();
     }
 
-    /**
-     * Build from raw string lines without header.
-     */
-    public static TxtFileModel buildFromStrings(List<String> lines) {
-        List<List<String>> wrappedLines = lines == null ? Collections.emptyList() : lines.stream()
-            .map(List::of)  // wrap each line in a list (single column)
-            .collect(Collectors.toList());
-        return TxtFileModel.builder().headers(null).lines(wrappedLines).build();
+    private String uploadDocumentToS3(String mifId, DocumentType documentType, String fileName, String dbFileName, String dbFilePath) {
+        // Step-1: Check if same filePath is already saved in DB
+        if (StringUtils.isNotEmpty(fileName) && StringUtils.isNotEmpty(dbFileName) && Objects.equals(fileName, dbFileName)) {
+            if (StringUtils.isNotEmpty(dbFilePath)) {
+                return dbFilePath;
+            }
+        }
+
+        // Step-2: Check if fileName to be upload is null or empty
+        if (StringUtils.isEmpty(fileName)) {
+            return null;
+        }
+
+        //Step-3: Get file data from simulator
+        RBIMalwareDownloadResponse sandboxResponse;
+        try {
+            sandboxResponse = sandBoxServiceClient.getFile(mifId, fileName, documentType.getDescription());
+            logger.info("Successfully find file on Sandbox for filename: {} for mId: {}", documentType.name(), mifId);
+        } catch (AdminPortalException e) {
+            addError(INVALID_ERROR_CODE, MessageFormat.format(INVALID_ERROR_MESSAGE, documentInfoValidator.getMessageFromDocumentType(documentType), e.getErrorMessage()));
+            return null;
+        }
+
+        // Step-4: File Content validation logic
+        documentInfoValidator.validateDocumentFileSize(documentType, sandboxResponse);
+        logger.info("Successfully validated Document File: {} for mId: {}", documentType.name(), mifId);
+
+        //Step-5: Upload document file at s3
+        String filePath;
+        try {
+            filePath = s3Service.uploadFile(mifId, documentType.name(), sandboxResponse);
+            logger.info("Document file: {} uploaded to S3 at: {} for mId: {}", documentType.name(), filePath, mifId);
+        } catch (AdminPortalException e) {
+            addError(INVALID_ERROR_CODE, MessageFormat.format(INVALID_ERROR_MESSAGE, documentInfoValidator.getMessageFromDocumentType(documentType), e.getErrorMessage()));
+            return null;
+        }
+        return filePath;
+    }
+
+    public DocumentDto getDocumentInfo(String mifId) {
+        DocumentInfo documentInfo = documentInfoRepository.findByMerchantMIFId(mifId).orElseThrow(() -> new AdminPortalException(NOT_FOUND_ERROR_CODE, MessageFormat.format(NOT_FOUND_ERROR_MESSAGE, "Merchant MifId")));
+        return documentInfoMapper.mapEntityToResponse(documentInfo);
+    }
+
+
+    public DocumentInfo findByMifId(String mifId) {
+        logger.info("Fetching DocumentInfo for mifId={}", mifId);
+
+        return documentInfoRepository.findByMerchantMIFId(mifId)
+                .orElseThrow(() -> {
+                    logger.error("DocumentInfo not found for mifId={}", mifId);
+                    return new AdminPortalException(
+                            NOT_FOUND_ERROR_CODE,
+                            MessageFormat.format(NOT_FOUND_ERROR_MESSAGE, "Merchant MifId")
+                    );
+                });
     }
 }
 
+@Repository
+public interface DocumentInfoRepository extends JpaRepository<DocumentInfo, UUID> {
 
-class TxtGenerator {
-    private static final String DELIMITER = "\t"; // or comma or configurable
-
-    protected static ReportFile txtFileGenerator(Report reportName, TxtFileModel txtFileModel) {
-        log.info("Started txt file generator for reportName : {}  lines.size: {}", reportName.getName(), CollectionUtils.size(txtFileModel.getLines()));
-
-        String fileName = getFileName(reportName.getName());
-
-        StringBuilder sb = new StringBuilder();
-        if (txtFileModel.getHeaders() != null && !txtFileModel.getHeaders().isEmpty()) {
-            sb.append(String.join(DELIMITER, txtFileModel.getHeaders()));
-            sb.append("\n");
-        }
-        for (List<String> line : txtFileModel.getLines()) {
-            sb.append(String.join(DELIMITER, line));
-            sb.append("\n");
-        }
-
-        String content = sb.toString();
-        return ReportFile.builder()
-                .name(fileName)
-                .content(content.getBytes(StandardCharsets.UTF_8))
-                .build();
-    }
-    // getFileName remains unchanged
+    Optional<DocumentInfo> findByMerchantMIFId(String merchantMIFId);
 }
 
+@Getter
+public enum DocumentType {
+    MIF("Merchant Information Form (MIF)"),
+    TIF("TIF Declaration"),
+    VSCC("VSCC Document"),
+    PAN("PAN Card Details"),
+    SIGN("Authorized Signatory Signature"),
+    SIGN_PROOF("Signature Proof Document"),
+    CANCELLED_CHEQUE("Cancelled Cheque"),
+    ACCOUNT_STATEMENT("Bank Account Statement"),
+    BANK_CERTIFICATE("Bank Certificate"),
+    TELEPHONE_BILL("Telephone Bill (Address Proof)"),
+    SBI_AGREEMENT("SBI ePay Agreement"),
+    PROPRIETOR_LETTER("Proprietor Letter"),
+    LEASE_AGREEMENT("Lease Agreement (Address Proof)"),
+    ELECTRICITY_BILL("Electricity Bill (Address Proof)");
 
-TxtFileModel model = TxtFileModelBuilder.buildFromStrings(myLines);
-ReportFile reportFile = TxtGenerator.txtFileGenerator(report, model);
+    private final String description;
+
+    DocumentType(String description) {
+        this.description = description;
+    }
+
+}
+
+above was my existing code based of old requrement .
+
+now there is change in DB structure now my new entity will look like :-
+
+@EqualsAndHashCode(callSuper = true)
+@Audited
+@Data
+@Entity
+@Builder
+@AllArgsConstructor
+@NoArgsConstructor
+@AuditTable(value = "DOCUMENT_INFO_AUDIT")
+@Table(name = "DOCUMENT_INFO")
+public class DocumentInfo extends AuditEntity {
+    @Id
+    @GeneratedValue(strategy = GenerationType.UUID)
+    private UUID id;
+    @Column(name = "MERCHANT_MIF_ID")
+    private String merchantMIFId;
+    @Version
+    private int version;
+
+     private String fileName;
+	 @Enumerated(EnumType.STRING)
+	 private DocumentType documentType;
+    private String s3Path;
+    private MIFStatus status;
+    private String remark;
+    private String isDeviation;
+    private Long expireDate;
+	    @PrePersist
+    @PreUpdate
+    public void setEntityNameForRevision() {
+        AuditRevisionListener.setEntityName(this.getClass().getSimpleName());
+    }
+}
+
+now based upon my new Db i want to change my existing code but it should not affect the existing request and response of an API as it being already used by UI team and its being deployed.
 
 
-List<String> headers = List.of("merchantId", "merchantName", "amount");
-List<MyPojo> data = ...;
-TxtFileModel model = TxtFileModelBuilder.buildFromObjects(headers, data);
-ReportFile reportFile = TxtGenerator.txtFileGenerator(report, model);
+	
