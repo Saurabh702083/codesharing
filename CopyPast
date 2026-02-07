@@ -311,6 +311,14 @@ public interface DocumentInfoRepository extends JpaRepository<DocumentInfo, UUID
     Optional<DocumentInfo> findByMerchantMIFId(String merchantMIFId);
 }
 
+@Mapper(builder = @Builder(disableBuilder = true), componentModel = "spring")
+public interface DocumentInfoMapper {
+
+    DocumentInfo mapRequestToEntity(DocumentDto documentDto);
+
+    DocumentDto mapEntityToResponse(DocumentInfo documentInfo);
+}
+
 @Getter
 public enum DocumentType {
     MIF("Merchant Information Form (MIF)"),
