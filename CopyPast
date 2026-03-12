@@ -20,3 +20,11 @@ while i am converting string to UUID i am geting error UUID.fromString(userRoleD
 error i am geeting Invalid UUID string: 4A8811B5348408C4E0637C86B10A78DD, Method threw 'java.lang.IllegalArgumentException' exception.
 
 what is the better approach to solve this as i am using oracel DB jj
+
+
+
+
+<td th:text="${map.contactDto.firstName 
+              + (map.contactDto.middleName != null ? ' ' + map.contactDto.middleName : '') 
+              + ' ' + map.contactDto.lastName}">
+</td>
