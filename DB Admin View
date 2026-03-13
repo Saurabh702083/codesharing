@@ -1,0 +1,170 @@
+
+  CREATE OR REPLACE FORCE EDITIONABLE VIEW "EPAYADMINPORTAL"."MV_JOURNEY" ("MERCHANT_ID", "MERCHANT_MIF_ID", "LEGAL_NAME", "BRAND_NAME", "BUSINESS_CATEGORY", "MERCHANT_SPOC", "EMAIL_ID", "PHONE_NUMBER", "MIF_SUBMISSION_DATE", "MIF_STATUS", "IS_DEVIATION", "DEVIATION_END_DATE", "DEVIATION_STATUS", "JOURNEY_INFO") AS 
+  WITH journey_info AS (
+    SELECT
+        mj.merchant_mif_id,
+        JSON_ARRAYAGG(
+            JSON_OBJECT(
+                'journeyId' VALUE mj.id,
+                'journeyType' VALUE most.journey_type,
+                'stageNum' VALUE most.stage_num,
+                'stageCode' VALUE most.stage_code,
+                'status' VALUE mj.status,
+                'remarks' VALUE mj.remark,
+                'updatedAt' VALUE mj.updated_at,
+
+                'assignedUserDetails' VALUE (
+                    SELECT JSON_ARRAYAGG(
+                        JSON_OBJECT(
+                            'userId' VALUE mau.user_id,
+                            'userName' VALUE au.first_name,
+                            'actionType' VALUE mau.action_type
+                        )
+                    )
+                    FROM mif_journey_assigned_users mau
+                    JOIN users au ON au.id = mau.user_id
+                    WHERE mau.mif_journey_id = mj.id
+                )
+
+                RETURNING CLOB
+            )
+        ) AS journey_info
+    FROM mif_journey mj
+    LEFT JOIN merchant_onboarding_stages_master most
+           ON most.stage_num = mj.stage_num
+    GROUP BY mj.merchant_mif_id
+)
+
+SELECT DISTINCT
+MM.MERCHANT_ID,
+    mm.id                     AS merchant_mif_id,
+    mm.legal_name,
+    mm.brand_name,
+    mbi.nature_of_business    AS business_category,
+    mci.first_name            AS merchant_spoc,
+    mci.email_id,
+    mci.primary_mobile_number AS phone_number,
+    mm.submission_date        AS mif_submission_date,
+    mm.status                 AS mif_status,
+
+    CASE
+        WHEN mdi.document_type = 'DEVIATION_APPROVAL'
+        THEN mdi.is_deviation
+    END AS is_deviation,
+
+    CASE
+        WHEN mdi.document_type = 'DEVIATION_APPROVAL'
+        THEN mdi.dev_end_date
+    END AS deviation_end_date,
+
+    CASE
+        WHEN mdi.document_type = 'DEVIATION_APPROVAL'
+        THEN mdi.status
+    END AS deviation_status,
+
+    jui.journey_info
+
+FROM merchant_mif mm
+JOIN mif_business_info mbi
+     ON mm.id = mbi.merchant_mif_id
+JOIN mif_contact_info mci
+     ON mbi.merchant_mif_id = mci.merchant_mif_id
+JOIN journey_info jui
+     ON jui.merchant_mif_id = mm.id
+LEFT JOIN mif_document_info mdi
+     ON mm.id = mdi.merchant_mif_id;
+
+
+
+
+-------------------------------------------
+
+  CREATE OR REPLACE FORCE EDITIONABLE VIEW "EPAYADMINPORTAL"."MV_USER_INFO" ("USER_ID", "ADID", "FIRST_NAME", "LAST_NAME", "PHONE_NUMBER", "EMAIL_ID", "USER_STATUS", "AUTH_SOURCE", "LAST_SUCCESS_LOGIN", "LAST_FAIL_LOGIN", "LAST_LOGOUT", "ROLE_LIST", "GROUP_LIST", "ROLE_WISE_MENU") AS 
+  WITH role_list AS (
+    SELECT
+        ur.user_id,
+        JSON_ARRAYAGG(
+            JSON_OBJECT
+        ('roleId' VALUE br.id, 'roleName' VALUE br.name, 'roleCode' VALUE br.br_code,'roleType' VALUE br.type,'isPrimary' VALUE ur.Is_Primary RETURNING clob)) AS role_list
+    FROM
+        user_role ur
+        JOIN business_roles_master br ON br.id = ur.role_id
+    WHERE
+        ur.is_active = 1
+    GROUP BY
+        ur.user_id
+), group_list AS (
+    SELECT
+        ur.user_id,
+        JSON_ARRAYAGG(
+            JSON_OBJECT
+        ('groupId' VALUE bg.id, 'groupName' VALUE bg.name, 'groupCode' VALUE bg.bg_code RETURNING clob)) AS group_list
+    FROM
+        user_role ur
+        JOIN business_roles_master  br ON br.id = ur.role_id
+        JOIN business_groups_master bg ON bg.id = br.business_group_id
+    WHERE
+        ur.is_active = 1
+    GROUP BY
+        ur.user_id
+), role_wise_menu AS (
+    SELECT
+        br.id AS role_id,
+        JSON_ARRAYAGG(
+            JSON_OBJECT(
+                'roleId' VALUE br.id,
+                'roleName' VALUE br.name,
+                'menus' VALUE(
+                    SELECT
+                        JSON_ARRAYAGG(
+                            JSON_OBJECT
+                        ('menuid' VALUE mm.id, 'menuName' VALUE mm.name, 'menuCode' VALUE mm.mm_code, 'canView' VALUE mpm.can_view, 'canEdit'
+                        VALUE mpm.can_edit))
+                    FROM
+                        menu_permission_mapping mpm
+                        JOIN menu_master mm ON mm.id = mpm.menu_id
+                    WHERE
+                        mpm.business_role_id = br.id
+                        AND mpm.is_active = 1
+                )
+            )
+        )     AS role_wise_menu
+    FROM
+        business_roles_master br
+    WHERE
+        br.is_active = 1
+    GROUP BY
+        br.id
+)
+SELECT
+    u.id     AS user_id,
+    u.adid,
+    u.first_name,
+    u.last_name,
+    u.phone_number,
+    u.email_id,
+    u.status AS user_status,
+    u.auth_source,
+    u.last_success_login,
+    u.last_fail_login,
+    last_logout,
+    rl.role_list,
+    gl.group_list,
+    rwm.role_wise_menu
+FROM
+    users      u
+    LEFT JOIN role_list  rl ON rl.user_id = u.id
+    LEFT JOIN group_list gl ON gl.user_id = u.id
+    LEFT JOIN (
+        SELECT
+            ur.user_id,
+            JSON_ARRAYAGG(rwm.role_wise_menu) AS role_wise_menu
+        FROM
+            user_role ur
+            JOIN role_wise_menu rwm ON rwm.role_id = ur.role_id
+        GROUP BY
+            ur.user_id
+    )          rwm ON rwm.user_id = u.id
+WHERE
+    u.status = 'ACTIVE';
+
