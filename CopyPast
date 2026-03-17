@@ -1,608 +1,185 @@
-package admin.dao;
+    @PreAuthorize("hasAnyRole('BIZ_SUPPORT')")
+    @PostMapping("/{MIFId}/{moduleCode}")
+    @Operation(summary = "Update MIF based on moduleCode", description = "This API used to update particular MIF linked with user.")
+    public AdminPortalResponse<String> updateMerchantMIF(@PathVariable("MIFId") String merchantMIFId, @PathVariable("moduleCode") String moduleCode, @RequestBody AdminMIFUpdateRequest adminMIFUpdateRequest) {
+        logger.info("Update Merchant Onboarding merchantMIFId {} Form : adminMIFUpdateRequest {}", merchantMIFId, adminMIFUpdateRequest);
+        return mifOnboardingService.updateAdminMerchantMIF(merchantMIFId, moduleCode, adminMIFUpdateRequest);
+    }
 
-import com.epay.admin.portal.dao.mif.*;
-import com.epay.admin.portal.dto.MerchantMIFDto;
-import com.epay.admin.portal.dto.admin.DocumentDto;
-import com.epay.admin.portal.dto.mif.*;
-import com.epay.admin.portal.entity.MasterData;
-import com.epay.admin.portal.model.request.MIFOnboardingRequest;
-import com.epay.admin.portal.model.response.MerchantOnboardingResponse;
-import com.epay.admin.portal.repository.MasterDataRepository;
-import com.epay.admin.portal.util.AdminPortalUtil;
-import com.epay.admin.portal.util.EPayIdentityUtil;
-import com.epay.admin.portal.util.enums.MIFModuleCode;
-import com.epay.admin.portal.util.enums.MasterCode;
-import com.epay.admin.portal.validator.*;
-import com.sbi.epay.authentication.model.EPayPrincipal;
-import org.junit.jupiter.api.BeforeEach;
+
+
+    public AdminPortalResponse<String> updateAdminMerchantMIF(String merchantMIFId, String moduleCode, AdminMIFUpdateRequest adminMIFUpdateRequest) {
+            merchantOnboardingValidator.validateAdminMerchantOnboardingRequest(adminMIFUpdateRequest, merchantMIFId ,moduleCode);
+            logger.info("Admin merchant onboarding request validation successfully.");
+            merchantOnboardingDao.updateMerchantMIFInfoWithoutDocument(adminMIFUpdateRequest);
+            logger.debug("Returning AdminResponse with status code: {}", SUCCESS_RESPONSE_CODE);
+            return AdminPortalResponse.<String>builder().status(SUCCESS_RESPONSE_CODE).data(List.of("Data Updated Successfully")).build();
+    }
+
+
+
+    public void validateAdminMerchantOnboardingRequest(AdminMIFUpdateRequest adminMIFUpdateRequest, String merchantMIFId,String moduleCode) {
+        errorDtoList = new ArrayList<>();
+        MIFModuleCode mifModuleCode = MIFModuleCode.getMIFModuleCode(moduleCode);
+        if (MIFModuleCode.DOC_INFO.equals(mifModuleCode)) {
+            throw new AdminPortalException(INVALID_ERROR_CODE_NO_REASON, java.text.MessageFormat.format(INVALID_ERROR_MESSAGE_NO_REASON, "MIF Module Code", moduleCode));
+        }
+        validateMerchantOnBoardMIFId(merchantMIFId);
+        throwIfErrors();
+
+        if (adminMIFUpdateRequest == null) {
+            errorDtoList.add(ErrorDto.builder()
+                    .errorCode(MANDATORY_ERROR_CODE)
+                    .errorMessage(MessageFormat.format(MANDATORY_ERROR_MESSAGE, "Request body"))
+                    .build());
+            throwIfErrors();
+            return;
+        }
+
+        validateAndAddError(adminMIFUpdateRequest.getBusinessDto(), BUSINESS_DTO);
+        validateAndAddError(adminMIFUpdateRequest.getContactDto(), CONTACT_DTO);
+        validateAndAddError(adminMIFUpdateRequest.getWebsiteDto(), WEB_SITE_DTO);
+        validateAndAddError(adminMIFUpdateRequest.getBankTxnDto(), BANK_TXN_DTO);
+        validateAndAddError(adminMIFUpdateRequest.getBankAccountInfoDto(), BANK_ACCOUNT_INFO_DTO);
+        validateAndAddError(adminMIFUpdateRequest.getTifDto(), TIF_DTO);
+        validateAndAddError(adminMIFUpdateRequest.getVsccDto(), VSCC_DTO);
+        throwIfErrors();
+
+        MIFOnboardingRequest mifOnboardingRequest = adminMIFUpdateRequest.toMIFOnboardingRequest();
+        validateBusinessInfo(mifOnboardingRequest, merchantMIFId);
+        validateContactInfo(mifOnboardingRequest, merchantMIFId);
+        validateWebsiteInfo(mifOnboardingRequest, merchantMIFId);
+        validateBankTxnInfo(mifOnboardingRequest, merchantMIFId);
+        validateBankAccountInfo(mifOnboardingRequest, merchantMIFId);
+        validateTifInfo(mifOnboardingRequest, merchantMIFId);
+        validateVSCCInfo(mifOnboardingRequest, merchantMIFId);
+        throwIfErrors();
+    }
+
+
+
+
+
+
+package admin.validator;
+
+import com.epay.admin.portal.dao.mif.MerchantMIFDao;
+import com.epay.admin.portal.dto.mif.BankAccountInfoDto;
+import com.epay.admin.portal.dto.mif.BankTxnDto;
+import com.epay.admin.portal.dto.mif.BusinessDto;
+import com.epay.admin.portal.dto.mif.ContactDto;
+import com.epay.admin.portal.dto.mif.TifDto;
+import com.epay.admin.portal.dto.mif.VsccDto;
+import com.epay.admin.portal.dto.mif.WebsiteDto;
+import com.epay.admin.portal.exceptions.ValidationException;
+import com.epay.admin.portal.model.request.AdminMIFUpdateRequest;
+import com.epay.admin.portal.validator.BankAccountInfoValidator;
+import com.epay.admin.portal.validator.BankTxnInfoValidator;
+import com.epay.admin.portal.validator.BusinessInfoValidator;
+import com.epay.admin.portal.validator.ContactInfoValidator;
+import com.epay.admin.portal.validator.MerchantOnboardingValidator;
+import com.epay.admin.portal.validator.TifInfoValidator;
+import com.epay.admin.portal.validator.VsccValidator;
+import com.epay.admin.portal.validator.WebsiteInfoValidator;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
-import org.mockito.MockedStatic;
+import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
 
-import java.util.List;
-import java.util.Map;
-
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertNotNull;
-import static org.mockito.ArgumentMatchers.argThat;
-import static org.mockito.Mockito.mockStatic;
-import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.when;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.doNothing;
 
+/**
+ * Class Name: MerchantOnboardingValidatorTest
+ * <p>
+ * Description: Test class for the {@link MerchantOnboardingValidator} validator class.
+ * <p>
+ * Author: Lincy Thomas
+ * <p>
+ * Copyright (c) 2026 [State Bank of India]
+ * All rights reserved.
+ * <p>
+ * Version:1.0
+ */
 @ExtendWith(MockitoExtension.class)
-class MerchantOnboardingDaoTest {
+public class MerchantOnboardingValidatorTest {
 
     @InjectMocks
-    private MerchantOnboardingDao merchantOnboardingDao;
+    MerchantOnboardingValidator merchantOnboardingValidator;
 
+    @Mock
+    private MerchantMIFDao merchantMIFDao;
     @Mock
     private BusinessInfoValidator businessInfoValidator;
     @Mock
-    private ContactInfoValidator contactInfoValidator;
-    @Mock
     private WebsiteInfoValidator websiteInfoValidator;
     @Mock
+    private ContactInfoValidator contactInfoValidator;
+    @Mock
     private BankTxnInfoValidator bankTxnInfoValidator;
+    @Mock
+    private VsccValidator vsccValidator;
     @Mock
     private BankAccountInfoValidator bankAccountInfoValidator;
     @Mock
     private TifInfoValidator tifInfoValidator;
-    @Mock
-    private VsccValidator vsccValidator;
-    @Mock
-    private DocumentInfoValidator documentInfoValidator;
-    @Mock
-    private BusinessInfoDao businessInfoDao;
-    @Mock
-    private ContactInfoDao contactInfoDao;
-    @Mock
-    private WebsiteInfoDao websiteInfoDao;
-    @Mock
-    private BankTxnInfoDao bankTxnInfoDao;
-    @Mock
-    private TifInfoDao tifInfoDao;
-    @Mock
-    private MerchantMIFDao merchantMIfDao;
-    @Mock
-    private BankAccountInfoDao bankAccountInfoDao;
-    @Mock
-    private VsccDao vsccDao;
-    @Mock
-    private DocumentInfoDao documentDao;
-    @Mock
-    private MerchantOnboardingValidator merchantOnboardingValidator;
-    @Mock
-    private MasterDataRepository masterDataRepository;
-    @Mock
-    private EPayPrincipal principal;
 
-    private static final String MERCHANT_MIF_ID = "202603161200001234";
-    private static final String USERNAME = "user.ad";
+    @Test
+    void validateMerchantOnBoardMIFId_shouldThrow_whenFixedFieldLengthIsInvalid() {
+        ValidationException exception = assertThrows(ValidationException.class, () -> merchantOnboardingValidator.validateMerchantOnBoardMIFId("122233344"));
+        assertEquals(exception.getErrorMessages().getFirst().getErrorCode(), "8005");
+        assert (exception.getErrorMessages().getFirst().getErrorMessage().contains("The fixed length required for merchantMIFId is 18."));
+        assertEquals(exception.getErrorMessages().size(), 1);
 
-    private MIFOnboardingRequest request;
-    private BusinessDto businessDto;
-    private ContactDto contactDto;
-    private WebsiteDto websiteDto;
-    private BankTxnDto bankTxnDto;
-    private BankAccountInfoDto bankAccountInfoDto;
-    private TifDto tifDto;
-    private VsccDto vsccDto;
-    private DocumentDto documentDto;
+    }
 
-    @BeforeEach
-    void setUp() {
-        businessDto = BusinessDto.builder().merchantMIFId(MERCHANT_MIF_ID).legalName("Acme Pvt Ltd").build();
-        contactDto = ContactDto.builder().merchantMIFId(MERCHANT_MIF_ID).firstName("Alex").build();
-        websiteDto = WebsiteDto.builder().merchantMIFId(MERCHANT_MIF_ID).build();
-        bankTxnDto = BankTxnDto.builder().merchantMIFId(MERCHANT_MIF_ID).build();
-        bankAccountInfoDto = BankAccountInfoDto.builder().merchantMIFId(MERCHANT_MIF_ID).build();
-        tifDto = TifDto.builder().merchantMIFId(MERCHANT_MIF_ID).build();
-        vsccDto = VsccDto.builder().merchantMIFId(MERCHANT_MIF_ID).build();
-        documentDto = DocumentDto.builder().merchantMIFId(MERCHANT_MIF_ID).build();
+    @Test
+    void validateMerchantOnBoardMIFId_shouldThrow_whenFieldsValueIsInvalid() {
+        ValidationException exception = assertThrows(ValidationException.class, () -> merchantOnboardingValidator.validateMerchantOnBoardMIFId("2026021219015874AB"));
+        assertEquals(exception.getErrorMessages().getFirst().getErrorCode(), "8002");
+        assert (exception.getErrorMessages().getFirst().getErrorMessage().contains("merchantMIFId is invalid. Reason :"));
+    }
 
-        request = MIFOnboardingRequest.builder()
-                .businessDto(businessDto)
-                .contactDto(contactDto)
-                .websiteDto(websiteDto)
-                .bankTxnDto(bankTxnDto)
-                .bankAccountInfoDto(bankAccountInfoDto)
-                .tifDto(tifDto)
-                .vsccDto(vsccDto)
-                .documentDto(documentDto)
+    @Test
+    void validateMerchantOnBoardMIFId_shouldThrow_whenMIFNotExists() {
+        Mockito.when(merchantMIFDao.isActiveMIFId(anyString())).thenReturn(false);
+
+        ValidationException exception = assertThrows(ValidationException.class, () -> merchantOnboardingValidator.validateMerchantOnBoardMIFId("202602121901587431"));
+        assertEquals(exception.getErrorMessages().getFirst().getErrorCode(), "8002");
+        assert (exception.getErrorMessages().getFirst().getErrorMessage().contains("MerchantMIFId is not Active"));
+        assertEquals(exception.getErrorMessages().size(), 1);
+
+    }
+
+    @Test
+    void validateAdminMerchantOnboardingRequest_shouldPass_whenAllNonDocumentDtosArePresent() {
+        String merchantMifId = "202603161200001234";
+        AdminMIFUpdateRequest request = AdminMIFUpdateRequest.builder()
+                .businessDto(BusinessDto.builder().merchantMIFId(merchantMifId).build())
+                .contactDto(ContactDto.builder().merchantMIFId(merchantMifId).build())
+                .websiteDto(WebsiteDto.builder().merchantMIFId(merchantMifId).build())
+                .bankTxnDto(BankTxnDto.builder().merchantMIFId(merchantMifId).build())
+                .bankAccountInfoDto(BankAccountInfoDto.builder().merchantMIFId(merchantMifId).build())
+                .tifDto(TifDto.builder().merchantMIFId(merchantMifId).build())
+                .vsccDto(VsccDto.builder().merchantMIFId(merchantMifId).build())
                 .build();
-    }
 
-    @Test
-    void onboardMerchantMIFInfo_shouldPopulateMissingDtosAndPersistAllSections() {
-        MIFOnboardingRequest emptyRequest = MIFOnboardingRequest.builder().build();
+        Mockito.when(merchantMIFDao.isActiveMIFId(merchantMifId)).thenReturn(true);
+        Mockito.when(merchantMIFDao.checkMIFStatus(merchantMifId)).thenReturn(false);
+        doNothing().when(businessInfoValidator).validateBusinessRequest(request.getBusinessDto());
+        doNothing().when(contactInfoValidator).validateContactRequest(request.getContactDto());
+        doNothing().when(contactInfoValidator).validateField(request.getContactDto());
+        doNothing().when(websiteInfoValidator).validateWebsiteRequest(request.getWebsiteDto());
+        doNothing().when(bankTxnInfoValidator).validateBankTxnRequest(request.getBankTxnDto());
+        doNothing().when(bankAccountInfoValidator).validateBankAccountInfoRequest(request.getBankAccountInfoDto());
+        doNothing().when(tifInfoValidator).validateTifRequest(request.getTifDto());
+        doNothing().when(vsccValidator).validateVSCCRequest(request.getVsccDto());
 
-        try (MockedStatic<AdminPortalUtil> utilMock = mockStatic(AdminPortalUtil.class);
-             MockedStatic<EPayIdentityUtil> identityMock = mockStatic(EPayIdentityUtil.class)) {
-            utilMock.when(AdminPortalUtil::generateMerchantMIFId).thenReturn(MERCHANT_MIF_ID);
-            identityMock.when(EPayIdentityUtil::getUserPrincipal).thenReturn(principal);
-            when(principal.getUsername()).thenReturn(USERNAME);
-
-            String returnedMifId = merchantOnboardingDao.onboardMerchantMIFInfo(emptyRequest);
-
-            assertEquals(MERCHANT_MIF_ID, returnedMifId);
-            verify(contactInfoDao).saveContactInfo(argThat(dto -> MERCHANT_MIF_ID.equals(dto.getMerchantMIFId())));
-            verify(businessInfoDao).saveBusinessInfo(argThat(dto -> MERCHANT_MIF_ID.equals(dto.getMerchantMIFId())));
-            verify(websiteInfoDao).saveWebsiteInfo(argThat(dto -> MERCHANT_MIF_ID.equals(dto.getMerchantMIFId())));
-            verify(bankTxnInfoDao).saveBankTxnInfo(argThat(dto -> MERCHANT_MIF_ID.equals(dto.getMerchantMIFId())));
-            verify(bankAccountInfoDao).saveBankAccountInfo(argThat(dto -> MERCHANT_MIF_ID.equals(dto.getMerchantMIFId())));
-            verify(tifInfoDao).saveTifInfo(argThat(dto -> MERCHANT_MIF_ID.equals(dto.getMerchantMIFId())));
-            verify(vsccDao).saveVSCCInfo(argThat(dto -> MERCHANT_MIF_ID.equals(dto.getMerchantMIFId())));
-            verify(documentDao).saveDocumentInfo(argThat(dto -> MERCHANT_MIF_ID.equals(dto.getMerchantMIFId())));
-            verify(merchantMIfDao).saveMerchantMIFId(MERCHANT_MIF_ID, USERNAME);
-        }
-    }
-
-    @Test
-    void updateMerchantMIFInfo_shouldUpdateAllSections() {
-        merchantOnboardingDao.updateMerchantMIFInfo(request);
-
-        verify(contactInfoDao).updateContactInfo(contactDto);
-        verify(businessInfoDao).updateBusinessInfo(businessDto);
-        verify(websiteInfoDao).updateWebsiteInfo(websiteDto);
-        verify(bankTxnInfoDao).updateBankTxnInfo(bankTxnDto);
-        verify(bankAccountInfoDao).updateBankAccountInfo(bankAccountInfoDto);
-        verify(tifInfoDao).updateTifInfo(tifDto);
-        verify(vsccDao).updateVSCCInfo(vsccDto);
-        verify(documentDao).updateDocumentInfo(documentDto);
-    }
-
-    @Test
-    void getActiveMIFList_shouldDelegateToMerchantMifDao() {
-        MerchantMIFDto dto = new MerchantMIFDto();
-        dto.setMifId(MERCHANT_MIF_ID);
-        List<MerchantMIFDto> expected = List.of(dto);
-        when(merchantMIfDao.getActiveMIFList(USERNAME)).thenReturn(expected);
-
-        List<MerchantMIFDto> result = merchantOnboardingDao.getActiveMIFList(USERNAME);
-
-        assertEquals(expected, result);
-        verify(merchantMIfDao).getActiveMIFList(USERNAME);
-    }
-
-    @Test
-    void getOnboardingDetails_shouldAggregateAllSectionData() {
-        when(businessInfoDao.getBusinessInfo(MERCHANT_MIF_ID)).thenReturn(businessDto);
-        when(contactInfoDao.getContactInfo(MERCHANT_MIF_ID)).thenReturn(contactDto);
-        when(websiteInfoDao.getWebsiteInfo(MERCHANT_MIF_ID)).thenReturn(websiteDto);
-        when(bankTxnInfoDao.getBankTxnInfo(MERCHANT_MIF_ID)).thenReturn(bankTxnDto);
-        when(bankAccountInfoDao.getBankAccountInfo(MERCHANT_MIF_ID)).thenReturn(bankAccountInfoDto);
-        when(tifInfoDao.getTifInfo(MERCHANT_MIF_ID)).thenReturn(tifDto);
-        when(vsccDao.getVSCCInfo(MERCHANT_MIF_ID)).thenReturn(vsccDto);
-        when(documentDao.getDocumentInfo(MERCHANT_MIF_ID)).thenReturn(documentDto);
-
-        MerchantOnboardingResponse result = merchantOnboardingDao.getOnboardingDetails(MERCHANT_MIF_ID);
-
-        assertNotNull(result);
-        assertEquals(MERCHANT_MIF_ID, result.getMerchantMIFId());
-        assertEquals(businessDto, result.getBusinessDto());
-        assertEquals(contactDto, result.getContactDto());
-        assertEquals(websiteDto, result.getWebsiteDto());
-        assertEquals(bankTxnDto, result.getBankTxnDto());
-        assertEquals(bankAccountInfoDto, result.getBankAccountInfoDto());
-        assertEquals(tifDto, result.getTifDto());
-        assertEquals(vsccDto, result.getVsccDto());
-        assertEquals(documentDto, result.getDocumentDto());
-    }
-
-    @Test
-    void getMIFPdfDetails_shouldReturnOnlyPdfRelatedSections() {
-        when(businessInfoDao.getBusinessInfo(MERCHANT_MIF_ID)).thenReturn(businessDto);
-        when(contactInfoDao.getContactInfo(MERCHANT_MIF_ID)).thenReturn(contactDto);
-        when(websiteInfoDao.getWebsiteInfo(MERCHANT_MIF_ID)).thenReturn(websiteDto);
-        when(bankTxnInfoDao.getBankTxnInfo(MERCHANT_MIF_ID)).thenReturn(bankTxnDto);
-        when(bankAccountInfoDao.getBankAccountInfo(MERCHANT_MIF_ID)).thenReturn(bankAccountInfoDto);
-
-        MerchantOnboardingResponse result = merchantOnboardingDao.getMIFPdfDetails(MERCHANT_MIF_ID);
-
-        assertEquals(MERCHANT_MIF_ID, result.getMerchantMIFId());
-        assertEquals(businessDto, result.getBusinessDto());
-        assertEquals(contactDto, result.getContactDto());
-        assertEquals(websiteDto, result.getWebsiteDto());
-        assertEquals(bankTxnDto, result.getBankTxnDto());
-        assertEquals(bankAccountInfoDto, result.getBankAccountInfoDto());
-    }
-
-    @Test
-    void getTIFPdfDetails_shouldReturnOnlyTifSection() {
-        when(tifInfoDao.getTifInfo(MERCHANT_MIF_ID)).thenReturn(tifDto);
-
-        MerchantOnboardingResponse result = merchantOnboardingDao.getTIFPdfDetails(MERCHANT_MIF_ID);
-
-        assertEquals(MERCHANT_MIF_ID, result.getMerchantMIFId());
-        assertEquals(tifDto, result.getTifDto());
-    }
-
-    @Test
-    void getVSCCPdfDetails_shouldReturnOnlyVsccSection() {
-        when(vsccDao.getVSCCInfo(MERCHANT_MIF_ID)).thenReturn(vsccDto);
-
-        MerchantOnboardingResponse result = merchantOnboardingDao.getVSCCPdfDetails(MERCHANT_MIF_ID);
-
-        assertEquals(MERCHANT_MIF_ID, result.getMerchantMIFId());
-        assertEquals(vsccDto, result.getVsccDto());
-    }
-
-    @Test
-    void getOnboardingDetails_shouldReturnRequestedModuleOnly() {
-        when(contactInfoDao.getContactInfo(MERCHANT_MIF_ID)).thenReturn(contactDto);
-
-        MerchantOnboardingResponse result =
-                merchantOnboardingDao.getOnboardingDetails(MERCHANT_MIF_ID, MIFModuleCode.CONTACT_INFO);
-
-        assertEquals(MERCHANT_MIF_ID, result.getMerchantMIFId());
-        assertEquals(contactDto, result.getContactDto());
-        verify(contactInfoDao).getContactInfo(MERCHANT_MIF_ID);
-    }
-
-    @Test
-    void saveMerchantMIFInfo_shouldUpdateOnlyRequestedModule() {
-        merchantOnboardingDao.saveMerchantMIFInfo(request, MIFModuleCode.BUSINESS_INFO);
-
-        verify(businessInfoDao).updateBusinessInfo(businessDto);
-    }
-
-    @Test
-    void getAndValidateMIFDetails_shouldFetchAndValidateEverySection() {
-        when(businessInfoDao.getBusinessInfo(MERCHANT_MIF_ID)).thenReturn(businessDto);
-        when(contactInfoDao.getContactInfo(MERCHANT_MIF_ID)).thenReturn(contactDto);
-        when(websiteInfoDao.getWebsiteInfo(MERCHANT_MIF_ID)).thenReturn(websiteDto);
-        when(bankTxnInfoDao.getBankTxnInfo(MERCHANT_MIF_ID)).thenReturn(bankTxnDto);
-        when(bankAccountInfoDao.getBankAccountInfo(MERCHANT_MIF_ID)).thenReturn(bankAccountInfoDto);
-        when(tifInfoDao.getTifInfo(MERCHANT_MIF_ID)).thenReturn(tifDto);
-        when(vsccDao.getVSCCInfo(MERCHANT_MIF_ID)).thenReturn(vsccDto);
-        when(documentDao.getDocumentInfo(MERCHANT_MIF_ID)).thenReturn(documentDto);
-
-        merchantOnboardingDao.getAndValidateMIFDetails(MERCHANT_MIF_ID);
-
-        verify(merchantOnboardingValidator).validateMerchantMIFId(MERCHANT_MIF_ID);
-        verify(businessInfoValidator).validateBusinessMandatoryFields(businessDto);
-        verify(contactInfoValidator).validateContactMandatoryFields(contactDto);
-        verify(websiteInfoValidator).validateWebsiteMandatoryFields(websiteDto);
-        verify(bankTxnInfoValidator).validateBankTxnMandatoryFields(bankTxnDto);
-        verify(bankAccountInfoValidator).validateBankAccountInfoMandatoryFields(bankAccountInfoDto);
-        verify(tifInfoValidator).validateTifMandatoryFields(tifDto);
-        verify(vsccValidator).validateVsccMandatoryFields(vsccDto);
-        verify(documentInfoValidator).validateDocumentMandatoryFields(documentDto);
-    }
-
-    @Test
-    void findAllMasterData_shouldBuildCombinedKeyMap() {
-        MasterData state = MasterData.builder()
-                .code("MH")
-                .masterCode(MasterCode.STATE)
-                .name("Maharashtra")
-                .build();
-        MasterData country = MasterData.builder()
-                .code("IN")
-                .masterCode(MasterCode.COUNTRY)
-                .name("India")
-                .build();
-        when(masterDataRepository.findAll()).thenReturn(List.of(state, country));
-
-        Map<String, String> result = merchantOnboardingDao.findAllMasterData();
-
-        assertEquals(2, result.size());
-        assertEquals("Maharashtra", result.get("MH-STATE"));
-        assertEquals("India", result.get("IN-COUNTRY"));
-        verify(masterDataRepository).findAll();
+        assertDoesNotThrow(() -> merchantOnboardingValidator.validateAdminMerchantOnboardingRequest(request, merchantMifId));
     }
 }
-------------------
-package admin.service;
-
-import com.epay.admin.portal.config.AdminPortalConfig;
-import com.epay.admin.portal.dao.admin.MIFCircleMappingDao;
-import com.epay.admin.portal.dao.mif.BusinessInfoDao;
-import com.epay.admin.portal.dao.mif.MerchantMIFDao;
-import com.epay.admin.portal.dao.mif.MerchantOnboardingDao;
-import com.epay.admin.portal.dto.MerchantMIFDto;
-import com.epay.admin.portal.model.request.MIFOnboardingRequest;
-import com.epay.admin.portal.model.response.AdminPortalResponse;
-import com.epay.admin.portal.model.response.MIFResponse;
-import com.epay.admin.portal.model.response.MerchantOnboardingResponse;
-import com.epay.admin.portal.model.response.MerchantOnboardingStatusResponse;
-import com.epay.admin.portal.service.mif.MIFOnboardingService;
-import com.epay.admin.portal.util.DateTimeUtils;
-import com.epay.admin.portal.util.EPayIdentityUtil;
-import com.epay.admin.portal.util.enums.MIFModuleCode;
-import com.epay.admin.portal.util.enums.MIFStatus;
-import com.epay.admin.portal.validator.MerchantOnboardingValidator;
-import com.sbi.epay.authentication.model.EPayPrincipal;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
-import org.mockito.Mock;
-import org.mockito.MockedStatic;
-import org.mockito.junit.jupiter.MockitoExtension;
-
-import java.util.List;
-
-import static com.epay.admin.portal.util.AdminPortalConstants.SUCCESS_RESPONSE_CODE;
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertNotNull;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.doNothing;
-import static org.mockito.Mockito.mockStatic;
-import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.when;
-
-@ExtendWith(MockitoExtension.class)
-class MIFOnboardingServiceTest {
-
-    @InjectMocks
-    private MIFOnboardingService mifOnboardingService;
-
-    @Mock
-    private MerchantOnboardingValidator merchantOnboardingValidator;
-
-    @Mock
-    private MerchantOnboardingDao merchantOnboardingDao;
-
-    @Mock
-    private MerchantMIFDao merchantMIFDao;
-
-    @Mock
-    private BusinessInfoDao businessInfoDao;
-
-    @Mock
-    private MIFCircleMappingDao mifCircleMappingDao;
-
-    @Mock
-    private AdminPortalConfig adminPortalConfig;
-
-    @Mock
-    private EPayPrincipal principal;
-
-    private MIFOnboardingRequest request;
-
-    @BeforeEach
-    void setUp() {
-        request = MIFOnboardingRequest.builder().build();
-    }
-
-    @Test
-    void onboardMerchantMIF_shouldReturnMerchantMifIdWhenRequestIsValid() {
-        String merchantMifId = "202603161200001234";
-
-        doNothing().when(merchantOnboardingValidator).validateMerchantOnboardingRequest(request);
-        when(merchantOnboardingDao.onboardMerchantMIFInfo(request)).thenReturn(merchantMifId);
-
-        AdminPortalResponse<MIFResponse> response = mifOnboardingService.onboardMerchantMIF(request);
-
-        assertNotNull(response);
-        assertEquals(SUCCESS_RESPONSE_CODE, response.getStatus());
-        assertEquals(1, response.getData().size());
-        assertEquals(merchantMifId, response.getData().getFirst().getMerchantMIFId());
-        assertEquals("Data Saved Successfully", response.getData().getFirst().getMessage());
-        verify(merchantOnboardingValidator).validateMerchantOnboardingRequest(request);
-        verify(merchantOnboardingDao).onboardMerchantMIFInfo(request);
-    }
-
-    @Test
-    void updateMerchantMIF_shouldUpdateAllModulesForMerchant() {
-        String merchantMifId = "202603161200001234";
-
-        doNothing().when(merchantOnboardingValidator).validateMerchantOnboardingRequest(request, merchantMifId);
-        doNothing().when(merchantOnboardingDao).updateMerchantMIFInfo(request);
-
-        AdminPortalResponse<String> response = mifOnboardingService.updateMerchantMIF(merchantMifId, request);
-
-        assertNotNull(response);
-        assertEquals(SUCCESS_RESPONSE_CODE, response.getStatus());
-        assertEquals(List.of("Data Updated Successfully"), response.getData());
-        verify(merchantOnboardingValidator).validateMerchantOnboardingRequest(request, merchantMifId);
-        verify(merchantOnboardingDao).updateMerchantMIFInfo(request);
-    }
-
-    @Test
-    void updateMerchantMIF_shouldUpdateSpecificModuleForMerchant() {
-        String merchantMifId = "202603161200001234";
-        String moduleCode = "BUSINESS_INFO";
-
-        doNothing().when(merchantOnboardingValidator)
-                .validateMerchantOnboardingRequest(request, merchantMifId, moduleCode);
-        doNothing().when(merchantOnboardingDao).saveMerchantMIFInfo(request, MIFModuleCode.BUSINESS_INFO);
-
-        AdminPortalResponse<String> response = mifOnboardingService.updateMerchantMIF(merchantMifId, moduleCode, request);
-
-        assertNotNull(response);
-        assertEquals(SUCCESS_RESPONSE_CODE, response.getStatus());
-        assertEquals(List.of("Data Update Successfully"), response.getData());
-        verify(merchantOnboardingValidator).validateMerchantOnboardingRequest(request, merchantMifId, moduleCode);
-        verify(merchantOnboardingDao).saveMerchantMIFInfo(request, MIFModuleCode.BUSINESS_INFO);
-    }
-
-    @Test
-    void getMerchantMIFInfo_shouldUseAdminValidationWhenAdminFlagIsTrue() {
-        String merchantMifId = "202603161200001234";
-        MerchantOnboardingResponse onboardingResponse = MerchantOnboardingResponse.builder()
-                .merchantMIFId(merchantMifId)
-                .build();
-
-        doNothing().when(merchantOnboardingValidator).validateMerchantOnBoardMIFId(merchantMifId);
-        when(merchantOnboardingDao.getOnboardingDetails(merchantMifId)).thenReturn(onboardingResponse);
-
-        AdminPortalResponse<MerchantOnboardingResponse> response =
-                mifOnboardingService.getMerchantMIFInfo(merchantMifId, true);
-
-        assertNotNull(response);
-        assertEquals(SUCCESS_RESPONSE_CODE, response.getStatus());
-        assertEquals(merchantMifId, response.getData().getFirst().getMerchantMIFId());
-        verify(merchantOnboardingValidator).validateMerchantOnBoardMIFId(merchantMifId);
-        verify(merchantOnboardingDao).getOnboardingDetails(merchantMifId);
-    }
-
-    @Test
-    void getMerchantMIFInfo_shouldUseMerchantValidationWhenAdminFlagIsFalse() {
-        String merchantMifId = "202603161200001234";
-        MerchantOnboardingResponse onboardingResponse = MerchantOnboardingResponse.builder()
-                .merchantMIFId(merchantMifId)
-                .build();
-
-        doNothing().when(merchantOnboardingValidator).validateMerchantMIFId(merchantMifId);
-        when(merchantOnboardingDao.getOnboardingDetails(merchantMifId)).thenReturn(onboardingResponse);
-
-        AdminPortalResponse<MerchantOnboardingResponse> response =
-                mifOnboardingService.getMerchantMIFInfo(merchantMifId, false);
-
-        assertNotNull(response);
-        assertEquals(SUCCESS_RESPONSE_CODE, response.getStatus());
-        assertEquals(merchantMifId, response.getData().getFirst().getMerchantMIFId());
-        verify(merchantOnboardingValidator).validateMerchantMIFId(merchantMifId);
-        verify(merchantOnboardingDao).getOnboardingDetails(merchantMifId);
-    }
-
-    @Test
-    void getMerchantMIFList_shouldReturnActiveMifListForCurrentUser() {
-        String userName = "user.ad";
-        MerchantMIFDto merchantMIFDto = new MerchantMIFDto();
-        merchantMIFDto.setMifId("202603161200001234");
-        List<MerchantMIFDto> merchantMIFDtos = List.of(merchantMIFDto);
-
-        try (MockedStatic<EPayIdentityUtil> mockedStatic = mockStatic(EPayIdentityUtil.class)) {
-            mockedStatic.when(EPayIdentityUtil::getUserPrincipal).thenReturn(principal);
-            when(principal.getUsername()).thenReturn(userName);
-            when(merchantOnboardingDao.getActiveMIFList(userName)).thenReturn(merchantMIFDtos);
-
-            AdminPortalResponse<MerchantMIFDto> response = mifOnboardingService.getMerchantMIFList();
-
-            assertNotNull(response);
-            assertEquals(SUCCESS_RESPONSE_CODE, response.getStatus());
-            assertEquals(merchantMIFDtos, response.getData());
-            verify(merchantOnboardingDao).getActiveMIFList(userName);
-        }
-    }
-
-    @Test
-    void getMerchantMIFInfo_shouldReturnModuleSpecificDetails() {
-        String merchantMifId = "202603161200001234";
-        String moduleCode = "CONTACT_INFO";
-        MerchantOnboardingResponse onboardingResponse = MerchantOnboardingResponse.builder()
-                .merchantMIFId(merchantMifId)
-                .build();
-
-        doNothing().when(merchantOnboardingValidator).validateMerchantMIFId(merchantMifId);
-        when(merchantOnboardingDao.getOnboardingDetails(merchantMifId, MIFModuleCode.CONTACT_INFO))
-                .thenReturn(onboardingResponse);
-
-        AdminPortalResponse<MerchantOnboardingResponse> response =
-                mifOnboardingService.getMerchantMIFInfo(merchantMifId, moduleCode);
-
-        assertNotNull(response);
-        assertEquals(SUCCESS_RESPONSE_CODE, response.getStatus());
-        assertEquals(merchantMifId, response.getData().getFirst().getMerchantMIFId());
-        verify(merchantOnboardingValidator).validateMerchantMIFId(merchantMifId);
-        verify(merchantOnboardingDao).getOnboardingDetails(merchantMifId, MIFModuleCode.CONTACT_INFO);
-    }
-
-    @Test
-    void getMerchantOnboardingMIFStatus_shouldBuildStatusResponseFromDaoData() {
-        String merchantMifId = "202603161200001234";
-        MerchantMIFDto merchantMIFDto = new MerchantMIFDto();
-        merchantMIFDto.setMifId(merchantMifId);
-        merchantMIFDto.setCreatedAt(1710000000000L);
-        merchantMIFDto.setStatus(MIFStatus.ACTIVE);
-        merchantMIFDto.setApprovalStatus(MIFStatus.APPROVED);
-
-        doNothing().when(merchantOnboardingValidator).validateMerchantMIFId(merchantMifId);
-        when(merchantMIFDao.getMerchantMifByMifId(merchantMifId)).thenReturn(merchantMIFDto);
-        when(businessInfoDao.getLegalName(merchantMifId)).thenReturn("Acme Pvt Ltd");
-
-        AdminPortalResponse<MerchantOnboardingStatusResponse> response =
-                mifOnboardingService.getMerchantOnboardingMIFStatus(merchantMifId);
-
-        assertNotNull(response);
-        assertEquals(SUCCESS_RESPONSE_CODE, response.getStatus());
-        assertEquals(1, response.getData().size());
-        assertEquals(merchantMifId, response.getData().getFirst().getMifId());
-        assertEquals("Acme Pvt Ltd", response.getData().getFirst().getLegalName());
-        assertEquals(1710000000000L, response.getData().getFirst().getCreatedAt());
-        assertEquals("ACTIVE", response.getData().getFirst().getMifStatus().getMif().getStatus());
-        assertEquals("PENDING", response.getData().getFirst().getMifStatus().getMif().getAction());
-        assertEquals("APPROVED", response.getData().getFirst().getMifStatus().getFinalApproval().getStatus());
-        assertEquals("NOT_STARTED", response.getData().getFirst().getIntegrationStatus().getTestKitShared().getStatus());
-        verify(merchantOnboardingValidator).validateMerchantMIFId(merchantMifId);
-        verify(merchantMIFDao).getMerchantMifByMifId(merchantMifId);
-        verify(businessInfoDao).getLegalName(merchantMifId);
-    }
-
-    @Test
-    void submitMerchantMIFData_shouldValidateAndUpdateStatus() {
-        String merchantMifId = "202603161200001234";
-
-        doNothing().when(merchantOnboardingDao).getAndValidateMIFDetails(merchantMifId);
-        doNothing().when(merchantMIFDao).updateMerchantMIFStatus(merchantMifId);
-
-        AdminPortalResponse<MIFResponse> response = mifOnboardingService.submitMerchantMIFData(merchantMifId);
-
-        assertNotNull(response);
-        assertEquals(SUCCESS_RESPONSE_CODE, response.getStatus());
-        assertEquals(merchantMifId, response.getData().getFirst().getMerchantMIFId());
-        assertEquals("MIF Form Submitted Successfully", response.getData().getFirst().getMessage());
-        verify(merchantOnboardingDao).getAndValidateMIFDetails(merchantMifId);
-        verify(merchantMIFDao).updateMerchantMIFStatus(merchantMifId);
-    }
-
-    @Test
-    void invalidateMifIdStatus_shouldPassCalculatedCutoffTimeToDao() {
-        long now = 1710000000000L;
-        long cutoffTime = 1700000000000L;
-
-        when(adminPortalConfig.getInvalidateDays()).thenReturn(365);
-
-        try (MockedStatic<DateTimeUtils> mockedStatic = mockStatic(DateTimeUtils.class)) {
-            mockedStatic.when(DateTimeUtils::getCurrentTimeMillis).thenReturn(now);
-            mockedStatic.when(() -> DateTimeUtils.getPassedTimeMillis(365)).thenReturn(cutoffTime);
-
-            mifOnboardingService.invalidateMifIdStatus();
-
-            verify(adminPortalConfig).getInvalidateDays();
-            verify(merchantMIFDao).invalidateMifIdStatus(eq(cutoffTime));
-        }
-    }
-}
--------------------
- private void validatePanDobYear(String dob) {
-        if (StringUtils.isBlank(dob) || validate(dob, DATE_FORMAT_REGEX)) {
-            return;
-        }
-
-        String fieldName = BUSINESS_INFO + PAN_DETAILS_INFO + PAN_HOLDER_DOB;
-        LocalDate dobDate = parseSupportedDate(dob, fieldName);
-
-        if (ObjectUtils.isNotEmpty(dobDate) && dobDate.getYear() < 1900) {
-            addError(fieldName, INVALID_ERROR_CODE,
-                    MessageFormat.format(INVALID_ERROR_MESSAGE, fieldName, "year should be greater than or equal to 1900"));
-        }
-    }
-
-    private LocalDate parseSupportedDate(String inputDateString, String fieldName) {
-        DateTimeFormatter[] formatters = {
-                DateTimeFormatter.ofPattern(DATE_FORMAT),
-                DateTimeFormatter.ofPattern("dd/MM/yyyy")
-        };
-
-        for (DateTimeFormatter formatter : formatters) {
-            try {
-                return LocalDate.parse(inputDateString, formatter);
-            } catch (DateTimeParseException ignored) {
-                // Try the next supported date format.
-            }
-        }
-
-        addError(INVALID_ERROR_CODE, MessageFormat.format(INVALID_ERROR_MESSAGE, fieldName, INVALID_DATE_FORMAT_ERROR_MESSAGE));
-        return null;
-    }
-
-
- 
