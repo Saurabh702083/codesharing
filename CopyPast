@@ -582,6 +582,638 @@ public class CircleMappingValidatorTest {
 }
 
 
+--------------------------------------------------------------------------------------------------
+package com.epay.admin.portal.controller.admin;
+
+import com.epay.admin.portal.model.response.AdminPortalResponse;
+import com.epay.admin.portal.model.response.AlertManagementResponse;
+import com.epay.admin.portal.service.admin.AlertService;
+import com.sbi.epay.logging.utility.LoggerFactoryUtility;
+import com.sbi.epay.logging.utility.LoggerUtility;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.tags.Tag;
+import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
+import org.springframework.data.web.PageableDefault;
+import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.web.bind.annotation.*;
+
+import static com.epay.admin.portal.util.AdminPortalConstants.DEFAULT_ALERT_PAGE_SIZE;
+
+/**
+ * Class Name: AlertController
+ * <p>
+ * Description: AlertController is responsible for handling incoming HTTP requests related to
+ * alert management. It delegates the processing of these operations to the AlertService.
+ * This controller provides endpoints for updating, retrieving alerts.
+ * <p>
+ * Author: V1018841(Saurabh Mahto)
+ * Copyright (c) 2026 [State Bank of India]
+ * All rights reserved
+ * <p>
+ * Version: 1.0
+ */
+
+@RestController
+@Tag(name = "Alert API")
+@RequiredArgsConstructor
+@RequestMapping("/alert")
+public class AlertController {
+    private final LoggerUtility log = LoggerFactoryUtility.getLogger(this.getClass());
+    private final AlertService alertService;
+
+    /**
+     * Fetches unread alerts for the logged-in user with pagination.
+     *
+     * @return AdminPortalResponse<String> - response containing a paged list of unread alerts
+     */
+    @PreAuthorize("hasAnyRole('ONBOARDING_MANAGER', 'RELATIONSHIP_MANAGER', 'BIZ_SUPPORT', 'CIRCLE')")
+    @GetMapping("/unread")
+    @Operation(summary = "Retrieve unread alerts", description = "Fetches unread alerts for the logged-in user.")
+    public AdminPortalResponse<AlertManagementResponse> getUnreadAlertsByMIFId(@PageableDefault(sort = {"createdAt"}, direction = Sort.Direction.DESC, size = DEFAULT_ALERT_PAGE_SIZE) Pageable pageable) {
+        log.info("Fetching unread alerts for logged-in user");
+        return alertService.getUnreadAlerts(pageable);
+    }
+
+    /**
+     * Fetches all read and unread alerts for the logged-in user with pagination.
+     *
+     * @return AdminPortalResponse<String> - response containing a list of alerts information
+     */
+    @PreAuthorize("hasAnyRole('ONBOARDING_MANAGER', 'RELATIONSHIP_MANAGER', 'BIZ_SUPPORT', 'CIRCLE')")
+    @GetMapping()
+    @Operation(summary = "Retrieve all alerts", description = "Fetches all read and unread alerts for the logged-in user.")
+    public AdminPortalResponse<AlertManagementResponse> getAllAlertsByMId(@PageableDefault(sort = {"createdAt"}, direction = Sort.Direction.DESC, size = DEFAULT_ALERT_PAGE_SIZE) Pageable pageable) {
+        log.info("Fetching all alerts for logged-in user");
+        return alertService.getAllAlertsByUser(pageable);
+    }
+
+    /**
+     * Updates the view status of a specific alert for a given userId and merchantMifId.
+     *
+     * @return AdminPortalResponse<String> - response message indicating success
+     */
+    @PreAuthorize("hasAnyRole('ONBOARDING_MANAGER', 'RELATIONSHIP_MANAGER', 'BIZ_SUPPORT', 'CIRCLE')")
+    @PostMapping("/update/{alterIdentifier}")
+    @Operation(summary = "Update Alert View", description = "Updates the 'viewed' status of a specific alert for the given MIFId and alert ID.")
+    public AdminPortalResponse<String> updateAlertViewStatus(@Parameter(description = "Merchant ID for Updating Alert View", required = true)@PathVariable("alterIdentifier") long alterIdentifier){
+        log.info("Updating view status for alert Identifier '{}' ", alterIdentifier);
+        return alertService.updateAlertViewStatus( alterIdentifier);
+    }
+
+
+}
+-------------
+
+package com.epay.admin.portal.service.admin;
+
+import com.epay.admin.portal.dao.admin.AlertDao;
+import com.epay.admin.portal.model.response.AdminPortalResponse;
+import com.epay.admin.portal.model.response.AlertManagementResponse;
+import com.epay.admin.portal.util.EPayIdentityUtil;
+import com.sbi.epay.logging.utility.LoggerFactoryUtility;
+import com.sbi.epay.logging.utility.LoggerUtility;
+import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+import org.springframework.stereotype.Service;
+
+import java.util.List;
+
+import static com.epay.admin.portal.util.AdminPortalConstants.SUCCESS_RESPONSE_CODE;
+
+/**
+ * Class Name: AlertService
+ * *
+ * Description:
+ * *
+ * Author: Saurabh mahto(V1018841)
+ * <p>
+ * Copyright (c) 2024 [State Bank of India]
+ * All rights reserved
+ * *
+ * Version:1.0
+ */
+@Service
+@RequiredArgsConstructor
+public class AlertService {
+    private final LoggerUtility log = LoggerFactoryUtility.getLogger(this.getClass());
+    private final AlertDao alertDao;
+    /**
+     * Fetches unread alerts for the logged-in user with pagination.
+     *
+     * @return AdminPortalResponse<String> - response containing a list of unread latest alertDescriptions
+     */
+    public AdminPortalResponse<AlertManagementResponse> getUnreadAlerts(Pageable pageable) {
+        String userAdId = EPayIdentityUtil.getUserPrincipal().getUsername();
+        log.info("Fetching unread alert descriptions for userAdId: {}", userAdId);
+        Page<AlertManagementResponse> alertManagementResponses = alertDao.getUnreadAlertsByUserId(userAdId, pageable);
+        return AdminPortalResponse.<AlertManagementResponse>builder().data(alertManagementResponses.getContent()).status(SUCCESS_RESPONSE_CODE).count(alertManagementResponses.stream().count()).total(alertManagementResponses.getTotalElements()).build();
+    }
+
+    /**
+     * Fetches unread alerts for a given userAdId with pagination.
+     *
+     * @return AdminPortalResponse<String> - response containing a list of unread  alertDescriptions
+     */
+    public AdminPortalResponse<AlertManagementResponse> getAllAlertsByUser(Pageable pageable) {
+        String userAdId = EPayIdentityUtil.getUserPrincipal().getUsername();
+        log.info("Fetching all alert descriptions for userAdId: {}", userAdId);
+        Page<AlertManagementResponse> alertManagementResponses = alertDao.getAllAlertsByUserId(userAdId, pageable);
+        return AdminPortalResponse.<AlertManagementResponse>builder().status(SUCCESS_RESPONSE_CODE).data(alertManagementResponses.getContent()).count(alertManagementResponses.stream().count()).total(alertManagementResponses.getTotalElements()).build();
+
+    }
+
+    /**
+     * Marks the alert as viewed for the given merchantMifId and alert ID.
+     *
+     * @return AdminPortalResponse<String> - response message indicating success
+     */
+    public AdminPortalResponse<String> updateAlertViewStatus(long alertIdentifier) {
+        String userAdId = EPayIdentityUtil.getUserPrincipal().getUsername();
+        log.info("Marking alert Identifier '{}'", alertIdentifier);
+        alertDao.updateViewStatus( userAdId, alertIdentifier);
+        return AdminPortalResponse.<String>builder().status(SUCCESS_RESPONSE_CODE).data(List.of("View updated successfully")).total(1L).build();
+    }
+}
+-----
+
+package com.epay.admin.portal.dao.admin;
+
+import com.epay.admin.portal.entity.admin.AlertManagement;
+import com.epay.admin.portal.exceptions.AdminPortalException;
+import com.epay.admin.portal.mapper.admin.AlertMapper;
+import com.epay.admin.portal.model.response.AlertManagementResponse;
+import com.epay.admin.portal.repository.admin.AlertManagementRepository;
+import com.epay.admin.portal.repository.admin.AlertMasterRepository;
+import com.sbi.epay.logging.utility.LoggerFactoryUtility;
+import com.sbi.epay.logging.utility.LoggerUtility;
+import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.*;
+import org.springframework.stereotype.Repository;
+
+import java.text.MessageFormat;
+import java.util.List;
+import java.util.UUID;
+
+import static com.epay.admin.portal.util.AdminPortalConstants.*;
+import static com.epay.admin.portal.util.ErrorConstants.*;
+
+/**
+ * Class Name: AlertDao
+ * Description: AlertDao is responsible for performing database operations related to alert management.
+ * It interacts with repositories to manage and retrieve alert information, including alert masters and alert management records.
+ * Additionally, it utilizes the `AlertMapper` for mapping data between entities and DTOs (Data Transfer Objects) for proper data processing.
+ * The class also collaborates with the `MerchantInfoDao` to retrieve merchant-related information as part of the alert functionality.
+ * <p>
+ * Author: V1018841(Saurabh Mahto)
+ * Copyright (c) 2026 [State Bank of India]
+ * All rights reserved
+ * Version: 1.0
+ */
+
+@Repository
+@RequiredArgsConstructor
+public class AlertDao {
+    private final LoggerUtility log = LoggerFactoryUtility.getLogger(this.getClass());
+    private final AlertManagementRepository alertManagementRepository;
+    private final AlertMapper alertMapper;
+
+
+    /**
+     * Retrieves all alerts for a given userAdId, with pagination.
+     *
+     * @param userAdId The userAdId for which the alerts are to be fetched.
+     * @param pageable Pageable object for pagination settings.
+     * @return A page of AlertManagementResponse objects representing all alerts for the given userAdId.
+     */
+    public Page<AlertManagementResponse> getUnreadAlertsByUserId(String userAdId, Pageable pageable) {
+        return getAlertDescriptions(userAdId, true, pageable);
+    }
+
+    public Page<AlertManagementResponse> getAllAlertsByUserId(String userAdId, Pageable pageable) {
+        return getAlertDescriptions(userAdId, false, pageable);
+    }
+
+    /**
+     * Retrieves alerts for a given userAdId.
+     *
+     * @param userAdId The userAdId for which the alerts are to be fetched.
+     * @param unreadOnly true to fetch only unread alerts, false to fetch all alerts.
+     * @param pageable pagination settings.
+     * @return A page of AlertManagementResponse objects representing the alerts for the given userAdId.
+     */
+    private Page<AlertManagementResponse> getAlertDescriptions(String userAdId, boolean unreadOnly, Pageable pageable) {
+        log.info("getting alerts for userAdId :{} ", userAdId);
+        Page<AlertManagement> alertManagementList = unreadOnly
+                ? alertManagementRepository.findUnreadAlertsByUserId(userAdId, pageable)
+                : alertManagementRepository.findAllAlertsByUserId(userAdId, pageable);
+        List<AlertManagementResponse> responses = alertMapper.alertManagementEntityToResponse(alertManagementList.getContent());
+        return new PageImpl<>(responses, pageable, alertManagementList.getTotalElements());
+    }
+
+
+    /**
+     * Updates the view status of a specific alert for a given merchantMifId and alert identifier.
+     * This method marks the alert as viewed by updating its view status in the database.
+     *
+     * @param alertIdentifier The unique identifier of the alert that needs to be updated.
+     */
+    public void updateViewStatus(String userAdId, long alertIdentifier) {
+        log.info("Updating notification to view for userAdId :{0} ",userAdId);
+        alertManagementRepository.findByUserAdIdAndAlertIdentifier(userAdId, alertIdentifier).map(alert -> {
+            if (alert.isViewed()) {
+                throw new AdminPortalException(INVALID_ERROR_CODE, MessageFormat.format(INVALID_ERROR_MESSAGE, ALERTIDENTIFIER, ALERTIDENTIFIER_ALREADY_UPDATED));
+            }
+            alert.setViewed(true);
+            return alertManagementRepository.save(alert);
+        }).orElseThrow(() -> new AdminPortalException(NOT_FOUND_ERROR_CODE, MessageFormat.format(NOT_FOUND_ERROR_MESSAGE, ALERTIDENTIFIER)));
+    }
+
+}
+-----
+
+package com.epay.admin.portal.mapper.admin;
+
+import com.epay.admin.portal.entity.admin.AlertManagement;
+import com.epay.admin.portal.model.response.AlertManagementResponse;
+import org.mapstruct.Builder;
+import org.mapstruct.Mapper;
+
+import java.util.List;
+
+/**
+ * Class Name: AlertMapper
+ * <p>
+ * Description: This interface defines the mapping methods for converting between different data models related to alert management.
+ * It includes methods for converting alert management entities to response objects, mapping alert management DTOs to entities,
+ * and converting alert master entities to alert master DTOs. These methods facilitate the transformation of data between layers
+ * in the application (e.g., from database entities to DTOs and vice versa), ensuring the proper structure for different use cases
+ * and improving the separation of concerns.
+ * <p>
+ * Author: V1018841
+ * Copyright (c) 2024 State Bank of India
+ * All rights reserved.
+ * <p>
+ * Version: 1.0
+ */
+@Mapper(builder = @Builder(disableBuilder = true), componentModel = "spring")
+public interface AlertMapper {
+    List<AlertManagementResponse> alertManagementEntityToResponse(List<AlertManagement> alertManagement);
+
+}
+
+----
+
+package com.epay.admin.portal.repository.admin;
+
+import com.epay.admin.portal.entity.admin.AlertManagement;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
+
+import java.util.Optional;
+import java.util.UUID;
+/**
+ * Repository Name: AlertManagementRepository
+ * *
+ * Description:Repository interface for performing CRUD operations on the `AlertManagement` entity.
+ * This handles data management related to alert configurations, notifications, and triggers.
+ * Author: V1018841(Saurabh Mahto)
+ * Copyright (c) 2026 [State Bank of India]
+ * ALl rights reserved
+ * *
+ * Version: 1.0
+ */
+public interface AlertManagementRepository extends JpaRepository<AlertManagement, UUID> {
+
+    @Query("SELECT a FROM AlertManagement a WHERE a.isViewed = false AND a.userAdId=:userAdId")
+    Page<AlertManagement> findUnreadAlertsByUserId(@Param("userAdId") String userAdId, Pageable pageable);
+
+    @Query("SELECT a FROM AlertManagement a WHERE a.userAdId=:userAdId")
+    Page<AlertManagement> findAllAlertsByUserId(@Param("userAdId") String userAdId, Pageable pageable);
+
+    Optional<AlertManagement> findByUserAdIdAndAlertIdentifier(String userAdId, long alertIdentifier);
+}
+-----
+
+package admin.dao;
+
+import com.epay.admin.portal.dao.admin.AlertDao;
+import com.epay.admin.portal.entity.admin.AlertManagement;
+import com.epay.admin.portal.exceptions.AdminPortalException;
+import com.epay.admin.portal.mapper.admin.AlertMapper;
+import com.epay.admin.portal.model.response.AlertManagementResponse;
+import com.epay.admin.portal.repository.admin.AlertManagementRepository;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
+
+import java.text.MessageFormat;
+import java.util.List;
+import java.util.Optional;
+import java.util.UUID;
+
+import static com.epay.admin.portal.util.AdminPortalConstants.ALERTIDENTIFIER;
+import static com.epay.admin.portal.util.AdminPortalConstants.ALERTIDENTIFIER_ALREADY_UPDATED;
+import static com.epay.admin.portal.util.ErrorConstants.INVALID_ERROR_CODE;
+import static com.epay.admin.portal.util.ErrorConstants.INVALID_ERROR_MESSAGE;
+import static com.epay.admin.portal.util.ErrorConstants.NOT_FOUND_ERROR_CODE;
+import static com.epay.admin.portal.util.ErrorConstants.NOT_FOUND_ERROR_MESSAGE;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.Mockito.any;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
+@ExtendWith(MockitoExtension.class)
+class AlertDaoTest {
+
+    @InjectMocks
+    private AlertDao alertDao;
+
+    @Mock
+    private AlertManagementRepository alertManagementRepository;
+
+    @Mock
+    private AlertMapper alertMapper;
+
+    @Test
+    void getUnreadAlertsByUserId_shouldFetchUnreadAlertsForUserWithGivenPageable() {
+        String userAdId = "user.ad";
+        Pageable pageable = PageRequest.of(0, 5);
+        AlertManagement entity = buildAlert(false);
+        AlertManagementResponse response = AlertManagementResponse.builder()
+                .alertIdentifier(entity.getAlertIdentifier())
+                .alertDescription(entity.getAlertDescription())
+                .merchantMifId(entity.getMerchantMifId())
+                .isViewed(entity.isViewed())
+                .build();
+        Page<AlertManagement> page = new PageImpl<>(List.of(entity), pageable, 7);
+
+        when(alertManagementRepository.findUnreadAlertsByUserId(userAdId, pageable)).thenReturn(page);
+        when(alertMapper.alertManagementEntityToResponse(List.of(entity))).thenReturn(List.of(response));
+
+        Page<AlertManagementResponse> result = alertDao.getUnreadAlertsByUserId(userAdId, pageable);
+
+        verify(alertManagementRepository).findUnreadAlertsByUserId(userAdId, pageable);
+        verify(alertMapper).alertManagementEntityToResponse(List.of(entity));
+        assertNotNull(result);
+        assertEquals(1, result.getContent().size());
+        assertEquals(response, result.getContent().getFirst());
+        assertEquals(7L, result.getTotalElements());
+    }
+
+    @Test
+    void getAllAlertsByUserId_shouldFetchReadAndUnreadAlertsForUserWithGivenPageable() {
+        String userAdId = "user.ad";
+        Pageable pageable = PageRequest.of(0, 5);
+        AlertManagement unreadEntity = buildAlert(false);
+        AlertManagement readEntity = buildAlert(true);
+        AlertManagementResponse unreadResponse = AlertManagementResponse.builder()
+                .alertIdentifier(unreadEntity.getAlertIdentifier())
+                .alertDescription(unreadEntity.getAlertDescription())
+                .merchantMifId(unreadEntity.getMerchantMifId())
+                .isViewed(unreadEntity.isViewed())
+                .build();
+        AlertManagementResponse readResponse = AlertManagementResponse.builder()
+                .alertIdentifier(readEntity.getAlertIdentifier())
+                .alertDescription(readEntity.getAlertDescription())
+                .merchantMifId(readEntity.getMerchantMifId())
+                .isViewed(readEntity.isViewed())
+                .build();
+        Page<AlertManagement> page = new PageImpl<>(List.of(unreadEntity, readEntity), pageable, 2);
+
+        when(alertManagementRepository.findAllAlertsByUserId(userAdId, pageable)).thenReturn(page);
+        when(alertMapper.alertManagementEntityToResponse(List.of(unreadEntity, readEntity))).thenReturn(List.of(unreadResponse, readResponse));
+
+        Page<AlertManagementResponse> result = alertDao.getAllAlertsByUserId(userAdId, pageable);
+
+        verify(alertManagementRepository).findAllAlertsByUserId(userAdId, pageable);
+        verify(alertMapper).alertManagementEntityToResponse(List.of(unreadEntity, readEntity));
+        assertEquals(2, result.getContent().size());
+        assertEquals(2L, result.getTotalElements());
+        assertEquals(unreadResponse, result.getContent().getFirst());
+        assertEquals(readResponse, result.getContent().get(1));
+    }
+
+    @Test
+    void updateViewStatus_shouldMarkAlertAsViewedAndSave() {
+        String merchantMifId = "MIF12345";
+        String userAdId = "user.ad";
+        long alertIdentifier = 101L;
+        AlertManagement alertManagement = buildAlert(false);
+        alertManagement.setMerchantMifId(merchantMifId);
+        alertManagement.setUserAdId(userAdId);
+        alertManagement.setAlertIdentifier(alertIdentifier);
+
+        when(alertManagementRepository.findByUserAdIdAndAlertIdentifier( userAdId, alertIdentifier))
+                .thenReturn(Optional.of(alertManagement));
+        when(alertManagementRepository.save(alertManagement)).thenReturn(alertManagement);
+
+        alertDao.updateViewStatus( userAdId, alertIdentifier);
+
+        verify(alertManagementRepository).save(alertManagement);
+        assertEquals(true, alertManagement.isViewed());
+    }
+
+    @Test
+    void updateViewStatus_shouldThrowExceptionWhenAlertAlreadyViewed() {
+        String merchantMifId = "MIF12345";
+        String userAdId = "user.ad";
+        long alertIdentifier = 101L;
+        AlertManagement alertManagement = buildAlert(true);
+        alertManagement.setMerchantMifId(merchantMifId);
+        alertManagement.setUserAdId(userAdId);
+        alertManagement.setAlertIdentifier(alertIdentifier);
+
+        when(alertManagementRepository.findByUserAdIdAndAlertIdentifier( userAdId, alertIdentifier))
+                .thenReturn(Optional.of(alertManagement));
+
+        AdminPortalException exception = assertThrows(
+                AdminPortalException.class,
+                () -> alertDao.updateViewStatus( userAdId, alertIdentifier)
+        );
+
+        verify(alertManagementRepository, never()).save(any());
+        assertEquals(INVALID_ERROR_CODE, exception.getErrorCode());
+        assertEquals(
+                MessageFormat.format(INVALID_ERROR_MESSAGE, ALERTIDENTIFIER, ALERTIDENTIFIER_ALREADY_UPDATED),
+                exception.getErrorMessage()
+        );
+    }
+
+    @Test
+    void updateViewStatus_shouldThrowExceptionWhenAlertNotFound() {
+        String merchantMifId = "MIF12345";
+        String userAdId = "user.ad";
+        long alertIdentifier = 101L;
+
+        when(alertManagementRepository.findByUserAdIdAndAlertIdentifier( userAdId, alertIdentifier))
+                .thenReturn(Optional.empty());
+
+        AdminPortalException exception = assertThrows(
+                AdminPortalException.class,
+                () -> alertDao.updateViewStatus( userAdId, alertIdentifier)
+        );
+
+        verify(alertManagementRepository, never()).save(any());
+        assertEquals(NOT_FOUND_ERROR_CODE, exception.getErrorCode());
+        assertEquals(
+                MessageFormat.format(NOT_FOUND_ERROR_MESSAGE, ALERTIDENTIFIER),
+                exception.getErrorMessage()
+        );
+    }
+
+    private AlertManagement buildAlert(boolean viewed) {
+        return AlertManagement.builder()
+                .id(UUID.randomUUID())
+                .alertId(UUID.randomUUID())
+                .merchantMifId("MIF00001")
+                .userAdId("user.ad")
+                .alertDescription("Test alert")
+                .alertIdentifier(99L)
+                .isViewed(viewed)
+                .build();
+    }
+}
+------
+
+package admin.service;
+
+import com.epay.admin.portal.dao.admin.AlertDao;
+import com.epay.admin.portal.model.response.AdminPortalResponse;
+import com.epay.admin.portal.model.response.AlertManagementResponse;
+import com.epay.admin.portal.service.admin.AlertService;
+import com.epay.admin.portal.util.EPayIdentityUtil;
+import com.sbi.epay.authentication.model.EPayPrincipal;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.MockedStatic;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
+
+import java.util.List;
+
+import static com.epay.admin.portal.util.AdminPortalConstants.SUCCESS_RESPONSE_CODE;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.mockito.Mockito.mockStatic;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
+@ExtendWith(MockitoExtension.class)
+class AlertServiceTest {
+
+    @InjectMocks
+    private AlertService alertService;
+
+    @Mock
+    private AlertDao alertDao;
+
+    @Mock
+    private EPayPrincipal principal;
+
+    @Test
+    void getUnreadAlerts_shouldReturnUnreadAlertsForCurrentUser() {
+        String userAdId = "user.ad";
+        Pageable pageable = PageRequest.of(0, 10);
+        AlertManagementResponse alert = AlertManagementResponse.builder()
+                .alertIdentifier(101L)
+                .alertDescription("Pending document review")
+                .merchantMifId("MIF12345")
+                .isViewed(false)
+                .createdAt(1000L)
+                .build();
+        Page<AlertManagementResponse> page = new PageImpl<>(List.of(alert), pageable, 1);
+
+        try (MockedStatic<EPayIdentityUtil> mockedStatic = mockStatic(EPayIdentityUtil.class)) {
+            mockedStatic.when(EPayIdentityUtil::getUserPrincipal).thenReturn(principal);
+            when(principal.getUsername()).thenReturn(userAdId);
+            when(alertDao.getUnreadAlertsByUserId(userAdId, pageable)).thenReturn(page);
+
+            AdminPortalResponse<AlertManagementResponse> response = alertService.getUnreadAlerts(pageable);
+
+            verify(alertDao).getUnreadAlertsByUserId(userAdId, pageable);
+            assertNotNull(response);
+            assertEquals(SUCCESS_RESPONSE_CODE, response.getStatus());
+            assertEquals(1L, response.getCount());
+            assertEquals(1L, response.getTotal());
+            assertEquals(List.of(alert), response.getData());
+        }
+    }
+
+    @Test
+    void getAllAlertsByUser_shouldReturnPagedAlertsForCurrentUser() {
+        String userAdId = "user.ad";
+        Pageable pageable = PageRequest.of(0, 10);
+        AlertManagementResponse firstAlert = AlertManagementResponse.builder()
+                .alertIdentifier(201L)
+                .alertDescription("Alert one")
+                .isViewed(false)
+                .build();
+        AlertManagementResponse secondAlert = AlertManagementResponse.builder()
+                .alertIdentifier(202L)
+                .alertDescription("Alert two")
+                .isViewed(true)
+                .build();
+        Page<AlertManagementResponse> page = new PageImpl<>(List.of(firstAlert, secondAlert), pageable, 2);
+
+        try (MockedStatic<EPayIdentityUtil> mockedStatic = mockStatic(EPayIdentityUtil.class)) {
+            mockedStatic.when(EPayIdentityUtil::getUserPrincipal).thenReturn(principal);
+            when(principal.getUsername()).thenReturn(userAdId);
+            when(alertDao.getAllAlertsByUserId(userAdId, pageable)).thenReturn(page);
+
+            AdminPortalResponse<AlertManagementResponse> response = alertService.getAllAlertsByUser(pageable);
+
+            verify(alertDao).getAllAlertsByUserId(userAdId, pageable);
+            assertNotNull(response);
+            assertEquals(SUCCESS_RESPONSE_CODE, response.getStatus());
+            assertEquals(2L, response.getCount());
+            assertEquals(2L, response.getTotal());
+            assertEquals(List.of(firstAlert, secondAlert), response.getData());
+        }
+    }
+
+    @Test
+    void updateAlertViewStatus_shouldValidateMerchantAndMarkAlertAsViewed() {
+        String userAdId = "user.ad";
+        long alertIdentifier = 501L;
+
+        try (MockedStatic<EPayIdentityUtil> mockedStatic = mockStatic(EPayIdentityUtil.class)) {
+            mockedStatic.when(EPayIdentityUtil::getUserPrincipal).thenReturn(principal);
+            when(principal.getUsername()).thenReturn(userAdId);
+
+            AdminPortalResponse<String> response = alertService.updateAlertViewStatus( alertIdentifier);
+
+            verify(alertDao).updateViewStatus( userAdId, alertIdentifier);
+            assertNotNull(response);
+            assertEquals(SUCCESS_RESPONSE_CODE, response.getStatus());
+            assertEquals(1L, response.getTotal());
+            assertEquals(List.of("View updated successfully"), response.getData());
+        }
+    }
+}
+
+
 	
 
 
