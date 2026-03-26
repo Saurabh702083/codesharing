@@ -1,103 +1,274 @@
-    @PreAuthorize("hasAnyRole('BIZ_SUPPORT')")
-    @PostMapping("/{MIFId}/{moduleCode}")
-    @Operation(summary = "Update MIF based on moduleCode", description = "This API used to update particular MIF linked with user.")
-    public AdminPortalResponse<String> updateMerchantMIF(@PathVariable("MIFId") String merchantMIFId, @PathVariable("moduleCode") String moduleCode, @RequestBody AdminMIFUpdateRequest adminMIFUpdateRequest) {
-        logger.info("Update Merchant Onboarding merchantMIFId {} Form : adminMIFUpdateRequest {}", merchantMIFId, adminMIFUpdateRequest);
-        return mifOnboardingService.updateAdminMerchantMIF(merchantMIFId, moduleCode, adminMIFUpdateRequest);
+private void createAssignMIFSteps(UUID journeyId, String merchantMifId) {
+        List<StageStepProjection> assignMifSteps = stepMasterRepository.findStageStepsByStageCode(OnboardingStage.ASSIGN_MIF.name());
+        if (assignMifSteps.isEmpty()) {
+            throw new AdminPortalException(NOT_FOUND_ERROR_CODE, MessageFormat.format(NOT_FOUND_ERROR_MESSAGE, "Assign MIF steps"));
+        }
+
+        List<MIFJourneySteps> mifJourneySteps = assignMifSteps.stream()
+                .map(step -> MIFJourneySteps.builder()
+                        .merchantMifId(merchantMifId)
+                        .journeyId(journeyId)
+                        .stepNum(step.getStepNum())
+                        .stepCode(step.getStepCode())
+                        .status(StageStatus.NOT_STARTED)
+                        .build())
+                .toList();
+
+        mifJourneyStepsRepository.saveAll(mifJourneySteps);
     }
+	-----
+	package com.epay.admin.portal.mapper;
 
+public interface StageStepProjection {
+    Integer getStageNum();
 
+    Integer getStepNum();
 
-    public AdminPortalResponse<String> updateAdminMerchantMIF(String merchantMIFId, String moduleCode, AdminMIFUpdateRequest adminMIFUpdateRequest) {
-            merchantOnboardingValidator.validateAdminMerchantOnboardingRequest(adminMIFUpdateRequest, merchantMIFId ,moduleCode);
-            logger.info("Admin merchant onboarding request validation successfully.");
-            merchantOnboardingDao.updateMerchantMIFInfoWithoutDocument(adminMIFUpdateRequest);
-            logger.debug("Returning AdminResponse with status code: {}", SUCCESS_RESPONSE_CODE);
-            return AdminPortalResponse.<String>builder().status(SUCCESS_RESPONSE_CODE).data(List.of("Data Updated Successfully")).build();
+    String getStepCode();
+}
+----
+ @Query(value = """
+            SELECT
+                stageMaster.STAGE_NUM AS stageNum,
+                stepMaster.STEP_NUM AS stepNum,
+                stepMaster.STEP_CODE AS stepCode
+            FROM MERCHANT_ONBOARDING_STAGES_MASTER stageMaster
+            JOIN MERCHANT_ONBOARDING_STEPS_MASTER stepMaster
+                ON stepMaster.STAGE_NUM = stageMaster.STAGE_NUM
+            WHERE stageMaster.STAGE_CODE = :stageCode
+            ORDER BY stepMaster.STEP_NUM
+            """, nativeQuery = true)
+    List<StageStepProjection> findStageStepsByStageCode(@Param("stageCode") String stageCode);
+	-----
+	
+package com.epay.admin.portal.mapper;
+
+public interface StageStepProjection {
+    Integer getStageNum();
+
+    Integer getStepNum();
+
+    String getStepCode();
+}	
+	
+	
+---------------------------------------------------------------------------------------
+
+   @PreAuthorize("hasAnyRole('ONBOARDING_MANAGER')")
+    @PostMapping("/validate-branch")
+    @Operation(summary = "Validate Branch Details", description = "This API validates branch code or branch code and branch name and returns branch master details.")
+    public AdminPortalResponse<BranchValidationResponse> validateBranch(@RequestBody BranchValidationRequest branchValidationRequest) {
+        logger.info("Validate branch request for branchCode: {}", branchValidationRequest.getBranchCode());
+        return circleMappingService.validateBranch(branchValidationRequest);
     }
+	
+--	
+	@Data
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
+public class BranchValidationRequest {
+    private Integer branchCode;
+    private String branchName;
+}
+--
+@Data
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
+public class BranchValidationResponse {
+    private Integer branchCode;
+    private String branchName;
+    private String circleName;
+    private Integer circleCode;
+    private String rmName;
+    private String rmEmailId;
+}
+--
+@Service
+@RequiredArgsConstructor
+public class CircleMappingService {
+private final BranchMasterDao branchMasterDao;
 
+public AdminPortalResponse<BranchValidationResponse> validateBranch(BranchValidationRequest branchValidationRequest) {
+        logger.info("Validating branch request");
+        circleMappingValidator.validateBranchValidationRequest(branchValidationRequest);
+        logger.info("Fetching branch details from BRANCH_MASTER");
+        BranchValidationResponse response = branchMasterDao.fetchBranchDetails(branchValidationRequest);
+        return AdminPortalResponse.<BranchValidationResponse>builder().status(SUCCESS_RESPONSE_CODE).data(List.of(response)).build();
+    }
+	
+	}
+---
 
-
-    public void validateAdminMerchantOnboardingRequest(AdminMIFUpdateRequest adminMIFUpdateRequest, String merchantMIFId,String moduleCode) {
+    public void validateBranchValidationRequest(BranchValidationRequest branchValidationRequest) {
+        logger.info("Validating branch validation request");
         errorDtoList = new ArrayList<>();
-        MIFModuleCode mifModuleCode = MIFModuleCode.getMIFModuleCode(moduleCode);
-        if (MIFModuleCode.DOC_INFO.equals(mifModuleCode)) {
-            throw new AdminPortalException(INVALID_ERROR_CODE_NO_REASON, java.text.MessageFormat.format(INVALID_ERROR_MESSAGE_NO_REASON, "MIF Module Code", moduleCode));
-        }
-        validateMerchantOnBoardMIFId(merchantMIFId);
-        throwIfErrors();
-
-        if (adminMIFUpdateRequest == null) {
-            errorDtoList.add(ErrorDto.builder()
-                    .errorCode(MANDATORY_ERROR_CODE)
-                    .errorMessage(MessageFormat.format(MANDATORY_ERROR_MESSAGE, "Request body"))
-                    .build());
-            throwIfErrors();
-            return;
-        }
-
-        validateAndAddError(adminMIFUpdateRequest.getBusinessDto(), BUSINESS_DTO);
-        validateAndAddError(adminMIFUpdateRequest.getContactDto(), CONTACT_DTO);
-        validateAndAddError(adminMIFUpdateRequest.getWebsiteDto(), WEB_SITE_DTO);
-        validateAndAddError(adminMIFUpdateRequest.getBankTxnDto(), BANK_TXN_DTO);
-        validateAndAddError(adminMIFUpdateRequest.getBankAccountInfoDto(), BANK_ACCOUNT_INFO_DTO);
-        validateAndAddError(adminMIFUpdateRequest.getTifDto(), TIF_DTO);
-        validateAndAddError(adminMIFUpdateRequest.getVsccDto(), VSCC_DTO);
-        throwIfErrors();
-
-        MIFOnboardingRequest mifOnboardingRequest = adminMIFUpdateRequest.toMIFOnboardingRequest();
-        validateBusinessInfo(mifOnboardingRequest, merchantMIFId);
-        validateContactInfo(mifOnboardingRequest, merchantMIFId);
-        validateWebsiteInfo(mifOnboardingRequest, merchantMIFId);
-        validateBankTxnInfo(mifOnboardingRequest, merchantMIFId);
-        validateBankAccountInfo(mifOnboardingRequest, merchantMIFId);
-        validateTifInfo(mifOnboardingRequest, merchantMIFId);
-        validateVSCCInfo(mifOnboardingRequest, merchantMIFId);
+        validateRole();
+        validateBranchLookupMandatoryFields(branchValidationRequest);
+        validateBranchFieldValues(branchValidationRequest);
         throwIfErrors();
     }
 
+    private void validateBranchLookupMandatoryFields(BranchValidationRequest branchValidationRequest) {
+        checkMandatoryField(branchValidationRequest.getBranchCode(), BRANCH_CODE);
+        if (branchValidationRequest.getBranchName() != null && StringUtils.isBlank(branchValidationRequest.getBranchName())) {
+            addError(BRANCH_NAME, MANDATORY_ERROR_CODE, MANDATORY_ERROR_MESSAGE);
+        }
+        throwIfErrors();
+    }
+
+    private void validateBranchFieldValues(BranchValidationRequest branchValidationRequest) {
+        if (branchValidationRequest.getBranchCode() != null && branchValidationRequest.getBranchCode() <= 0) {
+            addError(INVALID_ERROR_CODE, INVALID_ERROR_MESSAGE, BRANCH_CODE, "Value should be greater than 0");
+        }
+
+        if (StringUtils.isNotBlank(branchValidationRequest.getBranchName())) {
+            checkForLeadingTrailingAndSingleSpace(branchValidationRequest.getBranchName(), BRANCH_NAME);
+            validateFieldLength(branchValidationRequest.getBranchName(), BRANCH_NAME_LENGTH, BRANCH_NAME);
+            validateFieldWithRegexAndEmpty(branchValidationRequest.getBranchName(), MIF_BRANCH_NAME_REGEX, BRANCH_NAME, INCORRECT_FORMAT);
+        }
+        throwIfErrors();
+    }
+--
+
+import com.epay.admin.portal.entity.admin.BranchMaster;
+import com.epay.admin.portal.exceptions.AdminPortalException;
+import com.epay.admin.portal.model.request.BranchValidationRequest;
+import com.epay.admin.portal.model.response.BranchValidationResponse;
+import com.epay.admin.portal.repository.admin.BranchMasterRepository;
+import lombok.RequiredArgsConstructor;
+import org.apache.commons.lang3.StringUtils;
+import org.springframework.stereotype.Component;
+
+import java.text.MessageFormat;
+
+import static com.epay.admin.portal.util.ErrorConstants.NOT_FOUND_ERROR_CODE;
+import static com.epay.admin.portal.util.ErrorConstants.NOT_FOUND_ERROR_MESSAGE;
+
+@Component
+@RequiredArgsConstructor
+public class BranchMasterDao {
+    private final BranchMasterRepository branchMasterRepository;
+
+    public BranchValidationResponse fetchBranchDetails(BranchValidationRequest branchValidationRequest) {
+        BranchMaster branchMaster = StringUtils.isBlank(branchValidationRequest.getBranchName())
+                ? branchMasterRepository.findByBranchCode(branchValidationRequest.getBranchCode())
+                .orElseThrow(() -> new AdminPortalException(
+                        NOT_FOUND_ERROR_CODE,
+                        MessageFormat.format(NOT_FOUND_ERROR_MESSAGE, "Branch details")))
+                : branchMasterRepository.findByBranchCodeAndBranchNameIgnoreCase(
+                                branchValidationRequest.getBranchCode(),
+                                branchValidationRequest.getBranchName())
+                        .orElseThrow(() -> new AdminPortalException(
+                                NOT_FOUND_ERROR_CODE,
+                                MessageFormat.format(NOT_FOUND_ERROR_MESSAGE, "Branch details")));
+
+        return BranchValidationResponse.builder()
+                .branchCode(branchMaster.getBranchCode())
+                .branchName(branchMaster.getBranchName())
+                .circleName(branchMaster.getCircleName())
+                .circleCode(branchMaster.getCircleCode())
+                .rmName(branchMaster.getRmName())
+                .rmEmailId(branchMaster.getRmEmailId())
+                .build();
+    }
+}
+
+--
+import com.epay.admin.portal.entity.admin.BranchMaster;
+import org.springframework.data.jpa.repository.JpaRepository;
+
+import java.util.Optional;
+import java.util.UUID;
+
+public interface BranchMasterRepository extends JpaRepository<BranchMaster, UUID> {
+    Optional<BranchMaster> findByBranchCode(Integer branchCode);
+
+    Optional<BranchMaster> findByBranchCodeAndBranchNameIgnoreCase(Integer branchCode, String branchName);
+}	
+
+--
+@EqualsAndHashCode(callSuper = true)
+@Entity
+@Table(name = "BRANCH_MASTER")
+@Data
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
+public class BranchMaster extends AuditEntity {
+    @Id
+    @GeneratedValue(strategy = GenerationType.UUID)
+    private UUID id;
+    private Integer branchCode;
+    private String branchName;
+    private String circleName;
+    private Integer circleCode;
+    private String rmName;
+    private String rmEmailId;
+    private String state;
+    private String status;
+}
+---
+
+--liquibase formatted sql
+--changeset saurabh:1774000000
+
+CREATE TABLE BRANCH_MASTER (
+    ID RAW(16) DEFAULT SYS_GUID() PRIMARY KEY NOT NULL,
+    BRANCH_CODE NUMBER NOT NULL UNIQUE,
+    BRANCH_NAME VARCHAR2(255) NOT NULL,
+    CIRCLE_NAME VARCHAR2(255),
+    CIRCLE_CODE NUMBER,
+    RM_NAME VARCHAR2(255),
+    RM_EMAIL_ID VARCHAR2(255),
+    STATE VARCHAR2(255),
+    STATUS VARCHAR2(50),
+    CREATED_BY VARCHAR2(100) NOT NULL,
+    CREATED_AT NUMBER NOT NULL,
+    UPDATED_BY VARCHAR2(100),
+    UPDATED_AT NUMBER
+);
 
 
 
+-------
+package admin.service;
 
-
-package admin.validator;
-
-import com.epay.admin.portal.dao.mif.MerchantMIFDao;
-import com.epay.admin.portal.dto.mif.BankAccountInfoDto;
-import com.epay.admin.portal.dto.mif.BankTxnDto;
-import com.epay.admin.portal.dto.mif.BusinessDto;
-import com.epay.admin.portal.dto.mif.ContactDto;
-import com.epay.admin.portal.dto.mif.TifDto;
-import com.epay.admin.portal.dto.mif.VsccDto;
-import com.epay.admin.portal.dto.mif.WebsiteDto;
+import com.epay.admin.portal.dao.admin.AdminMerchantOnboardingDao;
+import com.epay.admin.portal.dao.admin.BranchMasterDao;
+import com.epay.admin.portal.dao.admin.MIFCircleMappingDao;
+import com.epay.admin.portal.dto.ErrorDto;
+import com.epay.admin.portal.entity.admin.MIFCircleMapping;
 import com.epay.admin.portal.exceptions.ValidationException;
-import com.epay.admin.portal.model.request.AdminMIFUpdateRequest;
-import com.epay.admin.portal.validator.BankAccountInfoValidator;
-import com.epay.admin.portal.validator.BankTxnInfoValidator;
-import com.epay.admin.portal.validator.BusinessInfoValidator;
-import com.epay.admin.portal.validator.ContactInfoValidator;
+import com.epay.admin.portal.model.request.BranchValidationRequest;
+import com.epay.admin.portal.model.request.MIFCircleMappingRequest;
+import com.epay.admin.portal.model.response.AdminPortalResponse;
+import com.epay.admin.portal.model.response.BranchValidationResponse;
+import com.epay.admin.portal.model.response.MIFResponse;
+import com.epay.admin.portal.service.admin.CircleMappingService;
+import com.epay.admin.portal.validator.CircleMappingValidator;
 import com.epay.admin.portal.validator.MerchantOnboardingValidator;
-import com.epay.admin.portal.validator.TifInfoValidator;
-import com.epay.admin.portal.validator.VsccValidator;
-import com.epay.admin.portal.validator.WebsiteInfoValidator;
+import org.junit.jupiter.api.Assertions;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
-import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import java.util.List;
+import java.util.UUID;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertThrows;
-import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
-import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.Mockito.doNothing;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.*;
+
 
 /**
- * Class Name: MerchantOnboardingValidatorTest
+ * Class Name: CircleMappingServiceTest
  * <p>
- * Description: Test class for the {@link MerchantOnboardingValidator} validator class.
+ * Description: Test class for the {@link CircleMappingService} service class.
  * <p>
  * Author: Lincy Thomas
  * <p>
@@ -107,79 +278,310 @@ import static org.mockito.Mockito.doNothing;
  * Version:1.0
  */
 @ExtendWith(MockitoExtension.class)
-public class MerchantOnboardingValidatorTest {
+public class CircleMappingServiceTest {
 
     @InjectMocks
-    MerchantOnboardingValidator merchantOnboardingValidator;
+    private CircleMappingService circleMappingService;
 
+    @Mock
+    private MIFCircleMappingDao mifCircleMappingDao;
+
+    @Mock
+    private BranchMasterDao branchMasterDao;
+
+    @Mock
+    private CircleMappingValidator circleMappingValidator;
+
+    @Mock
+    private AdminMerchantOnboardingDao adminMerchantOnboardingDao;
+
+    @Mock
+    private MerchantOnboardingValidator merchantOnboardingValidator;
+
+    private MIFCircleMappingRequest mifCircleMappingRequest;
+    private MIFCircleMapping mifCircleMapping;
+    private BranchValidationRequest branchValidationRequest;
+
+    @BeforeEach
+    void setup() {
+        mifCircleMappingRequest = new MIFCircleMappingRequest();
+        mifCircleMappingRequest.setMerchantMIFId("202512300827326825");
+        mifCircleMappingRequest.setBranchCode("BR0001");
+        mifCircleMappingRequest.setBranchCode("Mumbai");
+        mifCircleMappingRequest.setCircleCode("CIR001");
+        mifCircleMappingRequest.setCircleName("Maharashtra");
+        mifCircleMappingRequest.setRmId(String.valueOf(UUID.randomUUID()));
+        mifCircleMappingRequest.setRmName("Lakshya Thakur");
+
+        branchValidationRequest = BranchValidationRequest.builder()
+                .branchCode(123)
+                .branchName("Mumbai Branch")
+                .build();
+    }
+
+    @Test
+    void saveCircleMapping_shouldUpdateSuccessfully_whenRequestIsValid() {
+        doNothing().when(merchantOnboardingValidator).validateMerchantOnBoardMIFId(any());
+        doNothing().when(mifCircleMappingDao).saveMIFIdInCircleMapping(any());
+
+        circleMappingService.saveCircleMapping("202512300827326825");
+        verify(merchantOnboardingValidator).validateMerchantOnBoardMIFId(mifCircleMappingRequest.getMerchantMIFId());
+        verify(mifCircleMappingDao).saveMIFIdInCircleMapping(mifCircleMappingRequest.getMerchantMIFId());
+    }
+
+    @Test
+    void updateCircleMapping_shouldUpdateSuccessfully_whenRequestIsValid() {
+        mifCircleMapping = MIFCircleMapping.builder().id(UUID.randomUUID()).merchantMIFId(mifCircleMappingRequest.getMerchantMIFId()).build();
+
+        doNothing().when(circleMappingValidator).validateCircleMappingRequest(any());
+        when(mifCircleMappingDao.updateCircleMapping(mifCircleMappingRequest)).thenReturn(mifCircleMapping);
+
+        AdminPortalResponse<MIFResponse> response = circleMappingService.updateCircleMapping(mifCircleMappingRequest);
+        assertEquals(response.getStatus(), 1);
+        assertEquals(response.getData().getFirst().getMerchantMIFId(), mifCircleMappingRequest.getMerchantMIFId());
+        verify(circleMappingValidator).validateCircleMappingRequest(mifCircleMappingRequest);
+        verify(mifCircleMappingDao).updateCircleMapping(mifCircleMappingRequest);
+    }
+
+    @Test
+    void updateCircleMapping_shouldThrowValidationException_whenRequestIsInValid() {
+        doThrow(new ValidationException(List.of(ErrorDto.builder().errorMessage("").build()))).when(circleMappingValidator).validateCircleMappingRequest(mifCircleMappingRequest);
+
+        Assertions.assertThrows(ValidationException.class, () -> circleMappingService.updateCircleMapping(mifCircleMappingRequest));
+        verify(mifCircleMappingDao, never()).saveMIFIdInCircleMapping(any());
+    }
+
+    @Test
+    void validateBranch_shouldReturnBranchDetails_whenRequestIsValid() {
+        BranchValidationResponse branchValidationResponse = BranchValidationResponse.builder()
+                .branchCode(123)
+                .branchName("Mumbai Branch")
+                .circleName("Circle A")
+                .circleCode(456)
+                .rmName("RM Name")
+                .rmEmailId("rm@sbi.co.in")
+                .build();
+
+        doNothing().when(circleMappingValidator).validateBranchValidationRequest(branchValidationRequest);
+        when(branchMasterDao.fetchBranchDetails(branchValidationRequest)).thenReturn(branchValidationResponse);
+
+        AdminPortalResponse<BranchValidationResponse> response = circleMappingService.validateBranch(branchValidationRequest);
+
+        assertEquals(1, response.getStatus());
+        assertEquals(123, response.getData().getFirst().getBranchCode());
+        verify(circleMappingValidator).validateBranchValidationRequest(branchValidationRequest);
+        verify(branchMasterDao).fetchBranchDetails(branchValidationRequest);
+    }
+}
+
+
+-------
+
+package admin.validator;
+
+import com.epay.admin.portal.dao.admin.AdminMerchantOnboardingDao;
+import com.epay.admin.portal.dao.admin.MIFCircleMappingDao;
+import com.epay.admin.portal.dao.mif.MerchantMIFDao;
+import com.epay.admin.portal.exceptions.ValidationException;
+import com.epay.admin.portal.model.request.BranchValidationRequest;
+import com.epay.admin.portal.model.request.MIFCircleMappingRequest;
+import com.epay.admin.portal.util.EPayIdentityUtil;
+import com.epay.admin.portal.validator.CircleMappingValidator;
+import com.epay.admin.portal.validator.MerchantOnboardingValidator;
+import com.sbi.epay.authentication.model.EPayPrincipal;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.MockedStatic;
+import org.mockito.junit.jupiter.MockitoExtension;
+
+import java.util.List;
+import java.util.UUID;
+
+import static com.epay.admin.portal.util.ErrorConstants.MIF_MAPPING_ACCESS_DENIED_MESSAGE;
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.mockStatic;
+import static org.mockito.Mockito.when;
+
+/**
+ * Class Name: MerchantOnboardingValidatorTest
+ * <p>
+ * Description: Test class for the {@link CircleMappingValidator} validator class.
+ * <p>
+ * Author: Lincy Thomas
+ * <p>
+ * Copyright (c) 2026 [State Bank of India]
+ * All rights reserved.
+ * <p>
+ * Version:1.0
+ */
+@ExtendWith(MockitoExtension.class)
+public class CircleMappingValidatorTest {
+
+    List<String> userRoles = List.of("ONBOARDING_MANAGER");
+    @InjectMocks
+    CircleMappingValidator circleMappingValidator;
+    @Mock
+    private EPayPrincipal principal;
+    @Mock
+    private AdminMerchantOnboardingDao adminMerchantOnboardingDao;
+    @Mock
+    private MIFCircleMappingDao mifCircleMappingDao;
     @Mock
     private MerchantMIFDao merchantMIFDao;
     @Mock
-    private BusinessInfoValidator businessInfoValidator;
-    @Mock
-    private WebsiteInfoValidator websiteInfoValidator;
-    @Mock
-    private ContactInfoValidator contactInfoValidator;
-    @Mock
-    private BankTxnInfoValidator bankTxnInfoValidator;
-    @Mock
-    private VsccValidator vsccValidator;
-    @Mock
-    private BankAccountInfoValidator bankAccountInfoValidator;
-    @Mock
-    private TifInfoValidator tifInfoValidator;
+    private MerchantOnboardingValidator merchantOnboardingValidator;
+    private MIFCircleMappingRequest mifCircleMappingRequest;
+    private BranchValidationRequest branchValidationRequest;
 
-    @Test
-    void validateMerchantOnBoardMIFId_shouldThrow_whenFixedFieldLengthIsInvalid() {
-        ValidationException exception = assertThrows(ValidationException.class, () -> merchantOnboardingValidator.validateMerchantOnBoardMIFId("122233344"));
-        assertEquals(exception.getErrorMessages().getFirst().getErrorCode(), "8005");
-        assert (exception.getErrorMessages().getFirst().getErrorMessage().contains("The fixed length required for merchantMIFId is 18."));
-        assertEquals(exception.getErrorMessages().size(), 1);
+    @BeforeEach
+    void setUp() {
+        mifCircleMappingRequest = new MIFCircleMappingRequest();
+        mifCircleMappingRequest.setMerchantMIFId("202602121901587430");
+        mifCircleMappingRequest.setBranchCode("BR0001");
+        mifCircleMappingRequest.setBranchName("Mumbai");
+        mifCircleMappingRequest.setCircleCode("CIR001");
+        mifCircleMappingRequest.setCircleName("Maharashtra");
+        mifCircleMappingRequest.setRmId(String.valueOf(UUID.randomUUID()));
+        mifCircleMappingRequest.setRmName("Lakshya Thakur");
 
-    }
-
-    @Test
-    void validateMerchantOnBoardMIFId_shouldThrow_whenFieldsValueIsInvalid() {
-        ValidationException exception = assertThrows(ValidationException.class, () -> merchantOnboardingValidator.validateMerchantOnBoardMIFId("2026021219015874AB"));
-        assertEquals(exception.getErrorMessages().getFirst().getErrorCode(), "8002");
-        assert (exception.getErrorMessages().getFirst().getErrorMessage().contains("merchantMIFId is invalid. Reason :"));
-    }
-
-    @Test
-    void validateMerchantOnBoardMIFId_shouldThrow_whenMIFNotExists() {
-        Mockito.when(merchantMIFDao.isActiveMIFId(anyString())).thenReturn(false);
-
-        ValidationException exception = assertThrows(ValidationException.class, () -> merchantOnboardingValidator.validateMerchantOnBoardMIFId("202602121901587431"));
-        assertEquals(exception.getErrorMessages().getFirst().getErrorCode(), "8002");
-        assert (exception.getErrorMessages().getFirst().getErrorMessage().contains("MerchantMIFId is not Active"));
-        assertEquals(exception.getErrorMessages().size(), 1);
-
-    }
-
-    @Test
-    void validateAdminMerchantOnboardingRequest_shouldPass_whenAllNonDocumentDtosArePresent() {
-        String merchantMifId = "202603161200001234";
-        AdminMIFUpdateRequest request = AdminMIFUpdateRequest.builder()
-                .businessDto(BusinessDto.builder().merchantMIFId(merchantMifId).build())
-                .contactDto(ContactDto.builder().merchantMIFId(merchantMifId).build())
-                .websiteDto(WebsiteDto.builder().merchantMIFId(merchantMifId).build())
-                .bankTxnDto(BankTxnDto.builder().merchantMIFId(merchantMifId).build())
-                .bankAccountInfoDto(BankAccountInfoDto.builder().merchantMIFId(merchantMifId).build())
-                .tifDto(TifDto.builder().merchantMIFId(merchantMifId).build())
-                .vsccDto(VsccDto.builder().merchantMIFId(merchantMifId).build())
+        branchValidationRequest = BranchValidationRequest.builder()
+                .branchCode(123)
+                .branchName("Mumbai Branch")
                 .build();
+    }
 
-        Mockito.when(merchantMIFDao.isActiveMIFId(merchantMifId)).thenReturn(true);
-        Mockito.when(merchantMIFDao.checkMIFStatus(merchantMifId)).thenReturn(false);
-        doNothing().when(businessInfoValidator).validateBusinessRequest(request.getBusinessDto());
-        doNothing().when(contactInfoValidator).validateContactRequest(request.getContactDto());
-        doNothing().when(contactInfoValidator).validateField(request.getContactDto());
-        doNothing().when(websiteInfoValidator).validateWebsiteRequest(request.getWebsiteDto());
-        doNothing().when(bankTxnInfoValidator).validateBankTxnRequest(request.getBankTxnDto());
-        doNothing().when(bankAccountInfoValidator).validateBankAccountInfoRequest(request.getBankAccountInfoDto());
-        doNothing().when(tifInfoValidator).validateTifRequest(request.getTifDto());
-        doNothing().when(vsccValidator).validateVSCCRequest(request.getVsccDto());
+    @Test
+    void validateCircleMappingRequest_shouldPass_whenRequestIsValid() {
+        try (MockedStatic<EPayIdentityUtil> mockedStatic = mockStatic(EPayIdentityUtil.class)) {
+            mockedStatic.when(EPayIdentityUtil::getUserPrincipal).thenReturn(principal);
+            when(principal.getUserRole()).thenReturn(userRoles);
 
-        assertDoesNotThrow(() -> merchantOnboardingValidator.validateAdminMerchantOnboardingRequest(request, merchantMifId));
+            assertDoesNotThrow(() -> circleMappingValidator.validateCircleMappingRequest(mifCircleMappingRequest));
+        }
+    }
+
+    @Test
+    void validateCircleMappingRequest_shouldThrow_whenTokenRoleIsInvalid() {
+        List<String> tokenRoles = List.of("CIRCLE");
+        try (MockedStatic<EPayIdentityUtil> mockedStatic = mockStatic(EPayIdentityUtil.class)) {
+            mockedStatic.when(EPayIdentityUtil::getUserPrincipal).thenReturn(principal);
+            when(principal.getUserRole()).thenReturn(tokenRoles);
+
+            ValidationException exception = assertThrows(ValidationException.class, () ->
+                    circleMappingValidator.validateCircleMappingRequest(mifCircleMappingRequest));
+
+            assertEquals(MIF_MAPPING_ACCESS_DENIED_MESSAGE, exception.getErrorMessages().getFirst().getErrorMessage());
+        }
+    }
+
+    @Test
+    void validateCircleMappingRequest_shouldThrow_whenMandatoryFieldsAreMissing() {
+        mifCircleMappingRequest.setBranchCode("");
+        mifCircleMappingRequest.setBranchName("");
+        mifCircleMappingRequest.setCircleCode("");
+        mifCircleMappingRequest.setCircleName("");
+        mifCircleMappingRequest.setRmId("");
+        mifCircleMappingRequest.setRmName("");
+        try (MockedStatic<EPayIdentityUtil> mockedStatic = mockStatic(EPayIdentityUtil.class)) {
+            mockedStatic.when(EPayIdentityUtil::getUserPrincipal).thenReturn(principal);
+            when(principal.getUserRole()).thenReturn(userRoles);
+
+            ValidationException exception = assertThrows(ValidationException.class, () -> circleMappingValidator.validateCircleMappingRequest(mifCircleMappingRequest));
+            assertEquals(exception.getErrorMessages().getFirst().getErrorCode(), "8001");
+            assert (exception.getErrorMessages().getFirst().getErrorMessage().contains("is required."));
+            assertEquals(exception.getErrorMessages().size(), 6);
+        }
+    }
+
+    @Test
+    void validateCircleMappingRequest_shouldThrow_whenLeadingOrTrailingSpaceIsPresent() {
+        mifCircleMappingRequest.setBranchCode(" BR0001");
+        mifCircleMappingRequest.setBranchName("Mumbai ");
+        mifCircleMappingRequest.setCircleCode(" CIR001");
+        try (MockedStatic<EPayIdentityUtil> mockedStatic = mockStatic(EPayIdentityUtil.class)) {
+            mockedStatic.when(EPayIdentityUtil::getUserPrincipal).thenReturn(principal);
+            when(principal.getUserRole()).thenReturn(userRoles);
+
+            ValidationException exception = assertThrows(ValidationException.class, () -> circleMappingValidator.validateCircleMappingRequest(mifCircleMappingRequest));
+            assertEquals(exception.getErrorMessages().getFirst().getErrorCode(), "8010");
+            assert (exception.getErrorMessages().getFirst().getErrorMessage().contains("contains leading or trailing spaces."));
+            assertEquals(exception.getErrorMessages().size(), 3);
+        }
+    }
+
+
+    @Test
+    void validateCircleMappingRequest_shouldThrow_whenFieldLengthIsInvalid() {
+        mifCircleMappingRequest.setBranchName("MumbaiMumbaiMumbaiMumbaiMumbaiMumbai");
+        mifCircleMappingRequest.setBranchCode("MumbaiMumbaiMumbaiMumbaiMumbaiMumbai");
+        try (MockedStatic<EPayIdentityUtil> mockedStatic = mockStatic(EPayIdentityUtil.class)) {
+            mockedStatic.when(EPayIdentityUtil::getUserPrincipal).thenReturn(principal);
+            when(principal.getUserRole()).thenReturn(userRoles);
+
+            ValidationException exception = assertThrows(ValidationException.class, () -> circleMappingValidator.validateCircleMappingRequest(mifCircleMappingRequest));
+            assertEquals(exception.getErrorMessages().getFirst().getErrorCode(), "8007");
+            assert (exception.getErrorMessages().getFirst().getErrorMessage().contains("The maximum allowed length"));
+            assertEquals(exception.getErrorMessages().size(), 2);
+        }
+    }
+
+    @Test
+    void validateBranchValidationRequest_shouldPass_whenRequestIsValid() {
+        try (MockedStatic<EPayIdentityUtil> mockedStatic = mockStatic(EPayIdentityUtil.class)) {
+            mockedStatic.when(EPayIdentityUtil::getUserPrincipal).thenReturn(principal);
+            when(principal.getUserRole()).thenReturn(userRoles);
+
+            assertDoesNotThrow(() -> circleMappingValidator.validateBranchValidationRequest(branchValidationRequest));
+        }
+    }
+
+    @Test
+    void validateBranchValidationRequest_shouldThrow_whenBranchCodeMissing() {
+        branchValidationRequest.setBranchCode(null);
+
+        try (MockedStatic<EPayIdentityUtil> mockedStatic = mockStatic(EPayIdentityUtil.class)) {
+            mockedStatic.when(EPayIdentityUtil::getUserPrincipal).thenReturn(principal);
+            when(principal.getUserRole()).thenReturn(userRoles);
+
+            ValidationException exception = assertThrows(ValidationException.class,
+                    () -> circleMappingValidator.validateBranchValidationRequest(branchValidationRequest));
+            assertEquals("8001", exception.getErrorMessages().getFirst().getErrorCode());
+        }
+    }
+
+    @Test
+    void validateBranchValidationRequest_shouldThrow_whenBranchNameHasLeadingSpace() {
+        branchValidationRequest.setBranchName(" Mumbai Branch");
+
+        try (MockedStatic<EPayIdentityUtil> mockedStatic = mockStatic(EPayIdentityUtil.class)) {
+            mockedStatic.when(EPayIdentityUtil::getUserPrincipal).thenReturn(principal);
+            when(principal.getUserRole()).thenReturn(userRoles);
+
+            ValidationException exception = assertThrows(ValidationException.class,
+                    () -> circleMappingValidator.validateBranchValidationRequest(branchValidationRequest));
+            assertEquals("8010", exception.getErrorMessages().getFirst().getErrorCode());
+        }
+    }
+
+    @Test
+    void validateBranchValidationRequest_shouldThrow_whenBranchCodeIsNegative() {
+        branchValidationRequest.setBranchCode(-1);
+
+        try (MockedStatic<EPayIdentityUtil> mockedStatic = mockStatic(EPayIdentityUtil.class)) {
+            mockedStatic.when(EPayIdentityUtil::getUserPrincipal).thenReturn(principal);
+            when(principal.getUserRole()).thenReturn(userRoles);
+
+            ValidationException exception = assertThrows(ValidationException.class,
+                    () -> circleMappingValidator.validateBranchValidationRequest(branchValidationRequest));
+            assertEquals("8002", exception.getErrorMessages().getFirst().getErrorCode());
+        }
     }
 }
+
+
+	
+
+
