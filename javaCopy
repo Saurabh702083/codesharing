@@ -254,3 +254,228 @@ POST /eis/consent/write
 - Consent pushed successfully
 - Returns consentId
 - Handles failure scenarios
+
+
+## 🧾 Story: EIS Privacy Notice API
+
+### Objective
+Fetch privacy notice from CCMS and store in DB.
+
+---
+
+### DB Table
+privacy_notice
+
+---
+
+### Development Steps
+1. Create method:
+   void fetchPrivacyNotice()
+2. Call EIS API
+3. Parse response
+4. Save in DB
+5. Mark previous record inactive
+
+---
+
+### Acceptance Criteria
+- Latest privacy notice stored
+- Only one active record
+
+
+
+
+-----------
+
+
+## 🧾 Story: EIS Purpose API
+
+### Objective
+Fetch purpose list and store in DB.
+
+---
+
+### DB Table
+purpose_master
+
+---
+
+### Development Steps
+1. Call EIS Purpose API
+2. Parse response
+3. Save purpose list
+4. Avoid duplicate versions
+
+---
+
+### Acceptance Criteria
+- All purposes saved
+- No duplicate entries
+
+-------------
+
+
+## 🧾 Story: Consent Evaluation API
+
+### Objective
+Check if consent is required or not.
+
+---
+
+### Internal API
+POST /api/mif/consent/check
+
+---
+
+### Request
+{
+  "mobileNo": "9999999999",
+  "mifId": "MIF123",
+  "touchPointId": "MIF"
+}
+
+---
+
+### Response
+{
+  "consentRequired": true,
+  "reConsentRequired": true,
+  "privacyNotice": "...",
+  "purposes": []
+}
+
+---
+
+### Development Steps
+1. Call Consent Read API
+2. If ACTIVE → check re-consent
+3. If NOT ACTIVE → fetch privacy + purpose from DB
+4. Add fallback if CCMS fails
+
+---
+
+### Acceptance Criteria
+- Works with CCMS + fallback
+- Handles re-consent properly
+
+
+---------
+
+## 🧾 Story: Consent Capture API
+
+### Objective
+Capture and store user consent.
+
+---
+
+### Internal API
+POST /api/mif/consent/accept
+
+---
+
+### Development Steps
+1. Receive request
+2. Call Consent Write API
+3. Save in DB
+
+---
+
+### Failure Handling
+- If API fails:
+  - Save record with is_synced=false
+  - Insert into retry queue
+
+---
+
+### Acceptance Criteria
+- Consent saved successfully
+- Retry triggered on failure
+
+
+
+
+
+--------
+
+## 🧾 Story: Consent Retry Scheduler
+
+### Objective
+Retry failed consent requests.
+
+---
+
+### Scheduler
+Runs every 10 minutes
+
+---
+
+### Development Steps
+1. Fetch PENDING records
+2. Call Consent Write API
+3. If success → mark SUCCESS
+4. If failure → increment retry count
+5. Stop after max retries
+
+---
+
+### Acceptance Criteria
+- Retry works correctly
+- Failed records retried automatically
+
+
+------------
+
+
+## 🧾 Story: Privacy & Purpose Scheduler
+
+### Objective
+Sync privacy notice and purpose daily.
+
+---
+
+### Scheduler
+- Privacy → 1 AM
+- Purpose → 1:30 AM
+
+---
+
+### Development Steps
+1. Call Privacy API
+2. Call Purpose API
+3. Update DB
+
+---
+
+### Acceptance Criteria
+- Data updated daily
+- No duplicates
+
+
+--------
+
+## 🧾 Story: Database Setup
+
+### Objective
+Create required DB tables.
+
+---
+
+### Tables
+- privacy_notice
+- purpose_master
+- consent_record
+- consent_retry_queue
+- consent_audit
+
+---
+
+### Development Steps
+1. Write SQL scripts
+2. Add indexes on mobile_no
+3. Validate schema
+
+---
+
+### Acceptance Criteria
+- Tables created successfully
+- Data integrity maintained
