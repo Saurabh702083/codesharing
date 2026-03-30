@@ -145,3 +145,54 @@ is_essential	boolean
 validity_days	int		
 touchpoint_id	varchar		
 purpose_set_id	varchar		
+
+
+-----
+## 🧾 Story: EIS Consent Read API Integration
+
+### Objective
+Implement method to call EIS Consent Read API and fetch consent status.
+
+---
+
+### External API
+POST /eis/consent/read
+
+---
+
+### Request
+{
+  "touchPointId": "MIF",
+  "dpData": {
+    "dpMobile": "9999999999",
+    "dpCIF": "mobile+MID"
+  }
+}
+
+---
+
+### Response
+{
+  "status": "SUCCESS",
+  "consentStatus": "ACTIVE"
+}
+
+---
+
+### Development Steps
+1. Create service class: CcmsIntegrationService
+2. Add method:
+   boolean checkConsentFromCCMS(ConsentCheckRequest request)
+3. Build request payload
+4. Encrypt payload (AES)
+5. Call EIS API (RestTemplate/WebClient)
+6. Decrypt response
+7. Parse consentStatus
+8. Return boolean
+
+---
+
+### Acceptance Criteria
+- API call works successfully
+- Returns correct consent status
+- Handles timeout and exceptions
