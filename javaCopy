@@ -196,3 +196,61 @@ POST /eis/consent/read
 - API call works successfully
 - Returns correct consent status
 - Handles timeout and exceptions
+
+
+------------
+
+## 🧾 Story: EIS Consent Write API Integration
+
+### Objective
+Implement method to push consent to CCMS.
+
+---
+
+### External API
+POST /eis/consent/write
+
+---
+
+### Request
+{
+  "touchPointId": "MIF",
+  "purposeSetId": "MIF_PURPOSE",
+  "dpData": {
+    "dpMobile": "9999999999",
+    "dpEmail": "abc@mail.com",
+    "dpIP": "127.0.0.1"
+  },
+  "consents": [
+    {
+      "purposeCode": "KYC",
+      "purposeVersion": 1,
+      "consentAction": "capture"
+    }
+  ]
+}
+
+---
+
+### Response
+{
+  "status": "SUCCESS",
+  "consentId": "12345"
+}
+
+---
+
+### Development Steps
+1. Create method:
+   String writeConsent(String payload)
+2. Encrypt request
+3. Call API
+4. Decrypt response
+5. Extract consentId
+
+---
+
+### Acceptance Criteria
+- Consent pushed successfully
+- Returns consentId
+- Handles failure scenarios
