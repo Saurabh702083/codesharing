@@ -1,1219 +1,777 @@
-private void createAssignMIFSteps(UUID journeyId, String merchantMifId) {
-        List<StageStepProjection> assignMifSteps = stepMasterRepository.findStageStepsByStageCode(OnboardingStage.ASSIGN_MIF.name());
-        if (assignMifSteps.isEmpty()) {
-            throw new AdminPortalException(NOT_FOUND_ERROR_CODE, MessageFormat.format(NOT_FOUND_ERROR_MESSAGE, "Assign MIF steps"));
-        }
+1.
 
-        List<MIFJourneySteps> mifJourneySteps = assignMifSteps.stream()
-                .map(step -> MIFJourneySteps.builder()
-                        .merchantMifId(merchantMifId)
-                        .journeyId(journeyId)
-                        .stepNum(step.getStepNum())
-                        .stepCode(step.getStepCode())
-                        .status(StageStatus.NOT_STARTED)
-                        .build())
-                .toList();
+Description:
+Implement a Consent Evaluate API in Admin Server to determine consent status for a user.
+The API will check consent in the local database, integrate with Communication Service / EIS Wrapper APIs when required, and return consent status along with Privacy Notice and Purpose details.
 
-        mifJourneyStepsRepository.saveAll(mifJourneySteps);
-    }
-	-----
-	package com.epay.admin.portal.mapper;
+This API will be used at MIF Login and Merchant Panel Login touchpoints to validate whether consent is active or re-consent is required.
 
-public interface StageStepProjection {
-    Integer getStageNum();
+API Details
+Endpoint: POST /admin/consent/evaluate
 
-    Integer getStepNum();
-
-    String getStepCode();
-}
-----
- @Query(value = """
-            SELECT
-                stageMaster.STAGE_NUM AS stageNum,
-                stepMaster.STEP_NUM AS stepNum,
-                stepMaster.STEP_CODE AS stepCode
-            FROM MERCHANT_ONBOARDING_STAGES_MASTER stageMaster
-            JOIN MERCHANT_ONBOARDING_STEPS_MASTER stepMaster
-                ON stepMaster.STAGE_NUM = stageMaster.STAGE_NUM
-            WHERE stageMaster.STAGE_CODE = :stageCode
-            ORDER BY stepMaster.STEP_NUM
-            """, nativeQuery = true)
-    List<StageStepProjection> findStageStepsByStageCode(@Param("stageCode") String stageCode);
-	-----
-	
-package com.epay.admin.portal.mapper;
-
-public interface StageStepProjection {
-    Integer getStageNum();
-
-    Integer getStepNum();
-
-    String getStepCode();
-}	
-	
-	
----------------------------------------------------------------------------------------
-
-   @PreAuthorize("hasAnyRole('ONBOARDING_MANAGER')")
-    @PostMapping("/validate-branch")
-    @Operation(summary = "Validate Branch Details", description = "This API validates branch code or branch code and branch name and returns branch master details.")
-    public AdminPortalResponse<BranchValidationResponse> validateBranch(@RequestBody BranchValidationRequest branchValidationRequest) {
-        logger.info("Validate branch request for branchCode: {}", branchValidationRequest.getBranchCode());
-        return circleMappingService.validateBranch(branchValidationRequest);
-    }
-	
---	
-	@Data
-@Builder
-@NoArgsConstructor
-@AllArgsConstructor
-public class BranchValidationRequest {
-    private Integer branchCode;
-    private String branchName;
-}
---
-@Data
-@Builder
-@NoArgsConstructor
-@AllArgsConstructor
-public class BranchValidationResponse {
-    private Integer branchCode;
-    private String branchName;
-    private String circleName;
-    private Integer circleCode;
-    private String rmName;
-    private String rmEmailId;
-}
---
-@Service
-@RequiredArgsConstructor
-public class CircleMappingService {
-private final BranchMasterDao branchMasterDao;
-
-public AdminPortalResponse<BranchValidationResponse> validateBranch(BranchValidationRequest branchValidationRequest) {
-        logger.info("Validating branch request");
-        circleMappingValidator.validateBranchValidationRequest(branchValidationRequest);
-        logger.info("Fetching branch details from BRANCH_MASTER");
-        BranchValidationResponse response = branchMasterDao.fetchBranchDetails(branchValidationRequest);
-        return AdminPortalResponse.<BranchValidationResponse>builder().status(SUCCESS_RESPONSE_CODE).data(List.of(response)).build();
-    }
-	
-	}
----
-
-    public void validateBranchValidationRequest(BranchValidationRequest branchValidationRequest) {
-        logger.info("Validating branch validation request");
-        errorDtoList = new ArrayList<>();
-        validateRole();
-        validateBranchLookupMandatoryFields(branchValidationRequest);
-        validateBranchFieldValues(branchValidationRequest);
-        throwIfErrors();
-    }
-
-    private void validateBranchLookupMandatoryFields(BranchValidationRequest branchValidationRequest) {
-        checkMandatoryField(branchValidationRequest.getBranchCode(), BRANCH_CODE);
-        if (branchValidationRequest.getBranchName() != null && StringUtils.isBlank(branchValidationRequest.getBranchName())) {
-            addError(BRANCH_NAME, MANDATORY_ERROR_CODE, MANDATORY_ERROR_MESSAGE);
-        }
-        throwIfErrors();
-    }
-
-    private void validateBranchFieldValues(BranchValidationRequest branchValidationRequest) {
-        if (branchValidationRequest.getBranchCode() != null && branchValidationRequest.getBranchCode() <= 0) {
-            addError(INVALID_ERROR_CODE, INVALID_ERROR_MESSAGE, BRANCH_CODE, "Value should be greater than 0");
-        }
-
-        if (StringUtils.isNotBlank(branchValidationRequest.getBranchName())) {
-            checkForLeadingTrailingAndSingleSpace(branchValidationRequest.getBranchName(), BRANCH_NAME);
-            validateFieldLength(branchValidationRequest.getBranchName(), BRANCH_NAME_LENGTH, BRANCH_NAME);
-            validateFieldWithRegexAndEmpty(branchValidationRequest.getBranchName(), MIF_BRANCH_NAME_REGEX, BRANCH_NAME, INCORRECT_FORMAT);
-        }
-        throwIfErrors();
-    }
---
-
-import com.epay.admin.portal.entity.admin.BranchMaster;
-import com.epay.admin.portal.exceptions.AdminPortalException;
-import com.epay.admin.portal.model.request.BranchValidationRequest;
-import com.epay.admin.portal.model.response.BranchValidationResponse;
-import com.epay.admin.portal.repository.admin.BranchMasterRepository;
-import lombok.RequiredArgsConstructor;
-import org.apache.commons.lang3.StringUtils;
-import org.springframework.stereotype.Component;
-
-import java.text.MessageFormat;
-
-import static com.epay.admin.portal.util.ErrorConstants.NOT_FOUND_ERROR_CODE;
-import static com.epay.admin.portal.util.ErrorConstants.NOT_FOUND_ERROR_MESSAGE;
-
-@Component
-@RequiredArgsConstructor
-public class BranchMasterDao {
-    private final BranchMasterRepository branchMasterRepository;
-
-    public BranchValidationResponse fetchBranchDetails(BranchValidationRequest branchValidationRequest) {
-        BranchMaster branchMaster = StringUtils.isBlank(branchValidationRequest.getBranchName())
-                ? branchMasterRepository.findByBranchCode(branchValidationRequest.getBranchCode())
-                .orElseThrow(() -> new AdminPortalException(
-                        NOT_FOUND_ERROR_CODE,
-                        MessageFormat.format(NOT_FOUND_ERROR_MESSAGE, "Branch details")))
-                : branchMasterRepository.findByBranchCodeAndBranchNameIgnoreCase(
-                                branchValidationRequest.getBranchCode(),
-                                branchValidationRequest.getBranchName())
-                        .orElseThrow(() -> new AdminPortalException(
-                                NOT_FOUND_ERROR_CODE,
-                                MessageFormat.format(NOT_FOUND_ERROR_MESSAGE, "Branch details")));
-
-        return BranchValidationResponse.builder()
-                .branchCode(branchMaster.getBranchCode())
-                .branchName(branchMaster.getBranchName())
-                .circleName(branchMaster.getCircleName())
-                .circleCode(branchMaster.getCircleCode())
-                .rmName(branchMaster.getRmName())
-                .rmEmailId(branchMaster.getRmEmailId())
-                .build();
-    }
+Request Body:
+{
+  "merchantMifId": "String",
+  "dpCIF": "string",
+  "dpMobile": "string",
+  "touchPointId": "string",
+  "purposeSetId": "string"
 }
 
---
-import com.epay.admin.portal.entity.admin.BranchMaster;
-import org.springframework.data.jpa.repository.JpaRepository;
+Response Body:
+{
+  "merchantMifId": "String",
+  "isConsentActive": true,
+  "consentStatus": "Active | Inactive | Expired | Revoked",
 
-import java.util.Optional;
-import java.util.UUID;
+  "consentReadResponse": {
+    "status": "String",
+    "consentId": "string",
+    "dpIP": "String",
+    "locale": "string",
+    "timestamp": "YYYY-MM-DDTHH:MM:SSZ",
+    "version": "String"
+  },
 
-public interface BranchMasterRepository extends JpaRepository<BranchMaster, UUID> {
-    Optional<BranchMaster> findByBranchCode(Integer branchCode);
+  "privacyNoticeResponse": {
+    "version": "String",
+    "privacyText": "String"
+  },
 
-    Optional<BranchMaster> findByBranchCodeAndBranchNameIgnoreCase(Integer branchCode, String branchName);
-}	
-
---
-@EqualsAndHashCode(callSuper = true)
-@Entity
-@Table(name = "BRANCH_MASTER")
-@Data
-@Builder
-@NoArgsConstructor
-@AllArgsConstructor
-public class BranchMaster extends AuditEntity {
-    @Id
-    @GeneratedValue(strategy = GenerationType.UUID)
-    private UUID id;
-    private Integer branchCode;
-    private String branchName;
-    private String circleName;
-    private Integer circleCode;
-    private String rmName;
-    private String rmEmailId;
-    private String state;
-    private String status;
+  "purposeResponse": {
+    "purposes": [],
+    "code": "String",
+    "version": "int",
+    "title": "String",
+    "description": "String",
+    "isEssential": "String",
+    "validityDays": "long",
+    "timestamp": "YYYY-MM-DDTHH:MM:SSZ",
+    "locale": "string"
+  }
 }
----
 
---liquibase formatted sql
---changeset saurabh:1774000000
+Developmnt Flow:-
+Step 1 — Validate Request
 
-CREATE TABLE BRANCH_MASTER (
-    ID RAW(16) DEFAULT SYS_GUID() PRIMARY KEY NOT NULL,
-    BRANCH_CODE NUMBER NOT NULL UNIQUE,
-    BRANCH_NAME VARCHAR2(255) NOT NULL,
-    CIRCLE_NAME VARCHAR2(255),
-    CIRCLE_CODE NUMBER,
-    RM_NAME VARCHAR2(255),
-    RM_EMAIL_ID VARCHAR2(255),
-    STATE VARCHAR2(255),
-    STATUS VARCHAR2(50),
-    CREATED_BY VARCHAR2(100) NOT NULL,
-    CREATED_AT NUMBER NOT NULL,
-    UPDATED_BY VARCHAR2(100),
-    UPDATED_AT NUMBER
-);
+Step 2 — Check Consent in Local DB
+Case A — Consent Active
+If status = Active and not expired:
+Return response from local DB.
+isConsentActive = true
+Do NOT call Communication Service.
 
+Step 3 — If Consent Not Active (Inactive / Expired / Revoked / Not Found)
+Call Consent Read API (via Communication/EIS Service).
+Case A — Communication Service returns Active Consent
+Insert/Update consent in local DB.
+Update consent version, timestamp, status.
+Return isConsentActive = true.
 
+Case B — Communication Service returns New Consent + Privacy + Purpose
+This means re-consent required.
+Then:
+Save privacy notice in privacy_master table.
+Save purpose in purpose_master table.
+Compare privacy version & purpose version with master table:
+If different → update master tables.
+Return:
+isConsentActive = false
+privacyNoticeResponse
+purposeResponse
 
--------
-package admin.service;
+Step 4 — If Communication/EIS Service Down
+Fallback mechanism:
+Read latest privacy notice from privacy_master
+Read latest purposes from purpose_master
+Return them in response.
+isConsentActive = false.
 
-import com.epay.admin.portal.dao.admin.AdminMerchantOnboardingDao;
-import com.epay.admin.portal.dao.admin.BranchMasterDao;
-import com.epay.admin.portal.dao.admin.MIFCircleMappingDao;
-import com.epay.admin.portal.dto.ErrorDto;
-import com.epay.admin.portal.entity.admin.MIFCircleMapping;
-import com.epay.admin.portal.exceptions.ValidationException;
-import com.epay.admin.portal.model.request.BranchValidationRequest;
-import com.epay.admin.portal.model.request.MIFCircleMappingRequest;
-import com.epay.admin.portal.model.response.AdminPortalResponse;
-import com.epay.admin.portal.model.response.BranchValidationResponse;
-import com.epay.admin.portal.model.response.MIFResponse;
-import com.epay.admin.portal.service.admin.CircleMappingService;
-import com.epay.admin.portal.validator.CircleMappingValidator;
-import com.epay.admin.portal.validator.MerchantOnboardingValidator;
-import org.junit.jupiter.api.Assertions;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
-import org.mockito.Mock;
-import org.mockito.junit.jupiter.MockitoExtension;
+Acceptance Criteria
+API returns active consent if available locally.
+If not available, system calls Consent Read API.
+Privacy and Purpose master updated when version changes.
+Fallback works when external service is down.
+Response structure matches agreed contract.
+Consent stored per Mobile + MIF ID + Touchpoint + PurposeSet.
+Expiry calculated using validityDays.
 
-import java.util.List;
-import java.util.UUID;
+----------------------------------------------------------------------
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.*;
+2.
+Issue: Admin Server – Consent Write API
 
+Description
+Implement Consent Write API in Admin Server to capture, modify, or revoke user consent.
+This API will not call CCMS/EIS synchronously. Instead, it will:
+Validate request
+Update consent sync status = PENDING
+Publish Kafka event
+Return success response immediately
+Kafka consumer service will call EIS Consent Write API and update sync status after success/failure.
 
-/**
- * Class Name: CircleMappingServiceTest
- * <p>
- * Description: Test class for the {@link CircleMappingService} service class.
- * <p>
- * Author: Lincy Thomas
- * <p>
- * Copyright (c) 2026 [State Bank of India]
- * All rights reserved.
- * <p>
- * Version:1.0
- */
-@ExtendWith(MockitoExtension.class)
-public class CircleMappingServiceTest {
+API Details 	
 
-    @InjectMocks
-    private CircleMappingService circleMappingService;
+Endpoint: POST /admin/consent/write
 
-    @Mock
-    private MIFCircleMappingDao mifCircleMappingDao;
+Request Body:
+{
+  "dpCIF": "String",
+  "dpMobile": "String",
+  "dpEmail": "String",
+  "dpIP": "String",
+  "locale": "String",
+  "timestamp": "String",
+  "consentAction": "Capture | Modification | Revocation"
+}
 
-    @Mock
-    private BranchMasterDao branchMasterDao;
-
-    @Mock
-    private CircleMappingValidator circleMappingValidator;
-
-    @Mock
-    private AdminMerchantOnboardingDao adminMerchantOnboardingDao;
-
-    @Mock
-    private MerchantOnboardingValidator merchantOnboardingValidator;
-
-    private MIFCircleMappingRequest mifCircleMappingRequest;
-    private MIFCircleMapping mifCircleMapping;
-    private BranchValidationRequest branchValidationRequest;
-
-    @BeforeEach
-    void setup() {
-        mifCircleMappingRequest = new MIFCircleMappingRequest();
-        mifCircleMappingRequest.setMerchantMIFId("202512300827326825");
-        mifCircleMappingRequest.setBranchCode("BR0001");
-        mifCircleMappingRequest.setBranchCode("Mumbai");
-        mifCircleMappingRequest.setCircleCode("CIR001");
-        mifCircleMappingRequest.setCircleName("Maharashtra");
-        mifCircleMappingRequest.setRmId(String.valueOf(UUID.randomUUID()));
-        mifCircleMappingRequest.setRmName("Lakshya Thakur");
-
-        branchValidationRequest = BranchValidationRequest.builder()
-                .branchCode(123)
-                .branchName("Mumbai Branch")
-                .build();
-    }
-
-    @Test
-    void saveCircleMapping_shouldUpdateSuccessfully_whenRequestIsValid() {
-        doNothing().when(merchantOnboardingValidator).validateMerchantOnBoardMIFId(any());
-        doNothing().when(mifCircleMappingDao).saveMIFIdInCircleMapping(any());
-
-        circleMappingService.saveCircleMapping("202512300827326825");
-        verify(merchantOnboardingValidator).validateMerchantOnBoardMIFId(mifCircleMappingRequest.getMerchantMIFId());
-        verify(mifCircleMappingDao).saveMIFIdInCircleMapping(mifCircleMappingRequest.getMerchantMIFId());
-    }
-
-    @Test
-    void updateCircleMapping_shouldUpdateSuccessfully_whenRequestIsValid() {
-        mifCircleMapping = MIFCircleMapping.builder().id(UUID.randomUUID()).merchantMIFId(mifCircleMappingRequest.getMerchantMIFId()).build();
-
-        doNothing().when(circleMappingValidator).validateCircleMappingRequest(any());
-        when(mifCircleMappingDao.updateCircleMapping(mifCircleMappingRequest)).thenReturn(mifCircleMapping);
-
-        AdminPortalResponse<MIFResponse> response = circleMappingService.updateCircleMapping(mifCircleMappingRequest);
-        assertEquals(response.getStatus(), 1);
-        assertEquals(response.getData().getFirst().getMerchantMIFId(), mifCircleMappingRequest.getMerchantMIFId());
-        verify(circleMappingValidator).validateCircleMappingRequest(mifCircleMappingRequest);
-        verify(mifCircleMappingDao).updateCircleMapping(mifCircleMappingRequest);
-    }
-
-    @Test
-    void updateCircleMapping_shouldThrowValidationException_whenRequestIsInValid() {
-        doThrow(new ValidationException(List.of(ErrorDto.builder().errorMessage("").build()))).when(circleMappingValidator).validateCircleMappingRequest(mifCircleMappingRequest);
-
-        Assertions.assertThrows(ValidationException.class, () -> circleMappingService.updateCircleMapping(mifCircleMappingRequest));
-        verify(mifCircleMappingDao, never()).saveMIFIdInCircleMapping(any());
-    }
-
-    @Test
-    void validateBranch_shouldReturnBranchDetails_whenRequestIsValid() {
-        BranchValidationResponse branchValidationResponse = BranchValidationResponse.builder()
-                .branchCode(123)
-                .branchName("Mumbai Branch")
-                .circleName("Circle A")
-                .circleCode(456)
-                .rmName("RM Name")
-                .rmEmailId("rm@sbi.co.in")
-                .build();
-
-        doNothing().when(circleMappingValidator).validateBranchValidationRequest(branchValidationRequest);
-        when(branchMasterDao.fetchBranchDetails(branchValidationRequest)).thenReturn(branchValidationResponse);
-
-        AdminPortalResponse<BranchValidationResponse> response = circleMappingService.validateBranch(branchValidationRequest);
-
-        assertEquals(1, response.getStatus());
-        assertEquals(123, response.getData().getFirst().getBranchCode());
-        verify(circleMappingValidator).validateBranchValidationRequest(branchValidationRequest);
-        verify(branchMasterDao).fetchBranchDetails(branchValidationRequest);
-    }
+Response Body:
+{
+  "message": "Consent has been updated"
 }
 
 
--------
 
-package admin.validator;
+Detailed Flow (Step-by-Step)
+Step 1 — Validate Request
 
-import com.epay.admin.portal.dao.admin.AdminMerchantOnboardingDao;
-import com.epay.admin.portal.dao.admin.MIFCircleMappingDao;
-import com.epay.admin.portal.dao.mif.MerchantMIFDao;
-import com.epay.admin.portal.exceptions.ValidationException;
-import com.epay.admin.portal.model.request.BranchValidationRequest;
-import com.epay.admin.portal.model.request.MIFCircleMappingRequest;
-import com.epay.admin.portal.util.EPayIdentityUtil;
-import com.epay.admin.portal.validator.CircleMappingValidator;
-import com.epay.admin.portal.validator.MerchantOnboardingValidator;
-import com.sbi.epay.authentication.model.EPayPrincipal;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
-import org.mockito.Mock;
-import org.mockito.MockedStatic;
-import org.mockito.junit.jupiter.MockitoExtension;
+Step 2 — Update Local Consent Table
 
-import java.util.List;
-import java.util.UUID;
+Find consent record using:
 
-import static com.epay.admin.portal.util.ErrorConstants.MIF_MAPPING_ACCESS_DENIED_MESSAGE;
-import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.Mockito.mockStatic;
-import static org.mockito.Mockito.when;
+dpCIF / dpMobile + touchPointId + purposeSetId
 
-/**
- * Class Name: MerchantOnboardingValidatorTest
- * <p>
- * Description: Test class for the {@link CircleMappingValidator} validator class.
- * <p>
- * Author: Lincy Thomas
- * <p>
- * Copyright (c) 2026 [State Bank of India]
- * All rights reserved.
- * <p>
- * Version:1.0
- */
-@ExtendWith(MockitoExtension.class)
-public class CircleMappingValidatorTest {
+Update:
 
-    List<String> userRoles = List.of("ONBOARDING_MANAGER");
-    @InjectMocks
-    CircleMappingValidator circleMappingValidator;
-    @Mock
-    private EPayPrincipal principal;
-    @Mock
-    private AdminMerchantOnboardingDao adminMerchantOnboardingDao;
-    @Mock
-    private MIFCircleMappingDao mifCircleMappingDao;
-    @Mock
-    private MerchantMIFDao merchantMIFDao;
-    @Mock
-    private MerchantOnboardingValidator merchantOnboardingValidator;
-    private MIFCircleMappingRequest mifCircleMappingRequest;
-    private BranchValidationRequest branchValidationRequest;
+Field	Value
+consent_action	Capture / Modification / Revocation
+sync_status	PENDING
+updated_at	Current timestamp
 
-    @BeforeEach
-    void setUp() {
-        mifCircleMappingRequest = new MIFCircleMappingRequest();
-        mifCircleMappingRequest.setMerchantMIFId("202602121901587430");
-        mifCircleMappingRequest.setBranchCode("BR0001");
-        mifCircleMappingRequest.setBranchName("Mumbai");
-        mifCircleMappingRequest.setCircleCode("CIR001");
-        mifCircleMappingRequest.setCircleName("Maharashtra");
-        mifCircleMappingRequest.setRmId(String.valueOf(UUID.randomUUID()));
-        mifCircleMappingRequest.setRmName("Lakshya Thakur");
+If Capture → status = Active
+If Modification → status = Active
+If Revocation → status = Revoked
 
-        branchValidationRequest = BranchValidationRequest.builder()
-                .branchCode(123)
-                .branchName("Mumbai Branch")
-                .build();
+Step 3 — Publish Kafka Event
+Publish event to Kafka topic:
+Topic Name: "consent.write.request"
+
+Kafka Message Payload
+{
+  "dpCIF": "String",
+  "dpMobile": "String",
+  "dpEmail": "String",
+  "dpIP": "String",
+  "locale": "String",
+  "timestamp": "String",
+  "consentAction": "String",
+  "touchPointId": "String",
+  "purposeSetId": "String",
+  "consents": [
+    {
+      "purposeCode": "String",
+      "purposeVersion": "int",
+      "consentAction": "capture/modify/revoke"
     }
+  ]
+}
 
-    @Test
-    void validateCircleMappingRequest_shouldPass_whenRequestIsValid() {
-        try (MockedStatic<EPayIdentityUtil> mockedStatic = mockStatic(EPayIdentityUtil.class)) {
-            mockedStatic.when(EPayIdentityUtil::getUserPrincipal).thenReturn(principal);
-            when(principal.getUserRole()).thenReturn(userRoles);
+Kafka consumer will:
+Call EIS Consent Write API
+Receive consentId
+Update local DB sync_status = SUCCESS / FAILED
 
-            assertDoesNotThrow(() -> circleMappingValidator.validateCircleMappingRequest(mifCircleMappingRequest));
-        }
+Step 4 — Return Response
+Immediately return:
+{
+  "message": "Consent has been updated"
+}
+
+Acceptance Criteria
+API validates request.
+Consent sync_status updated to PENDING.
+Kafka event published.
+API returns success immediately.
+Consumer calls EIS API and updates DB.
+Retry mechanism implemented.
+Revocation updates status = Revoked.
+Consent ID stored after CCMS success.
+
+
+------------------------------------------------
+3.
+
+Issue: Admin Server – Kafka Consumer (Consent Write Response)
+
+Description
+Implement a Kafka Consumer in Admin Server that listens to consent write response events from Communication Service.
+Based on the response, the system will update the consent sync status in the local database.
+This consumer is part of the asynchronous consent write flow, where Admin Server publishes consent write events and Communication Service processes them and sends back the response via Kafka.
+
+Message Payload (Kafka Response Event):-
+
+Communication Service will publish response like:
+
+{
+  "merchantMifId": "String",
+  "dpCIF": "String",
+  "dpMobile": "String",
+  "consentId": "String",
+  "status": "SUCCESS | FAILED | TIMEOUT",
+  "errorMessage": "String",
+  "timestamp": "YYYY-MM-DDTHH:MM:SSZ"
+}
+Detailed Flow (Step-by-Step)
+Step 1 — Kafka Listener
+Create Kafka Listener in Admin Server:
+@KafkaListener(topics = "consent.write.response", groupId = "admin-consent-group")
+
+Step 2 — Consume Message
+When message received:
+Parse JSON
+Validate fields
+Find consent record using:
+merchantMifId + dpCIF/dpMobile
+
+Step 3 — Update Sync Status
+Kafka Status	DB sync_status
+SUCCESS	SUCCESS
+FAILED	PENDING
+TIMEOUT	PENDING
+
+If SUCCESS:
+
+Update consent_id
+Update sync_status = SUCCESS
+Update last_sync_time
+
+If FAILED/TIMEOUT:
+
+Keep sync_status = PENDING
+Increment retry_count
+Store error_message
+
+Acceptance Criteria:
+Kafka consumer listens to consent.write.response topic.
+On SUCCESS → sync_status updated to SUCCESS.
+On FAILED/TIMEOUT → sync_status remains PENDING.
+retry_count incremented on failure.
+consent_id stored on success.
+Error message stored on failure.
+Logs created for each event processed.
+
+----------------------------------------------------------------
+
+4.
+Issue: Admin Server – Pending Consent Sync Scheduler
+
+Description
+Implement a Scheduler in Admin Server to retry syncing consents whose sync_status = PENDING.
+Flow:
+Scheduler fetches pending consents from DB.
+Scheduler publishes each consent to Kafka (Communication Service).
+Communication Service calls CCMS Consent Write API.
+Communication Service publishes SUCCESS / FAILED event on Kafka.
+Admin Server Kafka Consumer listens to the response event.
+If SUCCESS → update DB sync_status = SUCCESS.
+If FAILED → keep sync_status = PENDING (will retry via scheduler).
+This ensures reliable and asynchronous consent sync with CCMS.
+
+
+Complete Flow (Step-by-Step)
+Step 1 — Scheduler Job
+Create scheduler that runs every 5 minutes.
+@Scheduled(cron = "0 */5 * * * *")
+Scheduler will:
+
+Fetch consents where sync_status = PENDING
+Send them one by one to Kafka topic → consent.write.request
+
+
+Step 2 — Fetch Pending Consents
+SELECT * FROM consent_table
+WHERE sync_status = 'PENDING'
+ORDER BY updated_at ASC;
+
+Process records one by one to avoid duplicate writes.
+
+Step 3 — Publish to Kafka
+
+Kafka Topic: consent.write.request
+
+Kafka Payload:
+
+{
+  "merchantMifId": "String",
+  "dpCIF": "String",
+  "dpMobile": "String",
+  "dpEmail": "String",
+  "dpIP": "String",
+  "locale": "String",
+  "timestamp": "String",
+  "consentAction": "String",
+  "touchPointId": "String",
+  "purposeSetId": "String",
+  "purposes": [
+    {
+      "purposeCode": "String",
+      "purposeVersion": "int",
+      "consentAction": "capture/modify/revoke"
     }
+  ]
+}
 
-    @Test
-    void validateCircleMappingRequest_shouldThrow_whenTokenRoleIsInvalid() {
-        List<String> tokenRoles = List.of("CIRCLE");
-        try (MockedStatic<EPayIdentityUtil> mockedStatic = mockStatic(EPayIdentityUtil.class)) {
-            mockedStatic.when(EPayIdentityUtil::getUserPrincipal).thenReturn(principal);
-            when(principal.getUserRole()).thenReturn(tokenRoles);
+After publish → Do NOT change status. Keep PENDING.
 
-            ValidationException exception = assertThrows(ValidationException.class, () ->
-                    circleMappingValidator.validateCircleMappingRequest(mifCircleMappingRequest));
-
-            assertEquals(MIF_MAPPING_ACCESS_DENIED_MESSAGE, exception.getErrorMessages().getFirst().getErrorMessage());
-        }
-    }
-
-    @Test
-    void validateCircleMappingRequest_shouldThrow_whenMandatoryFieldsAreMissing() {
-        mifCircleMappingRequest.setBranchCode("");
-        mifCircleMappingRequest.setBranchName("");
-        mifCircleMappingRequest.setCircleCode("");
-        mifCircleMappingRequest.setCircleName("");
-        mifCircleMappingRequest.setRmId("");
-        mifCircleMappingRequest.setRmName("");
-        try (MockedStatic<EPayIdentityUtil> mockedStatic = mockStatic(EPayIdentityUtil.class)) {
-            mockedStatic.when(EPayIdentityUtil::getUserPrincipal).thenReturn(principal);
-            when(principal.getUserRole()).thenReturn(userRoles);
-
-            ValidationException exception = assertThrows(ValidationException.class, () -> circleMappingValidator.validateCircleMappingRequest(mifCircleMappingRequest));
-            assertEquals(exception.getErrorMessages().getFirst().getErrorCode(), "8001");
-            assert (exception.getErrorMessages().getFirst().getErrorMessage().contains("is required."));
-            assertEquals(exception.getErrorMessages().size(), 6);
-        }
-    }
-
-    @Test
-    void validateCircleMappingRequest_shouldThrow_whenLeadingOrTrailingSpaceIsPresent() {
-        mifCircleMappingRequest.setBranchCode(" BR0001");
-        mifCircleMappingRequest.setBranchName("Mumbai ");
-        mifCircleMappingRequest.setCircleCode(" CIR001");
-        try (MockedStatic<EPayIdentityUtil> mockedStatic = mockStatic(EPayIdentityUtil.class)) {
-            mockedStatic.when(EPayIdentityUtil::getUserPrincipal).thenReturn(principal);
-            when(principal.getUserRole()).thenReturn(userRoles);
-
-            ValidationException exception = assertThrows(ValidationException.class, () -> circleMappingValidator.validateCircleMappingRequest(mifCircleMappingRequest));
-            assertEquals(exception.getErrorMessages().getFirst().getErrorCode(), "8010");
-            assert (exception.getErrorMessages().getFirst().getErrorMessage().contains("contains leading or trailing spaces."));
-            assertEquals(exception.getErrorMessages().size(), 3);
-        }
-    }
+Step 4 — Communication Service
+Communication Service will:
+Consume Kafka event.
+Call EIS Consent Write API.
+Publish result event to Kafka topic:
+consent.write.response
 
 
-    @Test
-    void validateCircleMappingRequest_shouldThrow_whenFieldLengthIsInvalid() {
-        mifCircleMappingRequest.setBranchName("MumbaiMumbaiMumbaiMumbaiMumbaiMumbai");
-        mifCircleMappingRequest.setBranchCode("MumbaiMumbaiMumbaiMumbaiMumbaiMumbai");
-        try (MockedStatic<EPayIdentityUtil> mockedStatic = mockStatic(EPayIdentityUtil.class)) {
-            mockedStatic.when(EPayIdentityUtil::getUserPrincipal).thenReturn(principal);
-            when(principal.getUserRole()).thenReturn(userRoles);
+Step 5 — Admin Server Kafka Consumer
+Admin server listens to: consent.write.response
 
-            ValidationException exception = assertThrows(ValidationException.class, () -> circleMappingValidator.validateCircleMappingRequest(mifCircleMappingRequest));
-            assertEquals(exception.getErrorMessages().getFirst().getErrorCode(), "8007");
-            assert (exception.getErrorMessages().getFirst().getErrorMessage().contains("The maximum allowed length"));
-            assertEquals(exception.getErrorMessages().size(), 2);
-        }
-    }
+Response Payload:
+{
+  "merchantMifId": "String",
+  "dpCIF": "String",
+  "dpMobile": "String",
+  "consentId": "String",
+  "status": "SUCCESS | FAILED",
+  "errorMessage": "String",
+  "timestamp": "String"
+}
 
-    @Test
-    void validateBranchValidationRequest_shouldPass_whenRequestIsValid() {
-        try (MockedStatic<EPayIdentityUtil> mockedStatic = mockStatic(EPayIdentityUtil.class)) {
-            mockedStatic.when(EPayIdentityUtil::getUserPrincipal).thenReturn(principal);
-            when(principal.getUserRole()).thenReturn(userRoles);
+Step 6 — Update DB Based on Response
+Response Status	DB sync_status
+SUCCESS	SUCCESS
+FAILED	PENDING
 
-            assertDoesNotThrow(() -> circleMappingValidator.validateBranchValidationRequest(branchValidationRequest));
-        }
-    }
+If SUCCESS:
 
-    @Test
-    void validateBranchValidationRequest_shouldThrow_whenBranchCodeMissing() {
-        branchValidationRequest.setBranchCode(null);
+Update sync_status = SUCCESS
+Update consent_id
+Update last_sync_time
 
-        try (MockedStatic<EPayIdentityUtil> mockedStatic = mockStatic(EPayIdentityUtil.class)) {
-            mockedStatic.when(EPayIdentityUtil::getUserPrincipal).thenReturn(principal);
-            when(principal.getUserRole()).thenReturn(userRoles);
+If FAILED:
 
-            ValidationException exception = assertThrows(ValidationException.class,
-                    () -> circleMappingValidator.validateBranchValidationRequest(branchValidationRequest));
-            assertEquals("8001", exception.getErrorMessages().getFirst().getErrorCode());
-        }
-    }
+Keep sync_status = PENDING
+Update error_message
+Will retry via scheduler
 
-    @Test
-    void validateBranchValidationRequest_shouldThrow_whenBranchNameHasLeadingSpace() {
-        branchValidationRequest.setBranchName(" Mumbai Branch");
+Database Table (consent_table)
 
-        try (MockedStatic<EPayIdentityUtil> mockedStatic = mockStatic(EPayIdentityUtil.class)) {
-            mockedStatic.when(EPayIdentityUtil::getUserPrincipal).thenReturn(principal);
-            when(principal.getUserRole()).thenReturn(userRoles);
+Acceptance Criteria
+Scheduler runs every 5 minutes.
+Fetches consents with sync_status = PENDING.
+Publishes Kafka message for each consent.
+Communication Service sends SUCCESS/FAILED event.
+Admin Kafka consumer updates DB:
+SUCCESS → SUCCESS
+FAILED → Remains PENDING
+System retries automatically until success.
+Proper logging implemented.
+----------------------------------------------------------
 
-            ValidationException exception = assertThrows(ValidationException.class,
-                    () -> circleMappingValidator.validateBranchValidationRequest(branchValidationRequest));
-            assertEquals("8010", exception.getErrorMessages().getFirst().getErrorCode());
-        }
-    }
+5.
 
-    @Test
-    void validateBranchValidationRequest_shouldThrow_whenBranchCodeIsNegative() {
-        branchValidationRequest.setBranchCode(-1);
+Issue: Communication Service – Consent Check API
 
-        try (MockedStatic<EPayIdentityUtil> mockedStatic = mockStatic(EPayIdentityUtil.class)) {
-            mockedStatic.when(EPayIdentityUtil::getUserPrincipal).thenReturn(principal);
-            when(principal.getUserRole()).thenReturn(userRoles);
+Description
 
-            ValidationException exception = assertThrows(ValidationException.class,
-                    () -> circleMappingValidator.validateBranchValidationRequest(branchValidationRequest));
-            assertEquals("8002", exception.getErrorMessages().getFirst().getErrorCode());
-        }
-    }
+Implement Consent Check API in Communication Service.
+This API will:
+Validate request
+Call EIS Consent Read API
+Encrypt request using Gen6 Encryption (AES GCM)
+Decrypt EIS response
+If consent active → return consent details
+If consent inactive → call Privacy Notice API and Purpose API from EIS
+Return privacy notice and purpose in response
+This API acts as a wrapper between Admin Server and EIS/CCMS.
+
+
+API Details
+Endpoint: POST /communication/consent/check
+
+Request Body:
+{
+  "merchantMifId": "String",
+  "touchPointId": "String",
+  "purposeSetId": "String",
+  "dpCIF": "String",
+  "dpMobile": "String"
 }
 
 
---------------------------------------------------------------------------------------------------
-package com.epay.admin.portal.controller.admin;
+Response Body:
+{
+  "merchantMifId": "String",
+  "touchPointId": "String",
+  "purposeSetId": "String",
+  "dpCIF": "String",
+  "dpMobile": "String",
+  "isConsentActive": true,
+  "consentStatus": "Active | Inactive | Expired | Revoked",
 
-import com.epay.admin.portal.model.response.AdminPortalResponse;
-import com.epay.admin.portal.model.response.AlertManagementResponse;
-import com.epay.admin.portal.service.admin.AlertService;
-import com.sbi.epay.logging.utility.LoggerFactoryUtility;
-import com.sbi.epay.logging.utility.LoggerUtility;
-import io.swagger.v3.oas.annotations.Operation;
-import io.swagger.v3.oas.annotations.Parameter;
-import io.swagger.v3.oas.annotations.tags.Tag;
-import lombok.RequiredArgsConstructor;
-import org.springframework.data.domain.Pageable;
-import org.springframework.data.domain.Sort;
-import org.springframework.data.web.PageableDefault;
-import org.springframework.security.access.prepost.PreAuthorize;
-import org.springframework.web.bind.annotation.*;
+  "consentReadResponse": {
+    "status": "String",
+    "consentId": "String",
+    "dpIP": "String",
+    "locale": "String",
+    "timestamp": "YYYY-MM-DDTHH:MM:SSZ",
+    "version": "String"
+  },
 
-import static com.epay.admin.portal.util.AdminPortalConstants.DEFAULT_ALERT_PAGE_SIZE;
+  "privacyNoticeResponse": {
+    "version": "String",
+    "privacyText": "String"
+  },
 
-/**
- * Class Name: AlertController
- * <p>
- * Description: AlertController is responsible for handling incoming HTTP requests related to
- * alert management. It delegates the processing of these operations to the AlertService.
- * This controller provides endpoints for updating, retrieving alerts.
- * <p>
- * Author: V1018841(Saurabh Mahto)
- * Copyright (c) 2026 [State Bank of India]
- * All rights reserved
- * <p>
- * Version: 1.0
- */
-
-@RestController
-@Tag(name = "Alert API")
-@RequiredArgsConstructor
-@RequestMapping("/alert")
-public class AlertController {
-    private final LoggerUtility log = LoggerFactoryUtility.getLogger(this.getClass());
-    private final AlertService alertService;
-
-    /**
-     * Fetches unread alerts for the logged-in user with pagination.
-     *
-     * @return AdminPortalResponse<String> - response containing a paged list of unread alerts
-     */
-    @PreAuthorize("hasAnyRole('ONBOARDING_MANAGER', 'RELATIONSHIP_MANAGER', 'BIZ_SUPPORT', 'CIRCLE')")
-    @GetMapping("/unread")
-    @Operation(summary = "Retrieve unread alerts", description = "Fetches unread alerts for the logged-in user.")
-    public AdminPortalResponse<AlertManagementResponse> getUnreadAlertsByMIFId(@PageableDefault(sort = {"createdAt"}, direction = Sort.Direction.DESC, size = DEFAULT_ALERT_PAGE_SIZE) Pageable pageable) {
-        log.info("Fetching unread alerts for logged-in user");
-        return alertService.getUnreadAlerts(pageable);
-    }
-
-    /**
-     * Fetches all read and unread alerts for the logged-in user with pagination.
-     *
-     * @return AdminPortalResponse<String> - response containing a list of alerts information
-     */
-    @PreAuthorize("hasAnyRole('ONBOARDING_MANAGER', 'RELATIONSHIP_MANAGER', 'BIZ_SUPPORT', 'CIRCLE')")
-    @GetMapping()
-    @Operation(summary = "Retrieve all alerts", description = "Fetches all read and unread alerts for the logged-in user.")
-    public AdminPortalResponse<AlertManagementResponse> getAllAlertsByMId(@PageableDefault(sort = {"createdAt"}, direction = Sort.Direction.DESC, size = DEFAULT_ALERT_PAGE_SIZE) Pageable pageable) {
-        log.info("Fetching all alerts for logged-in user");
-        return alertService.getAllAlertsByUser(pageable);
-    }
-
-    /**
-     * Updates the view status of a specific alert for a given userId and merchantMifId.
-     *
-     * @return AdminPortalResponse<String> - response message indicating success
-     */
-    @PreAuthorize("hasAnyRole('ONBOARDING_MANAGER', 'RELATIONSHIP_MANAGER', 'BIZ_SUPPORT', 'CIRCLE')")
-    @PostMapping("/update/{alterIdentifier}")
-    @Operation(summary = "Update Alert View", description = "Updates the 'viewed' status of a specific alert for the given MIFId and alert ID.")
-    public AdminPortalResponse<String> updateAlertViewStatus(@Parameter(description = "Merchant ID for Updating Alert View", required = true)@PathVariable("alterIdentifier") long alterIdentifier){
-        log.info("Updating view status for alert Identifier '{}' ", alterIdentifier);
-        return alertService.updateAlertViewStatus( alterIdentifier);
-    }
-
-
-}
--------------
-
-package com.epay.admin.portal.service.admin;
-
-import com.epay.admin.portal.dao.admin.AlertDao;
-import com.epay.admin.portal.model.response.AdminPortalResponse;
-import com.epay.admin.portal.model.response.AlertManagementResponse;
-import com.epay.admin.portal.util.EPayIdentityUtil;
-import com.sbi.epay.logging.utility.LoggerFactoryUtility;
-import com.sbi.epay.logging.utility.LoggerUtility;
-import lombok.RequiredArgsConstructor;
-import org.springframework.data.domain.Page;
-import org.springframework.data.domain.Pageable;
-import org.springframework.stereotype.Service;
-
-import java.util.List;
-
-import static com.epay.admin.portal.util.AdminPortalConstants.SUCCESS_RESPONSE_CODE;
-
-/**
- * Class Name: AlertService
- * *
- * Description:
- * *
- * Author: Saurabh mahto(V1018841)
- * <p>
- * Copyright (c) 2024 [State Bank of India]
- * All rights reserved
- * *
- * Version:1.0
- */
-@Service
-@RequiredArgsConstructor
-public class AlertService {
-    private final LoggerUtility log = LoggerFactoryUtility.getLogger(this.getClass());
-    private final AlertDao alertDao;
-    /**
-     * Fetches unread alerts for the logged-in user with pagination.
-     *
-     * @return AdminPortalResponse<String> - response containing a list of unread latest alertDescriptions
-     */
-    public AdminPortalResponse<AlertManagementResponse> getUnreadAlerts(Pageable pageable) {
-        String userAdId = EPayIdentityUtil.getUserPrincipal().getUsername();
-        log.info("Fetching unread alert descriptions for userAdId: {}", userAdId);
-        Page<AlertManagementResponse> alertManagementResponses = alertDao.getUnreadAlertsByUserId(userAdId, pageable);
-        return AdminPortalResponse.<AlertManagementResponse>builder().data(alertManagementResponses.getContent()).status(SUCCESS_RESPONSE_CODE).count(alertManagementResponses.stream().count()).total(alertManagementResponses.getTotalElements()).build();
-    }
-
-    /**
-     * Fetches unread alerts for a given userAdId with pagination.
-     *
-     * @return AdminPortalResponse<String> - response containing a list of unread  alertDescriptions
-     */
-    public AdminPortalResponse<AlertManagementResponse> getAllAlertsByUser(Pageable pageable) {
-        String userAdId = EPayIdentityUtil.getUserPrincipal().getUsername();
-        log.info("Fetching all alert descriptions for userAdId: {}", userAdId);
-        Page<AlertManagementResponse> alertManagementResponses = alertDao.getAllAlertsByUserId(userAdId, pageable);
-        return AdminPortalResponse.<AlertManagementResponse>builder().status(SUCCESS_RESPONSE_CODE).data(alertManagementResponses.getContent()).count(alertManagementResponses.stream().count()).total(alertManagementResponses.getTotalElements()).build();
-
-    }
-
-    /**
-     * Marks the alert as viewed for the given merchantMifId and alert ID.
-     *
-     * @return AdminPortalResponse<String> - response message indicating success
-     */
-    public AdminPortalResponse<String> updateAlertViewStatus(long alertIdentifier) {
-        String userAdId = EPayIdentityUtil.getUserPrincipal().getUsername();
-        log.info("Marking alert Identifier '{}'", alertIdentifier);
-        alertDao.updateViewStatus( userAdId, alertIdentifier);
-        return AdminPortalResponse.<String>builder().status(SUCCESS_RESPONSE_CODE).data(List.of("View updated successfully")).total(1L).build();
-    }
-}
------
-
-package com.epay.admin.portal.dao.admin;
-
-import com.epay.admin.portal.entity.admin.AlertManagement;
-import com.epay.admin.portal.exceptions.AdminPortalException;
-import com.epay.admin.portal.mapper.admin.AlertMapper;
-import com.epay.admin.portal.model.response.AlertManagementResponse;
-import com.epay.admin.portal.repository.admin.AlertManagementRepository;
-import com.epay.admin.portal.repository.admin.AlertMasterRepository;
-import com.sbi.epay.logging.utility.LoggerFactoryUtility;
-import com.sbi.epay.logging.utility.LoggerUtility;
-import lombok.RequiredArgsConstructor;
-import org.springframework.data.domain.*;
-import org.springframework.stereotype.Repository;
-
-import java.text.MessageFormat;
-import java.util.List;
-import java.util.UUID;
-
-import static com.epay.admin.portal.util.AdminPortalConstants.*;
-import static com.epay.admin.portal.util.ErrorConstants.*;
-
-/**
- * Class Name: AlertDao
- * Description: AlertDao is responsible for performing database operations related to alert management.
- * It interacts with repositories to manage and retrieve alert information, including alert masters and alert management records.
- * Additionally, it utilizes the `AlertMapper` for mapping data between entities and DTOs (Data Transfer Objects) for proper data processing.
- * The class also collaborates with the `MerchantInfoDao` to retrieve merchant-related information as part of the alert functionality.
- * <p>
- * Author: V1018841(Saurabh Mahto)
- * Copyright (c) 2026 [State Bank of India]
- * All rights reserved
- * Version: 1.0
- */
-
-@Repository
-@RequiredArgsConstructor
-public class AlertDao {
-    private final LoggerUtility log = LoggerFactoryUtility.getLogger(this.getClass());
-    private final AlertManagementRepository alertManagementRepository;
-    private final AlertMapper alertMapper;
-
-
-    /**
-     * Retrieves all alerts for a given userAdId, with pagination.
-     *
-     * @param userAdId The userAdId for which the alerts are to be fetched.
-     * @param pageable Pageable object for pagination settings.
-     * @return A page of AlertManagementResponse objects representing all alerts for the given userAdId.
-     */
-    public Page<AlertManagementResponse> getUnreadAlertsByUserId(String userAdId, Pageable pageable) {
-        return getAlertDescriptions(userAdId, true, pageable);
-    }
-
-    public Page<AlertManagementResponse> getAllAlertsByUserId(String userAdId, Pageable pageable) {
-        return getAlertDescriptions(userAdId, false, pageable);
-    }
-
-    /**
-     * Retrieves alerts for a given userAdId.
-     *
-     * @param userAdId The userAdId for which the alerts are to be fetched.
-     * @param unreadOnly true to fetch only unread alerts, false to fetch all alerts.
-     * @param pageable pagination settings.
-     * @return A page of AlertManagementResponse objects representing the alerts for the given userAdId.
-     */
-    private Page<AlertManagementResponse> getAlertDescriptions(String userAdId, boolean unreadOnly, Pageable pageable) {
-        log.info("getting alerts for userAdId :{} ", userAdId);
-        Page<AlertManagement> alertManagementList = unreadOnly
-                ? alertManagementRepository.findUnreadAlertsByUserId(userAdId, pageable)
-                : alertManagementRepository.findAllAlertsByUserId(userAdId, pageable);
-        List<AlertManagementResponse> responses = alertMapper.alertManagementEntityToResponse(alertManagementList.getContent());
-        return new PageImpl<>(responses, pageable, alertManagementList.getTotalElements());
-    }
-
-
-    /**
-     * Updates the view status of a specific alert for a given merchantMifId and alert identifier.
-     * This method marks the alert as viewed by updating its view status in the database.
-     *
-     * @param alertIdentifier The unique identifier of the alert that needs to be updated.
-     */
-    public void updateViewStatus(String userAdId, long alertIdentifier) {
-        log.info("Updating notification to view for userAdId :{0} ",userAdId);
-        alertManagementRepository.findByUserAdIdAndAlertIdentifier(userAdId, alertIdentifier).map(alert -> {
-            if (alert.isViewed()) {
-                throw new AdminPortalException(INVALID_ERROR_CODE, MessageFormat.format(INVALID_ERROR_MESSAGE, ALERTIDENTIFIER, ALERTIDENTIFIER_ALREADY_UPDATED));
-            }
-            alert.setViewed(true);
-            return alertManagementRepository.save(alert);
-        }).orElseThrow(() -> new AdminPortalException(NOT_FOUND_ERROR_CODE, MessageFormat.format(NOT_FOUND_ERROR_MESSAGE, ALERTIDENTIFIER)));
-    }
-
-}
------
-
-package com.epay.admin.portal.mapper.admin;
-
-import com.epay.admin.portal.entity.admin.AlertManagement;
-import com.epay.admin.portal.model.response.AlertManagementResponse;
-import org.mapstruct.Builder;
-import org.mapstruct.Mapper;
-
-import java.util.List;
-
-/**
- * Class Name: AlertMapper
- * <p>
- * Description: This interface defines the mapping methods for converting between different data models related to alert management.
- * It includes methods for converting alert management entities to response objects, mapping alert management DTOs to entities,
- * and converting alert master entities to alert master DTOs. These methods facilitate the transformation of data between layers
- * in the application (e.g., from database entities to DTOs and vice versa), ensuring the proper structure for different use cases
- * and improving the separation of concerns.
- * <p>
- * Author: V1018841
- * Copyright (c) 2024 State Bank of India
- * All rights reserved.
- * <p>
- * Version: 1.0
- */
-@Mapper(builder = @Builder(disableBuilder = true), componentModel = "spring")
-public interface AlertMapper {
-    List<AlertManagementResponse> alertManagementEntityToResponse(List<AlertManagement> alertManagement);
-
+  "purposeResponse": {
+    "purposes": [],
+    "code": "String",
+    "version": "int",
+    "title": "String",
+    "description": "String",
+    "isEssential": "String",
+    "validityDays": "long",
+    "timestamp": "YYYY-MM-DDTHH:MM:SSZ",
+    "locale": "String"
+  }
 }
 
-----
+Detailed Flow (Step-by-Step)
+Step 1 — Validate Request
 
-package com.epay.admin.portal.repository.admin;
+Step 2 — Call EIS Consent Read API
 
-import com.epay.admin.portal.entity.admin.AlertManagement;
-import org.springframework.data.domain.Page;
-import org.springframework.data.domain.Pageable;
-import org.springframework.data.jpa.repository.JpaRepository;
-import org.springframework.data.jpa.repository.Query;
-import org.springframework.data.repository.query.Param;
+EIS API:/api/consent-core/query/consents/read
 
-import java.util.Optional;
-import java.util.UUID;
-/**
- * Repository Name: AlertManagementRepository
- * *
- * Description:Repository interface for performing CRUD operations on the `AlertManagement` entity.
- * This handles data management related to alert configurations, notifications, and triggers.
- * Author: V1018841(Saurabh Mahto)
- * Copyright (c) 2026 [State Bank of India]
- * ALl rights reserved
- * *
- * Version: 1.0
- */
-public interface AlertManagementRepository extends JpaRepository<AlertManagement, UUID> {
+Before calling EIS:
+Encrypt request payload using Gen6 AES-GCM encryption
+Send encrypted payload to EIS
+Receive encrypted response
+Decrypt response
+(Encryption required as per EIS wrapper integration.)
 
-    @Query("SELECT a FROM AlertManagement a WHERE a.isViewed = false AND a.userAdId=:userAdId")
-    Page<AlertManagement> findUnreadAlertsByUserId(@Param("userAdId") String userAdId, Pageable pageable);
+Step 3 — Check Consent Status
+Consent Status	Action
+Active	Return consent details
+Inactive	Fetch privacy + purpose
+Expired	Fetch privacy + purpose
+Revoked	Fetch privacy + purpose
 
-    @Query("SELECT a FROM AlertManagement a WHERE a.userAdId=:userAdId")
-    Page<AlertManagement> findAllAlertsByUserId(@Param("userAdId") String userAdId, Pageable pageable);
+Step 4 — If Consent Active
+Return:
+isConsentActive = true
+consentReadResponse
+Do NOT call privacy/purpose API
 
-    Optional<AlertManagement> findByUserAdIdAndAlertIdentifier(String userAdId, long alertIdentifier);
+Step 5 — If Consent Not Active
+Call EIS APIs:
+Privacy Notice API:-
+/api/consent-core/query/privacy-notice/read
+Purpose API:-
+/api/consent-core/query/purposes/read
+
+Encrypt request → Call API → Decrypt response → Return privacy + purpose.
+
+Acceptance Criteria:-
+API validates request.
+EIS Consent Read API called with encrypted payload.
+Response decrypted correctly.
+If consent active → return consent details.
+If consent inactive → call privacy + purpose API.
+Privacy and purpose returned in response.
+Proper error handling implemented.
+Logging added for encryption, API call, response.
+
+--------------------------------------------------
+6.
+
+Issue: Communication Service – Privacy Notice Method (EIS Integration)
+
+Description
+Implement a Privacy Notice method in Communication Service that will be used by the Consent Check API to fetch the latest privacy notice text from EIS.
+This method will:
+Create encrypted request using Gen6 Encryption (AES/GCM/NoPadding).
+Call EIS Privacy Notice API via WebClient.
+Decrypt the response received from EIS.
+Parse the privacy notice text.
+Return latest privacy notice in response.
+This method will be called when consent is inactive/expired/revoked to show latest privacy notice to the user.
+
+API Details (EIS)
+EIS Endpoint: POST /api/consent-core/query/privacy-notice/read
+
+Privacy Notice Request
+{
+  "touchPointId": "string"
 }
------
 
-package admin.dao;
-
-import com.epay.admin.portal.dao.admin.AlertDao;
-import com.epay.admin.portal.entity.admin.AlertManagement;
-import com.epay.admin.portal.exceptions.AdminPortalException;
-import com.epay.admin.portal.mapper.admin.AlertMapper;
-import com.epay.admin.portal.model.response.AlertManagementResponse;
-import com.epay.admin.portal.repository.admin.AlertManagementRepository;
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
-import org.mockito.Mock;
-import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.data.domain.Page;
-import org.springframework.data.domain.PageImpl;
-import org.springframework.data.domain.PageRequest;
-import org.springframework.data.domain.Pageable;
-import org.springframework.data.domain.Sort;
-
-import java.text.MessageFormat;
-import java.util.List;
-import java.util.Optional;
-import java.util.UUID;
-
-import static com.epay.admin.portal.util.AdminPortalConstants.ALERTIDENTIFIER;
-import static com.epay.admin.portal.util.AdminPortalConstants.ALERTIDENTIFIER_ALREADY_UPDATED;
-import static com.epay.admin.portal.util.ErrorConstants.INVALID_ERROR_CODE;
-import static com.epay.admin.portal.util.ErrorConstants.INVALID_ERROR_MESSAGE;
-import static com.epay.admin.portal.util.ErrorConstants.NOT_FOUND_ERROR_CODE;
-import static com.epay.admin.portal.util.ErrorConstants.NOT_FOUND_ERROR_MESSAGE;
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertNotNull;
-import static org.junit.jupiter.api.Assertions.assertThrows;
-import static org.mockito.Mockito.any;
-import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.when;
-
-@ExtendWith(MockitoExtension.class)
-class AlertDaoTest {
-
-    @InjectMocks
-    private AlertDao alertDao;
-
-    @Mock
-    private AlertManagementRepository alertManagementRepository;
-
-    @Mock
-    private AlertMapper alertMapper;
-
-    @Test
-    void getUnreadAlertsByUserId_shouldFetchUnreadAlertsForUserWithGivenPageable() {
-        String userAdId = "user.ad";
-        Pageable pageable = PageRequest.of(0, 5);
-        AlertManagement entity = buildAlert(false);
-        AlertManagementResponse response = AlertManagementResponse.builder()
-                .alertIdentifier(entity.getAlertIdentifier())
-                .alertDescription(entity.getAlertDescription())
-                .merchantMifId(entity.getMerchantMifId())
-                .isViewed(entity.isViewed())
-                .build();
-        Page<AlertManagement> page = new PageImpl<>(List.of(entity), pageable, 7);
-
-        when(alertManagementRepository.findUnreadAlertsByUserId(userAdId, pageable)).thenReturn(page);
-        when(alertMapper.alertManagementEntityToResponse(List.of(entity))).thenReturn(List.of(response));
-
-        Page<AlertManagementResponse> result = alertDao.getUnreadAlertsByUserId(userAdId, pageable);
-
-        verify(alertManagementRepository).findUnreadAlertsByUserId(userAdId, pageable);
-        verify(alertMapper).alertManagementEntityToResponse(List.of(entity));
-        assertNotNull(result);
-        assertEquals(1, result.getContent().size());
-        assertEquals(response, result.getContent().getFirst());
-        assertEquals(7L, result.getTotalElements());
-    }
-
-    @Test
-    void getAllAlertsByUserId_shouldFetchReadAndUnreadAlertsForUserWithGivenPageable() {
-        String userAdId = "user.ad";
-        Pageable pageable = PageRequest.of(0, 5);
-        AlertManagement unreadEntity = buildAlert(false);
-        AlertManagement readEntity = buildAlert(true);
-        AlertManagementResponse unreadResponse = AlertManagementResponse.builder()
-                .alertIdentifier(unreadEntity.getAlertIdentifier())
-                .alertDescription(unreadEntity.getAlertDescription())
-                .merchantMifId(unreadEntity.getMerchantMifId())
-                .isViewed(unreadEntity.isViewed())
-                .build();
-        AlertManagementResponse readResponse = AlertManagementResponse.builder()
-                .alertIdentifier(readEntity.getAlertIdentifier())
-                .alertDescription(readEntity.getAlertDescription())
-                .merchantMifId(readEntity.getMerchantMifId())
-                .isViewed(readEntity.isViewed())
-                .build();
-        Page<AlertManagement> page = new PageImpl<>(List.of(unreadEntity, readEntity), pageable, 2);
-
-        when(alertManagementRepository.findAllAlertsByUserId(userAdId, pageable)).thenReturn(page);
-        when(alertMapper.alertManagementEntityToResponse(List.of(unreadEntity, readEntity))).thenReturn(List.of(unreadResponse, readResponse));
-
-        Page<AlertManagementResponse> result = alertDao.getAllAlertsByUserId(userAdId, pageable);
-
-        verify(alertManagementRepository).findAllAlertsByUserId(userAdId, pageable);
-        verify(alertMapper).alertManagementEntityToResponse(List.of(unreadEntity, readEntity));
-        assertEquals(2, result.getContent().size());
-        assertEquals(2L, result.getTotalElements());
-        assertEquals(unreadResponse, result.getContent().getFirst());
-        assertEquals(readResponse, result.getContent().get(1));
-    }
-
-    @Test
-    void updateViewStatus_shouldMarkAlertAsViewedAndSave() {
-        String merchantMifId = "MIF12345";
-        String userAdId = "user.ad";
-        long alertIdentifier = 101L;
-        AlertManagement alertManagement = buildAlert(false);
-        alertManagement.setMerchantMifId(merchantMifId);
-        alertManagement.setUserAdId(userAdId);
-        alertManagement.setAlertIdentifier(alertIdentifier);
-
-        when(alertManagementRepository.findByUserAdIdAndAlertIdentifier( userAdId, alertIdentifier))
-                .thenReturn(Optional.of(alertManagement));
-        when(alertManagementRepository.save(alertManagement)).thenReturn(alertManagement);
-
-        alertDao.updateViewStatus( userAdId, alertIdentifier);
-
-        verify(alertManagementRepository).save(alertManagement);
-        assertEquals(true, alertManagement.isViewed());
-    }
-
-    @Test
-    void updateViewStatus_shouldThrowExceptionWhenAlertAlreadyViewed() {
-        String merchantMifId = "MIF12345";
-        String userAdId = "user.ad";
-        long alertIdentifier = 101L;
-        AlertManagement alertManagement = buildAlert(true);
-        alertManagement.setMerchantMifId(merchantMifId);
-        alertManagement.setUserAdId(userAdId);
-        alertManagement.setAlertIdentifier(alertIdentifier);
-
-        when(alertManagementRepository.findByUserAdIdAndAlertIdentifier( userAdId, alertIdentifier))
-                .thenReturn(Optional.of(alertManagement));
-
-        AdminPortalException exception = assertThrows(
-                AdminPortalException.class,
-                () -> alertDao.updateViewStatus( userAdId, alertIdentifier)
-        );
-
-        verify(alertManagementRepository, never()).save(any());
-        assertEquals(INVALID_ERROR_CODE, exception.getErrorCode());
-        assertEquals(
-                MessageFormat.format(INVALID_ERROR_MESSAGE, ALERTIDENTIFIER, ALERTIDENTIFIER_ALREADY_UPDATED),
-                exception.getErrorMessage()
-        );
-    }
-
-    @Test
-    void updateViewStatus_shouldThrowExceptionWhenAlertNotFound() {
-        String merchantMifId = "MIF12345";
-        String userAdId = "user.ad";
-        long alertIdentifier = 101L;
-
-        when(alertManagementRepository.findByUserAdIdAndAlertIdentifier( userAdId, alertIdentifier))
-                .thenReturn(Optional.empty());
-
-        AdminPortalException exception = assertThrows(
-                AdminPortalException.class,
-                () -> alertDao.updateViewStatus( userAdId, alertIdentifier)
-        );
-
-        verify(alertManagementRepository, never()).save(any());
-        assertEquals(NOT_FOUND_ERROR_CODE, exception.getErrorCode());
-        assertEquals(
-                MessageFormat.format(NOT_FOUND_ERROR_MESSAGE, ALERTIDENTIFIER),
-                exception.getErrorMessage()
-        );
-    }
-
-    private AlertManagement buildAlert(boolean viewed) {
-        return AlertManagement.builder()
-                .id(UUID.randomUUID())
-                .alertId(UUID.randomUUID())
-                .merchantMifId("MIF00001")
-                .userAdId("user.ad")
-                .alertDescription("Test alert")
-                .alertIdentifier(99L)
-                .isViewed(viewed)
-                .build();
-    }
+Privacy Notice Response (After Decryption)
+{
+  "privacyNotice": "String"
 }
-------
 
-package admin.service;
 
-import com.epay.admin.portal.dao.admin.AlertDao;
-import com.epay.admin.portal.model.response.AdminPortalResponse;
-import com.epay.admin.portal.model.response.AlertManagementResponse;
-import com.epay.admin.portal.service.admin.AlertService;
-import com.epay.admin.portal.util.EPayIdentityUtil;
-import com.sbi.epay.authentication.model.EPayPrincipal;
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
-import org.mockito.Mock;
-import org.mockito.MockedStatic;
-import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.data.domain.Page;
-import org.springframework.data.domain.PageImpl;
-import org.springframework.data.domain.PageRequest;
-import org.springframework.data.domain.Pageable;
 
-import java.util.List;
+Detailed Flow (Step-by-Step)
+Step 1 — Prepare Request
+Create request payload:
+{
+  "touchPointId": "value"
+}
 
-import static com.epay.admin.portal.util.AdminPortalConstants.SUCCESS_RESPONSE_CODE;
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertNotNull;
-import static org.mockito.Mockito.mockStatic;
-import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.when;
+Step 2 — Encrypt Request
 
-@ExtendWith(MockitoExtension.class)
-class AlertServiceTest {
+Encrypt payload using:
 
-    @InjectMocks
-    private AlertService alertService;
+AES/GCM/NoPadding (Gen6 Encryption)
 
-    @Mock
-    private AlertDao alertDao;
+Use utility:
 
-    @Mock
-    private EPayPrincipal principal;
+Step 3 — Call EIS API
+Use Spring WebClient:
 
-    @Test
-    void getUnreadAlerts_shouldReturnUnreadAlertsForCurrentUser() {
-        String userAdId = "user.ad";
-        Pageable pageable = PageRequest.of(0, 10);
-        AlertManagementResponse alert = AlertManagementResponse.builder()
-                .alertIdentifier(101L)
-                .alertDescription("Pending document review")
-                .merchantMifId("MIF12345")
-                .isViewed(false)
-                .createdAt(1000L)
-                .build();
-        Page<AlertManagementResponse> page = new PageImpl<>(List.of(alert), pageable, 1);
+Step 4 — Decrypt Response
+After receiving response:
 
-        try (MockedStatic<EPayIdentityUtil> mockedStatic = mockStatic(EPayIdentityUtil.class)) {
-            mockedStatic.when(EPayIdentityUtil::getUserPrincipal).thenReturn(principal);
-            when(principal.getUsername()).thenReturn(userAdId);
-            when(alertDao.getUnreadAlertsByUserId(userAdId, pageable)).thenReturn(page);
+Step 5 — Parse Response
+Extract:
+Field	Description
+privacyNotice	Privacy text
 
-            AdminPortalResponse<AlertManagementResponse> response = alertService.getUnreadAlerts(pageable);
+Step 6 — Return Response
 
-            verify(alertDao).getUnreadAlertsByUserId(userAdId, pageable);
-            assertNotNull(response);
-            assertEquals(SUCCESS_RESPONSE_CODE, response.getStatus());
-            assertEquals(1L, response.getCount());
-            assertEquals(1L, response.getTotal());
-            assertEquals(List.of(alert), response.getData());
+Return object:
+
+{
+  "version": "String",
+  "privacyText": "String"
+}
+
+Version can be generated using:
+
+Hash of text OR
+Version from DB OR
+Version from EIS response
+
+Acceptance Criteria:
+Method created to fetch privacy notice.
+Request encrypted using Gen6 encryption.
+EIS API called via WebClient.
+Response decrypted successfully.
+Privacy text parsed and returned.
+Proper error handling implemented.
+Logging added.
+
+--------------------------------------------------------
+7.
+Issue: Communication Service – Purpose Method (EIS Integration)
+
+Description
+
+Implement a Purpose method in Communication Service that will be used by the Consent Check API to fetch the latest purpose details from EIS.
+
+This method will:
+
+Create encrypted request using Gen6 Encryption (AES/GCM/NoPadding)
+Call EIS Purpose API using WebClient
+Decrypt the response
+Parse purpose data (including containers & purposes array)
+Return structured purpose response
+
+This is required when consent is inactive/expired/revoked to show updated purposes before re-consent.
+
+API Details (EIS)
+EIS Endpoint
+POST /api/consent-core/query/purposes/read
+Purpose Request
+{
+  "touchPointId": "string",
+  "purposeSetId": "string"
+}
+Purpose Response (After Decryption)
+{
+  "body": [
+    {
+      "isContainer": true,
+      "containerTitle": "string",
+      "containerDescription": "string",
+      "purposes": [
+        {
+          "code": "string",
+          "version": 1,
+          "title": "string",
+          "description": "string",
+          "isEssential": true,
+          "validityDays": 365,
+          "dataPoints": [],
+          "bankProducts": []
         }
+      ]
     }
+  ]
+}
+Method to Implement
+Service Method
+fetchPurpose(String touchPointId, String purposeSetId)
+Detailed Flow (Step-by-Step)
 
-    @Test
-    void getAllAlertsByUser_shouldReturnPagedAlertsForCurrentUser() {
-        String userAdId = "user.ad";
-        Pageable pageable = PageRequest.of(0, 10);
-        AlertManagementResponse firstAlert = AlertManagementResponse.builder()
-                .alertIdentifier(201L)
-                .alertDescription("Alert one")
-                .isViewed(false)
-                .build();
-        AlertManagementResponse secondAlert = AlertManagementResponse.builder()
-                .alertIdentifier(202L)
-                .alertDescription("Alert two")
-                .isViewed(true)
-                .build();
-        Page<AlertManagementResponse> page = new PageImpl<>(List.of(firstAlert, secondAlert), pageable, 2);
+Step 1 — Prepare Request
+{
+  "touchPointId": "value",
+  "purposeSetId": "value"
+}
 
-        try (MockedStatic<EPayIdentityUtil> mockedStatic = mockStatic(EPayIdentityUtil.class)) {
-            mockedStatic.when(EPayIdentityUtil::getUserPrincipal).thenReturn(principal);
-            when(principal.getUsername()).thenReturn(userAdId);
-            when(alertDao.getAllAlertsByUserId(userAdId, pageable)).thenReturn(page);
+Step 2 — Encrypt Request
 
-            AdminPortalResponse<AlertManagementResponse> response = alertService.getAllAlertsByUser(pageable);
+Use:
 
-            verify(alertDao).getAllAlertsByUserId(userAdId, pageable);
-            assertNotNull(response);
-            assertEquals(SUCCESS_RESPONSE_CODE, response.getStatus());
-            assertEquals(2L, response.getCount());
-            assertEquals(2L, response.getTotal());
-            assertEquals(List.of(firstAlert, secondAlert), response.getData());
-        }
+AES/GCM/NoPadding
+
+Step 3 — Call EIS API
+Using WebClient:
+
+Step 4 — Decrypt Response
+
+Step 5 — Parse Response
+
+Step 6 — Build Response
+Return structured response:
+
+{
+  "purposes": [],
+  "code": "String",
+  "version": "int",
+  "title": "String",
+  "description": "String",
+  "isEssential": "boolean",
+  "validityDays": "long",
+  "timestamp": "YYYY-MM-DDTHH:MM:SSZ",
+  "locale": "string"
+}
+
+Acceptance Criteria:
+Method implemented to fetch purpose data.
+Request encrypted using Gen6 encryption.
+EIS API invoked via WebClient.
+Response decrypted successfully.
+Purpose data parsed correctly (including nested structure).
+Structured response returned.
+Error handling implemented.
+Logging added.
+
+-----------------------------------------------------------------------
+8.
+
+Issue: Communication Service – Consent Write Method
+
+Description
+Implement a Consent Write method in Communication Service.
+This method will be used by the Kafka Listener to send consent write request to EIS/CCMS and publish the response back to Kafka so that Admin Server / Merchant Service can update consent sync status.
+This method will:
+Receive consent write event from Kafka Listener.
+Create encrypted request using Gen6 Encryption (AES/GCM/NoPadding).
+Call EIS Consent Write API via WebClient.
+Decrypt the response.
+Build consent write response.
+Publish response event to Kafka (Success / Failure).
+
+This completes the async consent write flow between Admin → Communication Service → EIS → Admin.
+
+
+EIS API Details
+EIS Endpoint:POST /api/consent-core/command/consents/write
+Consent Write Request (From Kafka)
+{
+  "touchPointId": "value",
+  "purposeSetId": "value",
+  "dpData": {
+    "dpCIF": "value",
+    "dpMobile": "value",
+    "dpEmail": "value",
+    "dpIP": "value",
+    "locale": "value",
+    "timestamp": "value"
+  },
+  "consents": [
+    {
+      "purposeCode": "value",
+      "purposeVersion": 1,
+      "consentAction": "Capture | Modification | Revocation",
+      "consentedProducts": ["value", "value"]
     }
+  ]
+}
 
-    @Test
-    void updateAlertViewStatus_shouldValidateMerchantAndMarkAlertAsViewed() {
-        String userAdId = "user.ad";
-        long alertIdentifier = 501L;
-
-        try (MockedStatic<EPayIdentityUtil> mockedStatic = mockStatic(EPayIdentityUtil.class)) {
-            mockedStatic.when(EPayIdentityUtil::getUserPrincipal).thenReturn(principal);
-            when(principal.getUsername()).thenReturn(userAdId);
-
-            AdminPortalResponse<String> response = alertService.updateAlertViewStatus( alertIdentifier);
-
-            verify(alertDao).updateViewStatus( userAdId, alertIdentifier);
-            assertNotNull(response);
-            assertEquals(SUCCESS_RESPONSE_CODE, response.getStatus());
-            assertEquals(1L, response.getTotal());
-            assertEquals(List.of("View updated successfully"), response.getData());
-        }
-    }
+Consent Write Response (After Decryption from EIS)
+{
+  "status": "SUCCESS | FAILED",
+  "consentId": "string",
+  "message": "string",
+  "timestamp": "YYYY-MM-DDTHH:MM:SSZ"
 }
 
 
-	
+Detailed Flow (Step-by-Step)
+Step 1 — Kafka Listener Receives Event
 
+Kafka Topic:consent-write-request-topic
 
+Listener: ConsentWriteKafkaListener
+
+Step 2 — Encrypt Request
+
+Step 3 — Call EIS Consent Write API
+Using WebClient:
+
+Step 4 — Decrypt Response
+
+Step 5 — Build Response Event
+Create response event:
+
+{
+  "dpCIF": "value",
+  "status": "SUCCESS | FAILED",
+  "consentId": "string",
+  "message": "string",
+  "timestamp": "value"
+}
+Step 6 — Publish Response to Kafka
+Kafka Topic: consent-write-response-topic
+Kafka Publisher:
+
+Acceptance Criteria:
+Kafka listener implemented.
+Consent write method implemented.
+Request encrypted using Gen6 encryption.
+EIS Consent Write API called.
+Response decrypted successfully.
+Kafka response event published.
+Success/Failure handled correctly.
+Logging implemented.
+
+--------------------------------------------------------------
+9
+
+Issue: Communication Service – Kafka Consumer & Producer (Consent Write Flow)
+
+Description:
+Implement Kafka Consumer and Producer in Communication Service for Consent Write asynchronous flow.
+
+This component will:
+
+Consume Consent Write Request event from Admin Server / Merchant Service.
+Call Consent Write Method (EIS API call with Gen6 encryption).
+Store Kafka request and response (including error) in DB for audit/logging.
+Publish Consent Write Response event to Kafka for Admin Server / Merchant Service.
+
+This enables full async consent processing via Kafka.
+
+Database Table (Kafka Event Log)
