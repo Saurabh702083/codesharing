@@ -1,4 +1,396 @@
+📌 ISSUE 1 — Admin Server: Consent Evaluate API
+## 🚀 Feature: Consent Evaluate API (Admin Server)
 
+### 📌 Description
+Implement a Consent Evaluate API in Admin Server to determine consent status for a user.
+
+This API:
+- Checks consent in local DB
+- Calls Communication Service (EIS Wrapper) when required
+- Returns consent status + Privacy Notice + Purpose
+
+Used at:
+- MIF Login
+- Merchant Panel Login
+
+---
+
+### 🔗 API Details
+
+**Endpoint**
+
+POST /admin/consent/evaluate
+
+
+**Request Body**
+```json
+{
+  "merchantMifId": "String",
+  "dpCIF": "string",
+  "dpMobile": "string",
+  "touchPointId": "string",
+  "purposeSetId": "string"
+}
+
+Response Body
+
+{
+  "merchantMifId": "String",
+  "isConsentActive": true,
+  "consentStatus": "Active | Inactive | Expired | Revoked",
+  "consentReadResponse": {},
+  "privacyNoticeResponse": {},
+  "purposeResponse": {}
+}
+⚙️ Flow
+Step 1 — Validate Request
+Step 2 — Check Local DB
+
+Case: Active Consent
+
+status = ACTIVE
+not expired
+
+✅ Return from DB
+❌ Do NOT call Communication Service
+
+Step 3 — If Consent Not Active
+
+Call:
+
+Communication Service → Consent Read API
+Case A — Consent Active from CCMS
+Update local DB
+Return:
+isConsentActive = true
+Case B — Consent Not Active
+Fetch Privacy + Purpose
+Save in master tables
+Compare versions
+Update if changed
+
+Return:
+
+isConsentActive = false
+Step 4 — Fallback (Service Down)
+Read from local DB:
+privacy_master
+purpose_master
+
+Return:
+
+isConsentActive = false
+✅ Acceptance Criteria
+ Local DB check works
+ Calls Communication Service when needed
+ Privacy & Purpose updated on version change
+ Fallback implemented
+ Response matches contract
+ Expiry handled using validityDays
+
+---
+
+# 📌 ISSUE 2 — Admin Server: Consent Write API
+
+```markdown
+## 🚀 Feature: Consent Write API (Async via Kafka)
+
+### 📌 Description
+
+Implement Consent Write API in Admin Server.
+
+This API:
+- Updates local DB
+- Publishes Kafka event
+- Does NOT call CCMS synchronously
+
+---
+
+### 🔗 API Details
+
+**Endpoint**
+
+POST /admin/consent/write
+
+
+**Request**
+```json
+{
+  "dpCIF": "String",
+  "dpMobile": "String",
+  "dpEmail": "String",
+  "dpIP": "String",
+  "locale": "String",
+  "timestamp": "String",
+  "consentAction": "Capture | Modification | Revocation"
+}
+
+Response
+
+{
+  "message": "Consent has been updated"
+}
+⚙️ Flow
+Step 1 — Validate Request
+Step 2 — Update Local DB
+Field	Value
+consent_action	Capture/Modify/Revoke
+sync_status	PENDING
+status	Active / Revoked
+Step 3 — Publish Kafka Event
+
+Topic
+
+consent.write.request
+
+Payload
+
+{
+  "dpMobile": "String",
+  "consentAction": "String",
+  "touchPointId": "String",
+  "purposeSetId": "String"
+}
+Step 4 — Return Response
+
+Immediately return success
+
+✅ Acceptance Criteria
+ Request validated
+ sync_status = PENDING
+ Kafka event published
+ No synchronous CCMS call
+ Response returned immediately
+
+---
+
+# 📌 ISSUE 3 — Admin Server: Kafka Consumer (Response)
+
+```markdown
+## 🚀 Feature: Kafka Consumer (Consent Write Response)
+
+### 📌 Description
+
+Consume response events from Communication Service and update DB.
+
+---
+
+### 🔗 Kafka Details
+
+**Topic**
+
+consent.write.response
+
+
+---
+
+### ⚙️ Flow
+
+#### Step 1 — Kafka Listener
+
+```java
+@KafkaListener(topics = "consent.write.response")
+Step 2 — Process Message
+
+Find record using:
+
+merchantMifId + dpMobile/dpCIF
+Step 3 — Update DB
+Kafka Status	DB Action
+SUCCESS	sync_status = SUCCESS
+FAILED	sync_status = PENDING
+TIMEOUT	sync_status = PENDING
+✅ Acceptance Criteria
+ Listener working
+ SUCCESS updates DB
+ FAILED/TIMEOUT retry enabled
+ consent_id stored
+ error stored
+
+---
+
+# 📌 ISSUE 4 — Admin Server: Scheduler
+
+```markdown
+## 🚀 Feature: Pending Consent Sync Scheduler
+
+### 📌 Description
+
+Retry syncing consents where sync_status = PENDING.
+
+---
+
+### ⏱ Scheduler
+
+```java
+@Scheduled(cron = "0 */5 * * * *")
+⚙️ Flow
+Step 1 — Fetch Pending
+SELECT * FROM consent_table
+WHERE sync_status = 'PENDING'
+Step 2 — Publish Kafka
+
+Topic
+
+consent.write.request
+Step 3 — Communication Service
+Calls CCMS
+Sends response to Kafka
+Step 4 — Admin Consumer Updates DB
+✅ Acceptance Criteria
+ Scheduler runs every 5 min
+ Pending records fetched
+ Kafka messages published
+ Retry works until success
+
+---
+
+# 📌 ISSUE 5 — Communication Service: Consent Check API
+
+```markdown
+## 🚀 Feature: Consent Check API (Communication Service)
+
+### 📌 Description
+
+Wrapper API to interact with EIS/CCMS.
+
+---
+
+### 🔗 Endpoint
+
+
+POST /communication/consent/check
+
+
+---
+
+### ⚙️ Flow
+
+#### Step 1 — Validate Request
+
+---
+
+#### Step 2 — Call EIS Consent Read API
+
+- Encrypt request (AES-GCM)
+- Send request
+- Decrypt response
+
+---
+
+#### Step 3 — Decision
+
+| Status | Action |
+|--------|--------|
+| Active | Return consent |
+| Inactive | Fetch privacy + purpose |
+
+---
+
+### ✅ Acceptance Criteria
+
+- [ ] Encryption implemented
+- [ ] Decryption working
+- [ ] API calls successful
+- [ ] Proper response returned
+📌 ISSUE 6 — Communication Service: Privacy Notice
+## 🚀 Feature: Privacy Notice Method
+
+### 📌 Description
+
+Fetch privacy notice from EIS.
+
+---
+
+### ⚙️ Flow
+
+1. Prepare request
+2. Encrypt (AES-GCM)
+3. Call API via WebClient
+4. Decrypt response
+5. Return text
+
+---
+
+### ✅ Acceptance Criteria
+
+- [ ] Encryption implemented
+- [ ] WebClient call working
+- [ ] Response parsed
+📌 ISSUE 7 — Communication Service: Purpose Method
+## 🚀 Feature: Purpose Fetch Method
+
+### 📌 Description
+
+Fetch purpose data from EIS.
+
+---
+
+### ⚙️ Flow
+
+1. Prepare request
+2. Encrypt
+3. Call API
+4. Decrypt
+5. Parse nested structure
+
+---
+
+### ✅ Acceptance Criteria
+
+- [ ] Nested parsing works
+- [ ] Data returned correctly
+📌 ISSUE 8 — Communication Service: Consent Write
+## 🚀 Feature: Consent Write Method
+
+### 📌 Description
+
+Process Kafka request and call EIS.
+
+---
+
+### ⚙️ Flow
+
+1. Consume Kafka event
+2. Encrypt request
+3. Call EIS API
+4. Decrypt response
+5. Publish Kafka response
+
+---
+
+### ✅ Acceptance Criteria
+
+- [ ] Kafka listener works
+- [ ] Encryption implemented
+- [ ] Response published
+📌 ISSUE 9 — Communication Service: Kafka Flow
+## 🚀 Feature: Kafka Consumer & Producer
+
+### 📌 Description
+
+Handle async consent flow.
+
+---
+
+### ⚙️ Flow
+
+1. Consume request
+2. Call EIS
+3. Store logs
+4. Publish response
+
+---
+
+### ✅ Acceptance Criteria
+
+- [ ] Consumer works
+- [ ] Producer works
+- [ ] DB logging implemented
+🔥 If you want next level
+
+
+------------------------------------------------------------------------
 GROUP A: Integration Tasks (The EIS Wrappers)
 These tasks involve creating the low-level Client/Service methods to communicate with the EIS (Enterprise Integration Service) layer.
 
