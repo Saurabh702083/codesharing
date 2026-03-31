@@ -1,3 +1,17 @@
+ADMIN PORATL/ MERCHANT SERVICE:-
+1. consent Evaluate api 
+2. Consent Write API
+3. Kafka Consumer (Consent Write Response)
+4. Pending Consent Sync Scheduler
+
+Communication service:
+1. Consent Check API- sagar
+2. Privacy Notice Method (EIS Integration)- rahul p
+3. Purpose Method (EIS Integration)
+4. Consent Write Method
+5. Kafka Consumer & Producer (Consent Write Flow)
+-----------------------------------------------------------
+
 1.
 
 Description:
