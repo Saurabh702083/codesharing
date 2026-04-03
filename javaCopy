@@ -1,3 +1,104 @@
+package admin.model.request;
+
+import com.epay.admin.portal.model.request.AdminMIFUpdateRequest;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.junit.jupiter.api.Test;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+
+public class AdminMIFUpdateRequestTest {
+
+    private final ObjectMapper objectMapper = new ObjectMapper();
+public void generateAndPrintRiskScore(String merchantMIFId, HttpServletResponse response) {
+        adminMerchantOnboardingValidator.validatePrintRiskScoreRequest(merchantMIFId, OnboardingStage.RISK_SCORE_APPROVE,RISK_SCORE_APPROVE_PRINT_RISK_SCORE);
+        try {
+            log.info("Generating pdf.");
+            RiskScoreDetail riskScoreDetail = getMerchantRiskScoreResponse(merchantMIFId);
+            ByteArrayOutputStream byteArrayOutputStream = generatedPDF.generatedRiskScorePDF(riskScoreDetail, RISK_SCORE_PDF_TEMPLATE);
+            response.setContentType(PDF_CONTENT_TYPE);
+            response.setHeader(PDF_FILE_GENERATOR_HEADER, HEADER_INLINE_WITH_FILENAME+ RISK_SCORE_PDF_FILE_NAME_PREFIX +merchantMIFId+ RISK_SCORE_PDF_FILE_NAME_SUFFIX);
+            response.setContentLength(byteArrayOutputStream.size());
+            ServletOutputStream outputStream = response.getOutputStream();
+            byteArrayOutputStream.writeTo(outputStream);
+            outputStream.flush();
+        } catch (Exception e) {
+            throw new AdminPortalException(ErrorConstants.GENERATION_ERROR_CODE, MessageFormat.format(ErrorConstants.GENERATION_ERROR_MESSAGE, "riskScore_pdf", e.getMessage()));
+        }
+    }
+
+private void validateIsPreviousStepIsCompleted(String mifId, OnboardingStage onboardingStage, String step) {
+        int prevStageNum = adminMerchantOnboardingDao.findPrevStepNumByStage(step);
+        Integer currentStageNum = adminMerchantOnboardingDao.fetchStageNumber(onboardingStage.name());
+        UUID journeyId = adminMerchantOnboardingDao.fetchJourneyId(mifId, currentStageNum);
+        StageStatus status = adminMerchantOnboardingDao.findStatusByJourneyIdAndStepNum(mifId, journeyId, prevStageNum);
+        if (!status.equals(StageStatus.COMPLETED))
+            throw new AdminPortalException(INVALID_ERROR_CODE, MessageFormat.format(INVALID_ERROR_MESSAGE, "Request", STEPS_NOT_COMPLETE));
+    }
+
+    public void validatePrintRiskScoreRequest(String merchantMIFId, OnboardingStage onboardingStage, String riskScoreApprovePrintRiskScore) {
+        merchantOnboardingValidator.validateMerchantOnBoardMIFId(merchantMIFId);
+        validateIsPreviousStageIsCompleted(merchantMIFId, onboardingStage);
+        validateIsPreviousStepIsCompleted(merchantMIFId, onboardingStage, riskScoreApprovePrintRiskScore);
+    }
+
+
+ public StageStatus findStatusByJourneyIdAndStepNum(String mifId, UUID journeyId, int prevStageNum) {
+        MIFJourneySteps mifJourneySteps = mifJourneyStepsRepository.findByMerchantMifIdAndJourneyIdAndStepNum(mifId, journeyId, prevStageNum);
+        if(ObjectUtils.isEmpty(mifJourneySteps)){
+            throw new AdminPortalException(NOT_FOUND_ERROR_CODE, MessageFormat.format(NOT_FOUND_ERROR_MESSAGE, "previous step"));
+        }
+        return mifJourneySteps.getStatus();
+    }
+
+
+@Repository
+public interface MIFJourneyStepsRepository extends JpaRepository<MIFJourneySteps, UUID> {
+    @Query("""
+            SELECT CASE WHEN COUNT(js.stepNum) = COUNT(sm.stepNum)
+            THEN true ELSE false END 
+            FROM StepMaster sm 
+            LEFT JOIN MIFJourneySteps js
+            ON sm.stepNum =js.stepNum
+            AND js.journeyId = :journeyId
+            AND js.status = 'COMPLETED'
+            WHERE sm.stageNum = :stageNum
+            """)
+    boolean areAllStepsCompleted(UUID journeyId,int stageNum);
+
+    MIFJourneySteps findByMerchantMifIdAndJourneyIdAndStepNum(String merchantMifId, UUID journeyId, int prevStageNum);
+
+    Optional<MIFJourneySteps> findByMerchantMifIdAndJourneyIdAndStepCode(String merchantMifId, UUID journeyId, String stepCode);
+}
+  
+@Test
+    public void shouldDeserializeAdminMIFUpdateRequest() throws Exception {
+        String payload = """
+                {
+                  "businessDto": {
+                    "merchantMIFId": "MIF123",
+                    "legalName": "Test Merchant"
+                  },
+                  "contactDto": {
+                    "firstName": "Jane"
+                  }
+                }
+                """;
+
+        AdminMIFUpdateRequest request = objectMapper.readValue(payload, AdminMIFUpdateRequest.class);
+
+        assertNotNull(request);
+        assertNotNull(request.getBusinessDto());
+        assertEquals("MIF123", request.getBusinessDto().getMerchantMIFId());
+        assertEquals("Test Merchant", request.getBusinessDto().getLegalName());
+        assertNotNull(request.getContactDto());
+        assertEquals("Jane", request.getContactDto().getFirstName());
+    }
+}
+
+
+
+
 📌 ISSUE 1 — Admin Server: Consent Evaluate API
 ## 🚀 Feature: Consent Evaluate API (Admin Server)
 
