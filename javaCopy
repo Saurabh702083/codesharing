@@ -1,3 +1,30 @@
+Dear Team,
+
+We encountered a few concerns while developing the Consent APIs and would appreciate your clarification on the following points:
+
+1. In the Privacy Notice response, we are not receiving any version or identifier. This makes it difficult to track changes whenever the privacy text is updated. Kindly confirm how versioning should be handled.
+
+2. In the Consent Read API, there is no status field in the response. Could you please advise how we can determine whether consent is available or not?
+
+3. In the Consent Write API request, we need clarification on the expected value of the "consentedProducts" field.
+
+4. In the Consent Purpose API response, please clarify the use cases of the fields "isEssential" and "validityDays".
+
+5. In the sample request and response shared for all EIS calls, we are using the URL:
+   https://eissiuat.sbi.co.in/gen6/gateway/misc/thirdParty/wrapper/services
+   Kindly confirm if this is the correct endpoint or if we should use a different URL as mentioned in the product note.
+
+6. In the sample request, we observed that headers are being encrypted in the EIS request payload. Please clarify the requirement and purpose of encrypting headers.
+
+We kindly request you to provide clarification on the above points to help us proceed further.
+
+Thank you for your support.
+
+Thanks and regards,
+Saurabh Mahto
+
+
+
 Hello team 
 
 We had some censer while developing consent APIS. We have listed it down :
