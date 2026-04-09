@@ -1,3 +1,21 @@
+Hello team 
+
+We had some censer while developing consent APIS. We have listed it down :
+
+In privacyNotice response we are not getting and version or id, so its become difficulty to know when privacy text gets change.
+In consent read api we are not getting any status in response , do how to know weather consent is available or not.
+In consent write api request what will be the value of consentedProducts.
+In consent purpose api response what is the use case of "isEssential" and "validityDays".
+In an sample Request and response mail for all the EIS call we are using https://eissiuat.sbi.co.in/gen6/gateway/misc/thirdParty/wrapper/services is it correct or we have to use different url that product team has provided in productNote.
+In sample request why we need to encrypt the HEADERS in EIS request payload.
+
+
+We kindly request you to clear our points.
+
+Thanks  
+Saurabh mahto
+
+
 package com.epay.merchant.mapper;
 
 import com.epay.merchant.dto.MerchantOnboardBankAccountDto;
