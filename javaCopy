@@ -142,3 +142,265 @@ public class CountryCurrencyValidator extends BaseValidator {
     }
 
 }
+
+
+-----------------------------------------
+
+package com.epay.admin.portal.master.handler;
+
+import com.epay.admin.portal.exceptions.AdminPortalException;
+import com.epay.admin.portal.master.dto.ConstitutionDTO;
+import com.epay.admin.portal.master.entity.Constitution;
+import com.epay.admin.portal.master.entity.MasterWorkflow;
+import com.epay.admin.portal.master.model.ConstitutionResponse;
+import com.epay.admin.portal.master.model.ConstitutionSearchRequest;
+import com.epay.admin.portal.master.repositories.ConstitutionRepository;
+import com.epay.admin.portal.master.repositories.CountryCurrencyRepository;
+import com.epay.admin.portal.master.repositories.MasterWorkflowRepository;
+import com.epay.admin.portal.master.specification.ConstitutionSpecification;
+import com.epay.admin.portal.master.util.ENUM.MasterType;
+import com.epay.admin.portal.master.util.ENUM.WorkflowStatus;
+import com.epay.admin.portal.master.util.MasterUtil;
+import com.epay.admin.portal.model.response.AdminPortalResponse;
+import com.epay.admin.portal.util.EPayIdentityUtil;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import lombok.RequiredArgsConstructor;
+import org.apache.commons.lang3.StringUtils;
+import org.springframework.beans.BeanWrapperImpl;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.jpa.domain.Specification;
+import org.springframework.stereotype.Component;
+
+
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.List;
+import java.util.Locale;
+import java.util.UUID;
+import java.util.stream.Stream;
+
+import static com.epay.admin.portal.util.AdminPortalConstants.SUCCESS_RESPONSE_CODE;
+
+@Component
+@RequiredArgsConstructor
+public class ConstitutionHandler implements MasterHandler<ConstitutionDTO, Constitution> {
+
+    private final ConstitutionRepository repo;
+    private final CountryCurrencyRepository countryRepo;
+    private final MasterWorkflowRepository masterWorkflowRepository;
+    private final ObjectMapper mapper;
+
+    @Override
+    public void validateCreate(ConstitutionDTO dto) {
+        if (!repo.existsByConstitutionName(dto.getConstitution_name()))
+            throw new AdminPortalException("1001","Constitution code exists");
+    }
+    @Override
+    public void validateUpdate(ConstitutionDTO dto) {
+        // similar checks as needed
+    }
+    @Override
+    public MasterWorkflow toWorkflow(ConstitutionDTO dto, UUID id) throws JsonProcessingException {
+        Constitution entity = new Constitution();
+        entity.setConstitutionName(dto.getConstitution_name());
+        entity.setConstitutionCode(MasterUtil.generateMasterCode(dto.getConstitution_name(), MasterType.CONSTITUTION));
+        entity.setCreatedAt(System.currentTimeMillis());
+        entity.setCreatedBy(EPayIdentityUtil.getUserPrincipal().getUsername());
+        String newVal = mapper.writeValueAsString(entity);
+        String oldVal = null;
+        if (id != null) {
+            Constitution old = repo.findById(id).orElseThrow();
+            oldVal =  mapper.writeValueAsString(old);
+        }
+        MasterWorkflow wf = new MasterWorkflow();
+        wf.setMasterType(MasterType.CONSTITUTION);
+        wf.setRecordId(id);
+        wf.setNewValue(newVal);
+        wf.setOldValue(oldVal);
+        wf.setStatus(WorkflowStatus.PENDING);
+        wf.setActionType("MAKER");
+        wf.setMakerId(EPayIdentityUtil.getUserPrincipal().getUsername());
+        return wf;
+    }
+
+    @Override
+    public void applyApproved(MasterWorkflow wf) throws JsonProcessingException {
+        Constitution data = mapper.readValue(wf.getNewValue(), Constitution.class);
+        if (wf.getRecordId() != null) {
+            data.setId(wf.getRecordId());
+        }
+        repo.save(data);
+        wf.setStatus(WorkflowStatus.APPROVED);
+    }
+
+    @Override
+    public AdminPortalResponse<?> search(Object request, Pageable pageable) {
+        ConstitutionSearchRequest req = mapper.convertValue(request, ConstitutionSearchRequest.class);
+        Specification<Constitution> spec = ConstitutionSpecification.build(req);
+        List<ConstitutionResponse> constitutionResponseList = Stream.concat(
+                        repo.findAll(spec).stream().map(this::toResponse),
+                        getUnapprovedWorkflowResponses(req).stream()
+                )
+                .toList();
+
+        List<ConstitutionResponse> sortedResponses = sortResponses(constitutionResponseList, pageable);
+        long total = sortedResponses.size();
+        int start = Math.toIntExact(pageable.getOffset());
+        int end = Math.min(start + pageable.getPageSize(), sortedResponses.size());
+        List<ConstitutionResponse> pagedResponses = start >= sortedResponses.size()
+                ? Collections.emptyList()
+                : sortedResponses.subList(start, end);
+
+        return AdminPortalResponse.<ConstitutionResponse>builder()
+                .status(SUCCESS_RESPONSE_CODE)
+                .data(pagedResponses)
+                .count((long) pagedResponses.size())
+                .total(total)
+                .build();
+    }
+
+    private List<ConstitutionResponse> getUnapprovedWorkflowResponses(ConstitutionSearchRequest req) {
+        return masterWorkflowRepository.findAllByMasterTypeAndStatusNot(MasterType.CONSTITUTION, WorkflowStatus.APPROVED)
+                .stream()
+                .filter(workflow -> matchesWorkflowFilter(workflow, req))
+                .map(this::toWorkflowResponse)
+                .toList();
+    }
+
+    private boolean matchesWorkflowFilter(MasterWorkflow workflow, ConstitutionSearchRequest req) {
+        try {
+            Constitution constitution = mapper.readValue(workflow.getNewValue(), Constitution.class);
+            if (StringUtils.isNotBlank(req.getConstitutionName())
+                    && !StringUtils.containsIgnoreCase(constitution.getConstitutionName(), req.getConstitutionName())) {
+                return false;
+            }
+            if (StringUtils.isNotBlank(req.getStatus())
+                    && !StringUtils.equalsIgnoreCase(workflow.getStatus().name(), req.getStatus())
+                    && !StringUtils.equalsIgnoreCase(constitution.getStatus(), req.getStatus())) {
+                return false;
+            }
+
+            Long createdAt = constitution.getCreatedAt() != null ? constitution.getCreatedAt() : workflow.getCreatedAt();
+            if (req.getFromDate() != null && (createdAt == null || createdAt < req.getFromDate())) {
+                return false;
+            }
+            return req.getToDate() == null || (createdAt != null && createdAt <= req.getToDate());
+        } catch (JsonProcessingException e) {
+            throw new AdminPortalException("1001", "Invalid constitution workflow data");
+        }
+    }
+
+    private ConstitutionResponse toWorkflowResponse(MasterWorkflow workflow) {
+        try {
+            Constitution constitution = mapper.readValue(workflow.getNewValue(), Constitution.class);
+            ConstitutionResponse response = toResponse(constitution);
+            response.getConstitutionMaster().setId(workflow.getRecordId());
+
+            ConstitutionResponse.MasterWorkflowData workflowData = new ConstitutionResponse.MasterWorkflowData();
+            workflowData.setWorkflowId(workflow.getId());
+            workflowData.setConstitutionCode(constitution.getConstitutionCode());
+            workflowData.setStatus(workflow.getStatus().name());
+            workflowData.setCreatedBy(workflow.getMakerId());
+            workflowData.setUpdatedBy(workflow.getCheckerId());
+            workflowData.setCreatedAt(workflow.getCreatedAt());
+            response.setMasterWorkflow(workflowData);
+            return response;
+        } catch (JsonProcessingException e) {
+            throw new AdminPortalException("1001", "Invalid constitution workflow data");
+        }
+    }
+
+    private ConstitutionResponse toResponse(Constitution entity) {
+        ConstitutionResponse response = new ConstitutionResponse();
+        ConstitutionResponse.ConstitutionMaster constitutionMaster = new ConstitutionResponse.ConstitutionMaster();
+        constitutionMaster.setId(entity.getId());
+        constitutionMaster.setConstitutionName(entity.getConstitutionName());
+        constitutionMaster.setConstitutionCode(entity.getConstitutionCode());
+        constitutionMaster.setStatus(entity.getStatus());
+        constitutionMaster.setCreatedBy(entity.getCreatedBy());
+        constitutionMaster.setUpdatedBy(entity.getUpdatedBy());
+        constitutionMaster.setCreatedAt(entity.getCreatedAt());
+        response.setConstitutionMaster(constitutionMaster);
+        return response;
+    }
+
+    private List<ConstitutionResponse> sortResponses(List<ConstitutionResponse> responses, Pageable pageable) {
+        if (pageable.getSort().isUnsorted()) {
+            return responses;
+        }
+
+        return responses.stream()
+                .sorted(buildComparator(pageable))
+                .toList();
+    }
+
+    private Comparator<ConstitutionResponse> buildComparator(Pageable pageable) {
+        Comparator<ConstitutionResponse> comparator = null;
+        for (org.springframework.data.domain.Sort.Order order : pageable.getSort()) {
+            Comparator<ConstitutionResponse> orderComparator = Comparator.comparing(
+                    response -> getComparableValue(response, order.getProperty()),
+                    Comparator.nullsLast(Comparator.naturalOrder())
+            );
+            if (order.isDescending()) {
+                orderComparator = orderComparator.reversed();
+            }
+            comparator = comparator == null ? orderComparator : comparator.thenComparing(orderComparator);
+        }
+        return comparator == null
+                ? Comparator.comparing(
+                        response -> getComparableValue(response, "constitutionMaster.constitutionName"),
+                        Comparator.nullsLast(Comparator.naturalOrder())
+                )
+                : comparator;
+    }
+
+    @SuppressWarnings("unchecked")
+    private Comparable<Object> getComparableValue(ConstitutionResponse response, String property) {
+        Object value = new BeanWrapperImpl(response).getPropertyValue(resolveSortProperty(property));
+        if (value instanceof String stringValue) {
+            return (Comparable<Object>) stringValue.toLowerCase(Locale.ROOT);
+        }
+        return (Comparable<Object>) value;
+    }
+
+    private String resolveSortProperty(String property) {
+        return switch (property) {
+            case "id" -> "constitutionMaster.id";
+            case "constitutionName" -> "constitutionMaster.constitutionName";
+            case "status" -> "constitutionMaster.status";
+            case "createdBy" -> "constitutionMaster.createdBy";
+            case "updatedBy" -> "constitutionMaster.updatedBy";
+            case "createdAt" -> "constitutionMaster.createdAt";
+            case "workflowId" -> "masterWorkflow.workflowId";
+            default -> property;
+        };
+    }
+
+}
+in my current master package i need to add another api that will be used for bulk upload of csv file. for that we need to create 3 table.
+1. MasterTable.( this will keep the record of Master type )
+fields:- id, masterType(enum), name( master type name), isBulkAllowed boolean, isMakerChakerEnabled boolean, isHeaderPresent(this will be used to check if file will have header or not),fileFormatConfig( this will keep the record for how to read a file data ),fileCheckSum( this will store the checksome calue of file data) , status.
+
+add other field as well if need that can help us to read the file data. 
+
+2. MasterFileUpload( This will keep the record of over all data of file has been uploaded for MasterType)
+fields:- id, MasterType, fileName, totalRecord( count of total record in file except header if header is present), successRecord( this will count the total master we have uploaded on MasterWorkflow table), failedRecord( this will count the total master we have not uploaded on MasterWorkflow table), status, ErrorMessage( if there is issue while uploadeing file), Remark, AuditEntity.
+3. MasterFileUploadDtls( This will keep the record of individual record present in file).
+field:- id, masterFileUploadId(FK), recordJson( individual record store in json), status, ErrorMessage, Remark, AuditEntity.
+
+so first create the entity and dto for these table and also create the liquebase Script for these table.
+In Liquebase script add one script for Constitution Master type in MasterTable for which header will be present like  ConstitutionName ,Status and there field will be privateLtm, Active so in fileFormatConfig we will write how from where we need to read ConstitutionName so that it will help use to read the ConstitutionName and add into table.
+
+Now after that we need to create an API for this. `/{masterType}/bulk` and that will return success Count and List<String > failerRecord data.
+this API will first read the about masterType in our case is ConstitutionType like if header is present or not if yes then we need to read the file from next file and from where to we have to read the data we will get it from fileFormatConfig. once we know how to read the file then we will check the basis validation of file like uploaded file is .csv or not. and then we create the checkSome of file data and then we will chek if same file data is uploaded or its new one. this will help us to find duplicate file. 
+Once the basic validation is done then we store the OverAll file details in MasterFileUpload table like fileName, and remark like file has been received. and someerror come while reciving we will update the errorMessage as well.
+Then we will start reading th file details from file and that will record we will score it in the MasterFileUploadDtls table with status.
+once all the file uploaded we will update the Record in MasterFileUpload table as well like totalRecord, successRecord, FailedRecord. etc.
+
+After that we need to upload these data in MasterWorkflow table in field `newValue` and update the other field as well like makerId, status, masterType, actionTpte,etc to upload a file table a help of `toWorkflow` method so for that we need to convert each record to `ConstitutionDTO` type then we can use the toWorkflow only.
+
+once this record is uploaded in `MasterWorkflow` then we need to update the field record status and remark  in MasterFileUploadDtls and in MasterFileUpload tale 
+
+create these api as per my current flow and try to make it as generlise as possible so that in future other masterType can also upload the data via file.
+we can add other field in MasterType table as well if need that can help us to read the file data more easily .
