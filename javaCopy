@@ -1,209 +1,144 @@
-Dear Team,
 
-We encountered a few concerns while developing the Consent APIs and would appreciate your clarification on the following points:
+--liquibase formatted sql
+--changeset saurabh:1775000000
 
-1. In the Privacy Notice response, we are not receiving any version or identifier. This makes it difficult to track changes whenever the privacy text is updated. Kindly confirm how versioning should be handled.
+CREATE TABLE MASTER_TABLE (
+    ID RAW(16) DEFAULT SYS_GUID() PRIMARY KEY NOT NULL,
+    MASTER_TYPE VARCHAR2(100) NOT NULL,
+    NAME VARCHAR2(255) NOT NULL,
+    IS_BULK_ALLOWED NUMBER(1) DEFAULT 0 NOT NULL,
+    IS_MAKER_CHECKER_ENABLED NUMBER(1) DEFAULT 1 NOT NULL,
+    IS_HEADER_PRESENT NUMBER(1) DEFAULT 1 NOT NULL,
+    FILE_EXTENSION VARCHAR2(20) DEFAULT 'csv' NOT NULL,
+    DELIMITER VARCHAR2(5) DEFAULT ',' NOT NULL,
+    CHARSET_NAME VARCHAR2(50) DEFAULT 'UTF-8' NOT NULL,
+    FILE_FORMAT_CONFIG CLOB NOT NULL,
+    FILE_CHECKSUM VARCHAR2(500),
+    STATUS VARCHAR2(50) NOT NULL,
+    DESCRIPTION VARCHAR2(500),
+    CREATED_BY VARCHAR2(100) NOT NULL,
+    CREATED_AT NUMBER NOT NULL,
+    UPDATED_BY VARCHAR2(100) NOT NULL,
+    UPDATED_AT NUMBER NOT NULL,
+    CONSTRAINT UK_MASTER_TABLE_MASTER_TYPE UNIQUE (MASTER_TYPE)
+);
 
-2. In the Consent Read API, there is no status field in the response. Could you please advise how we can determine whether consent is available or not?
+CREATE TABLE MASTER_FILE_UPLOAD (
+    ID RAW(16) DEFAULT SYS_GUID() PRIMARY KEY NOT NULL,
+    MASTER_TYPE VARCHAR2(100) NOT NULL,
+    FILE_NAME VARCHAR2(255) NOT NULL,
+    TOTAL_RECORD NUMBER DEFAULT 0,
+    SUCCESS_RECORD NUMBER DEFAULT 0,
+    FAILED_RECORD NUMBER DEFAULT 0,
+    FILE_CHECKSUM VARCHAR2(500) NOT NULL,
+    STATUS VARCHAR2(50) NOT NULL,
+    ERROR_MESSAGE VARCHAR2(2000),
+    REMARK VARCHAR2(500),
+    CREATED_BY VARCHAR2(100) NOT NULL,
+    CREATED_AT NUMBER NOT NULL,
+    UPDATED_BY VARCHAR2(100) NOT NULL,
+    UPDATED_AT NUMBER NOT NULL
+);
 
-3. In the Consent Write API request, we need clarification on the expected value of the "consentedProducts" field.
+CREATE TABLE MASTER_FILE_UPLOAD_DTLS (
+    ID RAW(16) DEFAULT SYS_GUID() PRIMARY KEY NOT NULL,
+    MASTER_FILE_UPLOAD_ID RAW(16) NOT NULL,
+    RECORD_JSON CLOB NOT NULL,
+    STATUS VARCHAR2(50) NOT NULL,
+    ERROR_MESSAGE VARCHAR2(2000),
+    REMARK VARCHAR2(500),
+    CREATED_BY VARCHAR2(100) NOT NULL,
+    CREATED_AT NUMBER NOT NULL,
+    UPDATED_BY VARCHAR2(100) NOT NULL,
+    UPDATED_AT NUMBER NOT NULL,
+    CONSTRAINT FK_MASTER_FILE_UPLOAD_DTLS_UPLOAD FOREIGN KEY (MASTER_FILE_UPLOAD_ID)
+        REFERENCES MASTER_FILE_UPLOAD (ID)
+);
 
-4. In the Consent Purpose API response, please clarify the use cases of the fields "isEssential" and "validityDays".
+CREATE INDEX IDX_MASTER_FILE_UPLOAD_TYPE ON MASTER_FILE_UPLOAD (MASTER_TYPE);
+CREATE INDEX IDX_MASTER_FILE_UPLOAD_CHKSUM ON MASTER_FILE_UPLOAD (MASTER_TYPE, FILE_CHECKSUM);
+CREATE INDEX IDX_MASTER_FILE_UPLOAD_DTLS_UPLOAD ON MASTER_FILE_UPLOAD_DTLS (MASTER_FILE_UPLOAD_ID);
 
-5. In the sample request and response shared for all EIS calls, we are using the URL:
-   https://eissiuat.sbi.co.in/gen6/gateway/misc/thirdParty/wrapper/services
-   Kindly confirm if this is the correct endpoint or if we should use a different URL as mentioned in the product note.
+--changeset saurabh:1775000000_1
 
-6. In the sample request, we observed that headers are being encrypted in the EIS request payload. Please clarify the requirement and purpose of encrypting headers.
-
-We kindly request you to provide clarification on the above points to help us proceed further.
-
-Thank you for your support.
-
-Thanks and regards,
-Saurabh Mahto
-
-
-
-Hello team 
-
-We had some censer while developing consent APIS. We have listed it down :
-
-In privacyNotice response we are not getting and version or id, so its become difficulty to know when privacy text gets change.
-In consent read api we are not getting any status in response , do how to know weather consent is available or not.
-In consent write api request what will be the value of consentedProducts.
-In consent purpose api response what is the use case of "isEssential" and "validityDays".
-In an sample Request and response mail for all the EIS call we are using https://eissiuat.sbi.co.in/gen6/gateway/misc/thirdParty/wrapper/services is it correct or we have to use different url that product team has provided in productNote.
-In sample request why we need to encrypt the HEADERS in EIS request payload.
-
-
-We kindly request you to clear our points.
-
-Thanks  
-Saurabh mahto
-
-
-package com.epay.merchant.mapper;
-
-import com.epay.merchant.dto.MerchantOnboardBankAccountDto;
-import com.epay.merchant.dto.MerchantOnboardingDto;
-import com.epay.merchant.model.request.OnboardingRequest;
-import com.epay.merchant.model.response.MerchantBankAccResponse;
-import org.mapstruct.Builder;
-import org.mapstruct.Mapper;
-import org.mapstruct.Mapping;
-import org.mapstruct.Mappings;
-
-import java.util.List;
-
-@Mapper(builder = @Builder(disableBuilder = true), componentModel = "spring")
-//@Mapper(componentModel = "spring", unmappedTargetPolicy = ReportingPolicy.IGNORE)
-public interface OnboardingMapper {
-
-
-        @Mapping(source = "merchant", target = "merchant")
-        @Mapping(source = "user", target = "user")
-        @Mapping(source = "bankAccounts", target = "bankAccounts")
-        OnboardingRequest toOnboardingRequest(MerchantOnboardingDto dto);
-
-        List<MerchantOnboardBankAccountDto> toBankAccountList(List<MerchantBankAccResponse> list);
-
-        @Mappings({
-//                @Mapping(source = "mId", target = "merchantId"),
-                @Mapping(source = "accHolderName", target = "accHolderName"),
-//                @Mapping(source = "accountUniqueIdentifier", target = "accUniqueIdentifier"),
-//                @Mapping(source = "accountNumber", target = "accountNumber"),
-//                @Mapping(source = "accountType", target = "accountType"),
-//                @Mapping(source = "bankName", target = "bankName"),
-//                @Mapping(source = "ifscCode", target = "ifscCode"),
-//                @Mapping(source = "branchName", target = "branch"),
-//                @Mapping(source = "approved", target = "approved"),
-//                @Mapping(source = "primary", target = "primary")
-        })
-        MerchantOnboardBankAccountDto toBankAccount(MerchantBankAccResponse dto);
-
-}
--------------
-package com.epay.merchant.dto;
-
-import com.epay.merchant.model.response.MerchantBankAccResponse;
-import com.epay.merchant.model.response.MerchantBankAccountResponse;
-import lombok.AllArgsConstructor;
-import lombok.Builder;
-import lombok.Data;
-import lombok.NoArgsConstructor;
-
-import java.util.List;
-
-/**
- * Class Name: MerchantOnboardingDto
- * *
- * Description:Represents a request for onboarding a new merchant and user, typically used during the registration process.
- * *
- * Author: Rahul Prajapati
- * <p>
- * Copyright (c) 2026 [State Bank of India]
- * All rights reserved
- * *
- * Version:1.0
- */
-@Data
-@NoArgsConstructor
-@Builder
-@AllArgsConstructor
-public class MerchantOnboardingDto {
-   private MerchantDto merchant;
-   private MerchantUserDto user;
-   private List<MerchantBankAccResponse> bankAccounts;
-
-}
------------------------
-package com.epay.merchant.model.response;
-
-import lombok.AllArgsConstructor;
-import lombok.Data;
-import lombok.NoArgsConstructor;
-import lombok.ToString;
-
-@AllArgsConstructor
-@Data
-@ToString
-@NoArgsConstructor
-public class MerchantBankAccResponse {
-    private String merchantId;
-    private String accHolderName;
-    private String accUniqueIdentifier;
-    @ToString.Exclude
-    private String accountNumber;
-    private String accountType;
-    private String bankName;
-    private String ifscCode;
-    private String branch;
-    private String branchCode;
-    private boolean isApproved;
-    private boolean isPrimary;
-}
-------------------------------
-@Service
-@RequiredArgsConstructor
-public class AdminService {
- private final LoggerUtility log = LoggerFactoryUtility.getLogger(this.getClass());
-    private final OnboardingValidator onboardingValidator;
-    private final AdminValidator adminValidator;
-    private final MerchantUserValidator mIdValidator;
-    private final MerchantEntityGroupMapper merchantEntityGroupMapper;
-    private final MerchantMapper merchantMapper;
-    private final HelpSupportService helpSupportService;
-    private final MerchantBankService merchantBankService;
-    private final AdminDao adminDao;
-    private final ObjectMapper objectMapper;
-    private final TokenService tokenService;
-    private final OnboardingMapper onboardingMapper;
-
-    /***
-     * Fetching merchantDetails on the basis of mId
-     * @param mId String
-     */
-    public void  onboardAdminPortalMerchant(String mId){
-        log.info("Processing merchant onboarding request for mid : {}",mId);
-        MerchantResponse<MerchantOnboardingDto> adminMerchantInfoDto = adminDao.getMerchantsDetailsByMId(mId);
-        MerchantOnboardingDto onboardingDto = adminMerchantInfoDto.getData().getFirst();
-        OnboardingRequest onboardingRequest = onboardingMapper.toOnboardingRequest(onboardingDto);
-        onboardingMerchant(onboardingRequest);
-        log.info("Completed merchant onboarding for mid : {}",mId);
-    }
-}
-}
-====================
-public class AdminPortalServicesClient extends ApiClient {
-    public static final String LOG_EXCEPTION = "Got exception {}";
-    private final LoggerUtility logger = LoggerFactoryUtility.getLogger(this.getClass());   
-
-public MerchantResponse<MerchantOnboardingDto> getMerchantOnboardDetails(String mId) {
-        return getMerchantResponse(MERCHANT_ONBOARDING_ENDPOINT.formatted(mId), new ParameterizedTypeReference<>() {});
-    }
-    /**
-     *
-     * @param urlPath String
-     * @param typeReference ParameterizedTypeReference of  MerchantResponse
-     * @return MerchantResponse
-     * @param <T> MerchantResponse
-     */
-    protected <T> MerchantResponse<T> getMerchantResponse(String urlPath, ParameterizedTypeReference<MerchantResponse<T>> typeReference) {
-        try {
-            URI uri = URI.create(getBaseUrl() + urlPath);
-            logger.info("Get call URI: {}", uri);
-            MerchantResponse<T> merchantResponse =
-                    getWebClient()
-                            .get()
-                            .uri(uri)
-                            .headers(httpHeaders -> httpHeaders.addAll(prepareHttpHeaders()))
-                            .exchangeToMono(response -> response.bodyToMono(typeReference))
-                            .block();
-            validateResponse(merchantResponse);
-            return  merchantResponse;
-        } catch (NestedRuntimeException e) {
-            logger.error(LOG_EXCEPTION, e.getMessage());
-            throw new MerchantException(EXTERNAL_SERVICE_ERROR_CODE, MessageFormat.format(EXTERNAL_SERVICE_ERROR_MESSAGE, getServiceName()));
+INSERT INTO MASTER_TABLE (
+    MASTER_TYPE,
+    NAME,
+    IS_BULK_ALLOWED,
+    IS_MAKER_CHECKER_ENABLED,
+    IS_HEADER_PRESENT,
+    FILE_EXTENSION,
+    DELIMITER,
+    CHARSET_NAME,
+    FILE_FORMAT_CONFIG,
+    FILE_CHECKSUM,
+    STATUS,
+    DESCRIPTION,
+    CREATED_BY,
+    CREATED_AT,
+    UPDATED_BY,
+    UPDATED_AT
+) VALUES (
+    'CONSTITUTION',
+    'Constitution',
+    1,
+    1,
+    1,
+    'csv',
+    ',',
+    'UTF-8',
+    TO_CLOB(q'~{
+      "delimiter": ",",
+      "charset": "UTF-8",
+      "columns": [
+        {
+          "fieldName": "constitution_name",
+          "headerName": "ConstitutionName",
+          "required": true
+        },
+        {
+          "fieldName": "status",
+          "headerName": "Status",
+          "required": false,
+          "defaultValue": "ACTIVE"
         }
+      ]
+    }~'),
+    NULL,
+    'ACTIVE',
+    'Bulk upload configuration for Constitution master. Expected CSV header: ConstitutionName,Status',
+    'SYSTEM',
+    1775000000,
+    'SYSTEM',
+    1775000000
+);
+
+
+
+package com.epay.admin.portal.validator;
+
+import com.epay.admin.portal.master.dto.CountryCurrencyDTO;
+import lombok.RequiredArgsConstructor;
+import org.springframework.stereotype.Component;
+
+import java.util.ArrayList;
+
+@Component
+@RequiredArgsConstructor
+public class CountryCurrencyValidator extends BaseValidator {
+
+    public void validateRequest(CountryCurrencyDTO dto){
+        errorDtoList = new ArrayList<>();
+        checkMandatoryField(dto.getCountryCode(),"");
+        checkMandatoryField(dto.getCurrency(),"");
+        checkMandatoryField(dto.getCountryName(),"");
+        checkMandatoryField(dto.getCurrencyCode(),"");
+        throwIfErrors();
+        checkForLeadingTrailingAndSingleSpace(dto.getCountryCode(), "");
+        checkForLeadingTrailingAndSingleSpace(dto.getCountryName(),"" );
+        checkForLeadingTrailingAndSingleSpace(dto.getCurrency(), "");
+        checkForLeadingTrailingAndSingleSpace(dto.getCurrencyCode(),"");
+        throwIfErrors();
     }
+
+}
