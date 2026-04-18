@@ -1,202 +1,160 @@
-public AdminPortalResponse<WorkflowResponse> submitCreate(String masterType, Object dto) {
-        MasterType resolvedMasterType = resolveMasterType(masterType);
-        log.info("Submitting create workflow for masterType={}", resolvedMasterType);
-        MasterHandler handler = handlerFactory.getHandler(resolvedMasterType);
-        ConstitutionDTO constitutionDto = mapper.convertValue(dto, ConstitutionDTO.class);
-        handler.validateCreate(constitutionDto);
-        MasterWorkflow wf = handler.toWorkflow(constitutionDto, null);
-        masterWorkflowDao.save(wf);
-        log.info("Create workflow submitted successfully for masterType={} with workflowId={}", resolvedMasterType, wf.getId());
-        return AdminPortalResponse.<WorkflowResponse>builder().status(SUCCESS_RESPONSE_CODE).data(List.of(WorkflowResponse.builder().message("Request submitted").status("PENDING").workflowId(wf.getId()).build())).build();
+@PreAuthorize("hasAnyRole('ONBOARDING_MANAGER')")
+    @PostMapping("/{masterType}")
+    public AdminPortalResponse<WorkflowResponse> createMaster(@PathVariable String masterType, @Valid @RequestBody Object dto) {
+        log.info("Received create master request for masterType={}", masterType);
+        return wfService.submitCreate(masterType, dto);
     }
 
+@Service
+@Data
+@RequiredArgsConstructor
+public class AdminMasterService {
+
+    private final MasterWorkflowDao masterWorkflowDao;
+    private final MasterHandlerFactory handlerFactory;
+    private final MasterBulkUploadService masterBulkUploadService;
+    private final ObjectMapper objectMapper;
+    private final LoggerUtility log = LoggerFactoryUtility.getLogger(this.getClass());
+
+    public AdminPortalResponse<WorkflowResponse> submitCreate(String masterType, Object dto) {
+        MasterType master = MasterType.getMasterType(masterType);
+        log.info("Submitting create workflow for masterType={}", master);
+        MasterHandler<?, ?> handler = handlerFactory.getHandler(master);
+        MasterWorkflow wf = buildWorkflow(handler, dto, null);
+        masterWorkflowDao.save(wf);
+        log.info("Create workflow submitted successfully for masterType={} with workflowId={}", master, wf.getId());
+        return AdminPortalResponse.<WorkflowResponse>builder().status(SUCCESS_RESPONSE_CODE).data(List.of(WorkflowResponse.builder().message("Request submitted").status("PENDING").workflowId(wf.getId()).build())).build();
+    }
+    private <T> MasterWorkflow buildWorkflow(MasterHandler<T, ?> handler, Object request, UUID id) {
+        T dto = convertRequest(handler, request);
+        if(id == null){
+            handler.validateCreate(dto);
+        }else{
+            handler.validateUpdate(dto);}
+        return handler.toWorkflow(dto, id);
+    }
+}
+
+@Component
+public class MasterHandlerFactory {
+    private final LoggerUtility log = LoggerFactoryUtility.getLogger(this.getClass());
+    private final Map<MasterType, MasterHandler<?, ?>> handlerMap = new EnumMap<>(MasterType.class);
+
+    @Autowired
+    public MasterHandlerFactory(List<MasterHandler<?, ?>> handlers) {
+        handlers.forEach(handler -> {
+             if (handler instanceof ConstitutionHandler) {
+                handlerMap.put(MasterType.CONSTITUTION, handler);
+                log.info("Registered handler={} for masterType={}", handler.getClass().getSimpleName(), MasterType.CONSTITUTION);
+            }
+        });
+    }
+
+ 
+    public MasterHandler<?, ?> getHandler(MasterType masterType) {
+        MasterHandler<?, ?> handler = handlerMap.get(masterType);
+        if (handler == null) {
+            log.warn("No handler registered for masterType={}", masterType);
+            throw new AdminPortalException(NOT_FOUND_ERROR_CODE, MessageFormat.format(NOT_FOUND_ERROR_MESSAGE, "Handler for master type " + masterType));
+        }
+        return handler;
+    }
+}
+
+import com.epay.admin.portal.master.entity.MasterWorkflow;
+import com.epay.admin.portal.model.response.AdminPortalResponse;
+import com.fasterxml.jackson.databind.ObjectMapper;
+
+import java.util.Map;
+import java.util.UUID;
+
+
+public interface MasterHandler <T, E>{
+
+    void validateCreate(T dto);
+
+    void validateUpdate(T dto);
+
+    MasterWorkflow toWorkflow(T dto, UUID existingId);
+
+    void applyApproved(MasterWorkflow wf);
+
+    AdminPortalResponse<?> search(Object request);
+
+    Class<T> getDtoClass();
+    default T fromBulkRecord(Map<String, String> record, ObjectMapper objectMapper) {
+        return objectMapper.convertValue(record, getDtoClass());
+    }
+
+}
+
+@Component
+@RequiredArgsConstructor
+public class ConstitutionHandler implements MasterHandler<ConstitutionDTO, Constitution> {
+
+    private final ConstitutionDao constitutionDao;
+    private final MasterWorkflowDao masterWorkflowDao;
+    private final ObjectMapper mapper;
+    private final ConstitutionMapper constitutionMapper;
+    private final ValidateMasterType validateMasterType;
+    private final LoggerUtility log = LoggerFactoryUtility.getLogger(this.getClass());
+
+    @Override
+    public void validateCreate(ConstitutionDTO dto) {
+        log.info("Validating constitution create request for constitutionName={}", dto.getConstitutionName());
+        validateMasterType.validateRequest(dto);
+        if (StringUtils.isBlank(dto.getConstitutionName())) {
+            throw new AdminPortalException("1001", "Constitution name is required");
+        }
+        if (constitutionDao.existsByConstitutionName(dto.getConstitutionName()))
+            throw new AdminPortalException("1001","Constitution name already exists");
+    }
+
+ 
+    @Override
+    public void validateUpdate(ConstitutionDTO dto) {
+        log.info("Validating constitution update request for constitutionName={}", dto.getConstitutionName());
+        validateMasterType.validateRequest(dto);
+        if(!constitutionDao.existsByConstitutionName(dto.getConstitutionName())){
+            throw new AdminPortalException("1001","Constitution name does not exists");
+        }
+    }
+
+  
+    @Override
+    public MasterWorkflow toWorkflow(ConstitutionDTO dto, UUID id) {
+        log.info("Creating constitution workflow for constitutionName={} and recordId={}", dto.getConstitutionName(), id);
+        Constitution entity = constitutionMapper.toEntity(dto);
+        entity.setConstitutionCode(MasterUtil.generateMasterCode(dto.getConstitutionName(), MasterType.CONSTITUTION));
+        entity.setStatus(StringUtils.defaultIfBlank(dto.getStatus(), "ACTIVE"));
+        entity.setCreatedAt(System.currentTimeMillis());
+        entity.setCreatedBy(EPayIdentityUtil.getUserPrincipal().getUsername());
+        String newVal = writeValueAsString(entity, "constitution create payload");
+        String oldVal = null;
+        if (id != null) {
+            Constitution old = constitutionDao.findById(id)
+                    .orElseThrow(() -> new AdminPortalException(NOT_FOUND_ERROR_CODE, MessageFormat.format(NOT_FOUND_ERROR_MESSAGE, "Constitution")));
+            oldVal = writeValueAsString(old, "constitution existing payload");
+        }
+        return MasterWorkflow.builder().masterType(MasterType.CONSTITUTION).recordId(id).newValue(newVal).oldValue(oldVal).status(WorkflowStatus.PENDING).actionType("CREATE").makerId(EPayIdentityUtil.getUserPrincipal().getUsername()).build();
+    }
+
+ 
+    @Override
+    public void applyApproved(MasterWorkflow workflow) {
+        log.info("Applying approved constitution workflow for workflowId={}", workflow.getId());
+        Constitution data = readWorkflowValue(workflow.getNewValue(), workflow.getId());
+        if (workflow.getRecordId() != null) {
+            data.setId(workflow.getRecordId());
+        }
+        constitutionDao.save(data);
+        workflow.setStatus(WorkflowStatus.APPROVED);
+    }
 
 in MasterBulkUploadService in bulkUpload service when file is uploaded and then we do validation and othere things. if you will identify then we will know then we are saving details multiples times in DB and that can make process slow .
 so can we make some part like async , like when we upload the file MasterFileUploadDtls table for succes record , id suposse we have lots of record then it make take lots of time to process . so that why can we make this process async and we can also try to upload success record in DB ib bulk is possible ,
 Try to optimize the code as possible without braking  our any main functionally
----------------------------------------
---liquibase formatted sql
---changeset codex:1776000000
 
-CREATE TABLE CONSTITUTION (
-    ID RAW(16) DEFAULT SYS_GUID() PRIMARY KEY NOT NULL,
-    CONSTITUTION_NAME VARCHAR2(255 CHAR) NOT NULL,
-    CONSTITUTION_CODE VARCHAR2(100 CHAR) NOT NULL,
-    STATUS VARCHAR2(50 CHAR) NOT NULL,
-    VERSION NUMBER(10) DEFAULT 0 NOT NULL,
-    CREATED_BY VARCHAR2(100 CHAR) NOT NULL,
-    CREATED_AT NUMBER NOT NULL,
-    UPDATED_BY VARCHAR2(100 CHAR) NOT NULL,
-    UPDATED_AT NUMBER NOT NULL,
-    CONSTRAINT UK_CONSTITUTION_NAME UNIQUE (CONSTITUTION_NAME),
-    CONSTRAINT UK_CONSTITUTION_CODE UNIQUE (CONSTITUTION_CODE)
-);
-
-CREATE INDEX IDX_CONSTITUTION_STATUS ON CONSTITUTION (STATUS);
-
-CREATE TABLE MASTER_WORKFLOW (
-    ID RAW(16) DEFAULT SYS_GUID() PRIMARY KEY NOT NULL,
-    MASTER_TYPE VARCHAR2(100 CHAR) NOT NULL,
-    RECORD_ID RAW(16),
-    ACTION_TYPE VARCHAR2(50 CHAR) NOT NULL,
-    OLD_VALUE CLOB,
-    NEW_VALUE CLOB,
-    STATUS VARCHAR2(50 CHAR) NOT NULL,
-    MAKER_ID VARCHAR2(100 CHAR) NOT NULL,
-    CHECKER_ID VARCHAR2(100 CHAR),
-    REMARK VARCHAR2(1000 CHAR),
-    CREATED_AT NUMBER NOT NULL,
-    UPDATED_AT NUMBER NOT NULL
-);
-
-CREATE INDEX IDX_MASTER_WORKFLOW_TYPE_STATUS ON MASTER_WORKFLOW (MASTER_TYPE, STATUS);
-CREATE INDEX IDX_MASTER_WORKFLOW_RECORD_ID ON MASTER_WORKFLOW (RECORD_ID);
-
-
-----------------------------------
---liquibase formatted sql
---changeset saurabh:1775000000
-
-CREATE TABLE MASTER_TABLE (
-    ID RAW(16) DEFAULT SYS_GUID() PRIMARY KEY NOT NULL,
-    MASTER_TYPE VARCHAR2(100) NOT NULL,
-    NAME VARCHAR2(255) NOT NULL,
-    IS_BULK_ALLOWED NUMBER(1) DEFAULT 0 NOT NULL,
-    IS_MAKER_CHECKER_ENABLED NUMBER(1) DEFAULT 1 NOT NULL,
-    IS_HEADER_PRESENT NUMBER(1) DEFAULT 1 NOT NULL,
-    FILE_EXTENSION VARCHAR2(20) DEFAULT 'csv' NOT NULL,
-    DELIMITER VARCHAR2(5) DEFAULT ',' NOT NULL,
-    CHARSET_NAME VARCHAR2(50) DEFAULT 'UTF-8' NOT NULL,
-    FILE_FORMAT_CONFIG CLOB NOT NULL,
-    FILE_CHECKSUM VARCHAR2(500),
-    STATUS VARCHAR2(50) NOT NULL,
-    DESCRIPTION VARCHAR2(500),
-    CREATED_BY VARCHAR2(100) NOT NULL,
-    CREATED_AT NUMBER NOT NULL,
-    UPDATED_BY VARCHAR2(100) NOT NULL,
-    UPDATED_AT NUMBER NOT NULL,
-    CONSTRAINT UK_MASTER_TABLE_MASTER_TYPE UNIQUE (MASTER_TYPE)
-);
-
-CREATE TABLE MASTER_FILE_UPLOAD (
-    ID RAW(16) DEFAULT SYS_GUID() PRIMARY KEY NOT NULL,
-    MASTER_TYPE VARCHAR2(100) NOT NULL,
-    FILE_NAME VARCHAR2(255) NOT NULL,
-    TOTAL_RECORD NUMBER DEFAULT 0,
-    SUCCESS_RECORD NUMBER DEFAULT 0,
-    FAILED_RECORD NUMBER DEFAULT 0,
-    FILE_CHECKSUM VARCHAR2(500) NOT NULL,
-    STATUS VARCHAR2(50) NOT NULL,
-    ERROR_MESSAGE VARCHAR2(2000),
-    REMARK VARCHAR2(500),
-    CREATED_BY VARCHAR2(100) NOT NULL,
-    CREATED_AT NUMBER NOT NULL,
-    UPDATED_BY VARCHAR2(100) NOT NULL,
-    UPDATED_AT NUMBER NOT NULL
-);
-
-CREATE TABLE MASTER_FILE_UPLOAD_DTLS (
-    ID RAW(16) DEFAULT SYS_GUID() PRIMARY KEY NOT NULL,
-    MASTER_FILE_UPLOAD_ID RAW(16) NOT NULL,
-    RECORD_JSON CLOB NOT NULL,
-    STATUS VARCHAR2(50) NOT NULL,
-    ERROR_MESSAGE VARCHAR2(2000),
-    REMARK VARCHAR2(500),
-    CREATED_BY VARCHAR2(100) NOT NULL,
-    CREATED_AT NUMBER NOT NULL,
-    UPDATED_BY VARCHAR2(100) NOT NULL,
-    UPDATED_AT NUMBER NOT NULL,
-    CONSTRAINT FK_MASTER_FILE_UPLOAD_DTLS_UPLOAD FOREIGN KEY (MASTER_FILE_UPLOAD_ID)
-        REFERENCES MASTER_FILE_UPLOAD (ID)
-);
-
-CREATE INDEX IDX_MASTER_FILE_UPLOAD_TYPE ON MASTER_FILE_UPLOAD (MASTER_TYPE);
-CREATE INDEX IDX_MASTER_FILE_UPLOAD_CHKSUM ON MASTER_FILE_UPLOAD (MASTER_TYPE, FILE_CHECKSUM);
-CREATE INDEX IDX_MASTER_FILE_UPLOAD_DTLS_UPLOAD ON MASTER_FILE_UPLOAD_DTLS (MASTER_FILE_UPLOAD_ID);
-
---changeset saurabh:1775000000_1
-
-INSERT INTO MASTER_TABLE (
-    MASTER_TYPE,
-    NAME,
-    IS_BULK_ALLOWED,
-    IS_MAKER_CHECKER_ENABLED,
-    IS_HEADER_PRESENT,
-    FILE_EXTENSION,
-    DELIMITER,
-    CHARSET_NAME,
-    FILE_FORMAT_CONFIG,
-    FILE_CHECKSUM,
-    STATUS,
-    DESCRIPTION,
-    CREATED_BY,
-    CREATED_AT,
-    UPDATED_BY,
-    UPDATED_AT
-) VALUES (
-    'CONSTITUTION',
-    'Constitution',
-    1,
-    1,
-    1,
-    'csv',
-    ',',
-    'UTF-8',
-    TO_CLOB(q'~{
-      "delimiter": ",",
-      "charset": "UTF-8",
-      "columns": [
-        {
-          "fieldName": "constitution_name",
-          "headerName": "ConstitutionName",
-          "required": true
-        },
-        {
-          "fieldName": "status",
-          "headerName": "Status",
-          "required": false,
-          "defaultValue": "ACTIVE"
-        }
-      ]
-    }~'),
-    NULL,
-    'ACTIVE',
-    'Bulk upload configuration for Constitution master. Expected CSV header: ConstitutionName,Status',
-    'SYSTEM',
-    1775000000,
-    'SYSTEM',
-    1775000000
-);
-
-
-
-package com.epay.admin.portal.validator;
-
-import com.epay.admin.portal.master.dto.CountryCurrencyDTO;
-import lombok.RequiredArgsConstructor;
-import org.springframework.stereotype.Component;
-
-import java.util.ArrayList;
-
-@Component
-@RequiredArgsConstructor
-public class CountryCurrencyValidator extends BaseValidator {
-
-    public void validateRequest(CountryCurrencyDTO dto){
-        errorDtoList = new ArrayList<>();
-        checkMandatoryField(dto.getCountryCode(),"");
-        checkMandatoryField(dto.getCurrency(),"");
-        checkMandatoryField(dto.getCountryName(),"");
-        checkMandatoryField(dto.getCurrencyCode(),"");
-        throwIfErrors();
-        checkForLeadingTrailingAndSingleSpace(dto.getCountryCode(), "");
-        checkForLeadingTrailingAndSingleSpace(dto.getCountryName(),"" );
-        checkForLeadingTrailingAndSingleSpace(dto.getCurrency(), "");
-        checkForLeadingTrailingAndSingleSpace(dto.getCurrencyCode(),"");
-        throwIfErrors();
-    }
-
-}
 
 
 -----------------------------------------
