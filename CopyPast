@@ -1,3 +1,27 @@
+Request for OTP Template and Connection Details for Profile Update
+
+
+Dear Team,
+
+I hope this message finds you well.
+
+We request you to kindly provide the OTP template and the necessary connection details (such as URL and port) required for OTP generation in the Merchant Service during profile updates.
+
+Currently, we are using the following message for notifying users upon profile update:
+"Dear user, your profile mobile/email has been updated. Kindly request you to check it."
+
+However, we require the appropriate OTP template and integration details to proceed with the implementation.
+
+We appreciate your support and request you to share the required information at the earliest.
+
+Thanks and regards,
+Saurabh Mahto
+
+
+
+
+
+
 ADMIN PORATL/ MERCHANT SERVICE:-
 1. consent Evaluate api 
 2. Consent Write API
