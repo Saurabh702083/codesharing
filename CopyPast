@@ -1,3 +1,25 @@
+
+
+Subject
+Update on Consent Management Development and Pending Clarifications
+Dear Team,
+We would like to inform you that the development of the Consent Management module has been completed from our end.
+However, we require a few clarifications and confirmations to proceed further:
+Consent Revocation API
+To enable the consent revocation functionality, we request you to provide the API details, including the request/response structure and the expected values to be passed in the API.
+Handling Multiple MIDs for a Single User
+In scenarios where a user is associated with multiple MIDs, we propose the following approach:
+Consent will be captured for one MID at the time of user login.
+For other MIDs, consent will be prompted when the user selects a specific MID.
+This approach has been discussed with Nilima. We request your confirmation/approval to proceed with this implementation.
+All other functionalities have been implemented using our simulator, and the system is ready for demonstration. We would be happy to schedule a demo at your convenience—please let us know a suitable time.
+Looking forward to your guidance and approval on the above points.
+Thanks and regards,
+[Your Name]
+
+
+
+
 Request for OTP Template and Connection Details for Profile Update
 
 
