@@ -1,837 +1,278 @@
+Error parsing purpose response Cannot deserialize value of type `java.lang.String` from Object value (token `JsonToken.START_OBJECT`)
+ at [Source: REDACTED (`StreamReadFeature.INCLUDE_SOURCE_IN_LOCATION` disabled); line: 1, column: 1469] (through reference chain: com.epay.cs.model.response.EisPurposeResponse["EIS_RESPONSE"]->com.epay.cs.model.response.EisPurposeInnerResponse["body"]->java.util.ArrayList[1]->com.epay.cs.model.response.BodyDto["purposes"]->java.util.ArrayList[0]->com.epay.cs.model.response.PurposeDto["bankProducts"]->java.util.ArrayList[0])
+2026-05-18 07:11:49.155 ERROR | com.epay.cs.exceptionhandlers.CommunicationExceptionHandler:57 | principal= | scenario=/api/communication/v1/testconsent/purpose | operation=POST | correlation=79a1bd97-3b25-4b51-8cf0-9f5a69d12c33 | handleEPayServiceException | ReportingException occurred: Invalid JSON data provided in Eis Api.
+com.epay.cs.exception.CommunicationException: Invalid JSON data provided in Eis Api.
+	at com.epay.cs.dao.ConsentDao.getConsentPurpose(ConsentDao.java:121)
+	at com.epay.cs.service.ConsentService.getConsentPurpose(ConsentService.java:391)
+	at com.epay.cs.controller.ConsentTestController.getPurposeText(ConsentTestController.java:46)
+	at java.base/jdk.internal.reflect.DirectMethodHandleAccessor.invoke(DirectMethodHandleAccessor.java:103)
+	at java.base/java.lang.reflect.Method.invoke(Method.java:580)
+	at org.springframework.web.method.support.InvocableHandlerMethod.doInvoke(InvocableHandlerMethod.java:255)
+	at org.springframework.web.method.support.InvocableHandlerMethod.invokeForRequest(InvocableHandlerMethod.java:188)
+	at org.springframework.web.servlet.mvc.method.annotation.ServletInvocableHandlerMethod.invokeAndHandle(ServletInvocableHandlerMethod.java:118)
+	at org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandlerAdapter.invokeHandlerMethod(RequestMappingHandlerAdapter.java:926)
+	at org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandlerAdapter.handleInternal(RequestMappingHandlerAdapter.java:831)
+	at org.springframework.web.servlet.mvc.method.AbstractHandlerMethodAdapter.handle(AbstractHandlerMethodAdapter.java:87)
+	at org.springframework.web.servlet.DispatcherServlet.doDispatch(DispatcherServlet.java:1089)
+	at org.springframework.web.servlet.DispatcherServlet.doService(DispatcherServlet.java:979)
+	at org.springframework.web.servlet.FrameworkServlet.processRequest(FrameworkServlet.java:1014)
+	at org.springframework.web.servlet.FrameworkServlet.doPost(FrameworkServlet.java:914)
+	at jakarta.servlet.http.HttpServlet.service(HttpServlet.java:547)
+	at org.springframework.web.servlet.FrameworkServlet.service(FrameworkServlet.java:885)
+	at jakarta.servlet.http.HttpServlet.service(HttpServlet.java:614)
+	at org.apache.catalina.core.ApplicationFilterChain.internalDoFilter(ApplicationFilterChain.java:195)
+	at org.apache.catalina.core.ApplicationFilterChain.doFilter(ApplicationFilterChain.java:140)
+	at org.apache.tomcat.websocket.server.WsFilter.doFilter(WsFilter.java:51)
+	at org.apache.catalina.core.ApplicationFilterChain.internalDoFilter(ApplicationFilterChain.java:164)
+	at org.apache.catalina.core.ApplicationFilterChain.doFilter(ApplicationFilterChain.java:140)
+	at com.sbi.epay.authentication.filter.CustomHeaderFilter.doFilter(CustomHeaderFilter.java:27)
+	at org.apache.catalina.core.ApplicationFilterChain.internalDoFilter(ApplicationFilterChain.java:164)
+	at org.apache.catalina.core.ApplicationFilterChain.doFilter(ApplicationFilterChain.java:140)
+	at com.sbi.epay.authentication.config.CorsConfig.doFilter(CorsConfig.java:52)
+	at org.apache.catalina.core.ApplicationFilterChain.internalDoFilter(ApplicationFilterChain.java:164)
+	at org.apache.catalina.core.ApplicationFilterChain.doFilter(ApplicationFilterChain.java:140)
+	at org.springframework.web.filter.CompositeFilter$VirtualFilterChain.doFilter(CompositeFilter.java:108)
+	at org.springframework.security.web.FilterChainProxy.lambda$doFilterInternal$3(FilterChainProxy.java:231)
+	at org.springframework.security.web.ObservationFilterChainDecorator$FilterObservation$SimpleFilterObservation.lambda$wrap$1(ObservationFilterChainDecorator.java:479)
+	at org.springframework.security.web.ObservationFilterChainDecorator$AroundFilterObservation$SimpleAroundFilterObservation.lambda$wrap$1(ObservationFilterChainDecorator.java:340)
+	at org.springframework.security.web.ObservationFilterChainDecorator.lambda$wrapSecured$0(ObservationFilterChainDecorator.java:82)
+	at org.springframework.security.web.ObservationFilterChainDecorator$VirtualFilterChain.doFilter(ObservationFilterChainDecorator.java:128)
+	at org.springframework.security.web.access.intercept.AuthorizationFilter.doFilter(AuthorizationFilter.java:100)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.wrapFilter(ObservationFilterChainDecorator.java:240)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.doFilter(ObservationFilterChainDecorator.java:227)
+	at org.springframework.security.web.ObservationFilterChainDecorator$VirtualFilterChain.doFilter(ObservationFilterChainDecorator.java:137)
+	at org.springframework.security.web.access.ExceptionTranslationFilter.doFilter(ExceptionTranslationFilter.java:126)
+	at org.springframework.security.web.access.ExceptionTranslationFilter.doFilter(ExceptionTranslationFilter.java:120)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.wrapFilter(ObservationFilterChainDecorator.java:240)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.doFilter(ObservationFilterChainDecorator.java:227)
+	at org.springframework.security.web.ObservationFilterChainDecorator$VirtualFilterChain.doFilter(ObservationFilterChainDecorator.java:137)
+	at org.springframework.security.web.session.SessionManagementFilter.doFilter(SessionManagementFilter.java:131)
+	at org.springframework.security.web.session.SessionManagementFilter.doFilter(SessionManagementFilter.java:85)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.wrapFilter(ObservationFilterChainDecorator.java:240)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.doFilter(ObservationFilterChainDecorator.java:227)
+	at org.springframework.security.web.ObservationFilterChainDecorator$VirtualFilterChain.doFilter(ObservationFilterChainDecorator.java:137)
+	at org.springframework.security.web.authentication.AnonymousAuthenticationFilter.doFilter(AnonymousAuthenticationFilter.java:100)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.wrapFilter(ObservationFilterChainDecorator.java:240)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.doFilter(ObservationFilterChainDecorator.java:227)
+	at org.springframework.security.web.ObservationFilterChainDecorator$VirtualFilterChain.doFilter(ObservationFilterChainDecorator.java:137)
+	at org.springframework.security.web.servletapi.SecurityContextHolderAwareRequestFilter.doFilter(SecurityContextHolderAwareRequestFilter.java:179)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.wrapFilter(ObservationFilterChainDecorator.java:240)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.doFilter(ObservationFilterChainDecorator.java:227)
+	at org.springframework.security.web.ObservationFilterChainDecorator$VirtualFilterChain.doFilter(ObservationFilterChainDecorator.java:137)
+	at org.springframework.security.web.savedrequest.RequestCacheAwareFilter.doFilter(RequestCacheAwareFilter.java:63)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.wrapFilter(ObservationFilterChainDecorator.java:240)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.doFilter(ObservationFilterChainDecorator.java:227)
+	at org.springframework.security.web.ObservationFilterChainDecorator$VirtualFilterChain.doFilter(ObservationFilterChainDecorator.java:137)
+	at org.springframework.web.filter.OncePerRequestFilter.doFilter(OncePerRequestFilter.java:110)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.wrapFilter(ObservationFilterChainDecorator.java:240)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.doFilter(ObservationFilterChainDecorator.java:227)
+	at org.springframework.security.web.ObservationFilterChainDecorator$VirtualFilterChain.doFilter(ObservationFilterChainDecorator.java:137)
+	at com.sbi.epay.authentication.filter.JwtFilter.whiteListingCheck(JwtFilter.java:164)
+	at com.sbi.epay.authentication.filter.JwtFilter.doFilterInternal(JwtFilter.java:103)
+	at org.springframework.web.filter.OncePerRequestFilter.doFilter(OncePerRequestFilter.java:116)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.wrapFilter(ObservationFilterChainDecorator.java:240)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.doFilter(ObservationFilterChainDecorator.java:227)
+	at org.springframework.security.web.ObservationFilterChainDecorator$VirtualFilterChain.doFilter(ObservationFilterChainDecorator.java:137)
+	at org.springframework.security.web.authentication.logout.LogoutFilter.doFilter(LogoutFilter.java:107)
+	at org.springframework.security.web.authentication.logout.LogoutFilter.doFilter(LogoutFilter.java:93)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.wrapFilter(ObservationFilterChainDecorator.java:240)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.doFilter(ObservationFilterChainDecorator.java:227)
+	at org.springframework.security.web.ObservationFilterChainDecorator$VirtualFilterChain.doFilter(ObservationFilterChainDecorator.java:137)
+	at org.springframework.web.filter.CorsFilter.doFilterInternal(CorsFilter.java:91)
+	at org.springframework.web.filter.OncePerRequestFilter.doFilter(OncePerRequestFilter.java:116)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.wrapFilter(ObservationFilterChainDecorator.java:240)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.doFilter(ObservationFilterChainDecorator.java:227)
+	at org.springframework.security.web.ObservationFilterChainDecorator$VirtualFilterChain.doFilter(ObservationFilterChainDecorator.java:137)
+	at org.springframework.security.web.header.HeaderWriterFilter.doHeadersAfter(HeaderWriterFilter.java:90)
+	at org.springframework.security.web.header.HeaderWriterFilter.doFilterInternal(HeaderWriterFilter.java:75)
+	at org.springframework.web.filter.OncePerRequestFilter.doFilter(OncePerRequestFilter.java:116)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.wrapFilter(ObservationFilterChainDecorator.java:240)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.doFilter(ObservationFilterChainDecorator.java:227)
+	at org.springframework.security.web.ObservationFilterChainDecorator$VirtualFilterChain.doFilter(ObservationFilterChainDecorator.java:137)
+	at org.springframework.security.web.context.SecurityContextHolderFilter.doFilter(SecurityContextHolderFilter.java:82)
+	at org.springframework.security.web.context.SecurityContextHolderFilter.doFilter(SecurityContextHolderFilter.java:69)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.wrapFilter(ObservationFilterChainDecorator.java:240)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.doFilter(ObservationFilterChainDecorator.java:227)
+	at org.springframework.security.web.ObservationFilterChainDecorator$VirtualFilterChain.doFilter(ObservationFilterChainDecorator.java:137)
+	at org.springframework.security.web.context.request.async.WebAsyncManagerIntegrationFilter.doFilterInternal(WebAsyncManagerIntegrationFilter.java:62)
+	at org.springframework.web.filter.OncePerRequestFilter.doFilter(OncePerRequestFilter.java:116)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.wrapFilter(ObservationFilterChainDecorator.java:240)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.doFilter(ObservationFilterChainDecorator.java:227)
+	at org.springframework.security.web.ObservationFilterChainDecorator$VirtualFilterChain.doFilter(ObservationFilterChainDecorator.java:137)
+	at org.springframework.security.web.session.DisableEncodeUrlFilter.doFilterInternal(DisableEncodeUrlFilter.java:42)
+	at org.springframework.web.filter.OncePerRequestFilter.doFilter(OncePerRequestFilter.java:116)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.wrapFilter(ObservationFilterChainDecorator.java:240)
+	at org.springframework.security.web.ObservationFilterChainDecorator$AroundFilterObservation$SimpleAroundFilterObservation.lambda$wrap$0(ObservationFilterChainDecorator.java:323)
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.doFilter(ObservationFilterChainDecorator.java:224)
+	at org.springframework.security.web.ObservationFilterChainDecorator$VirtualFilterChain.doFilter(ObservationFilterChainDecorator.java:137)
+	at org.springframework.security.web.FilterChainProxy.doFilterInternal(FilterChainProxy.java:233)
+	at org.springframework.security.web.FilterChainProxy.doFilter(FilterChainProxy.java:191)
+	at org.springframework.web.filter.CompositeFilter$VirtualFilterChain.doFilter(CompositeFilter.java:113)
+	at org.springframework.web.servlet.handler.HandlerMappingIntrospector.lambda$createCacheFilter$3(HandlerMappingIntrospector.java:195)
+	at org.springframework.web.filter.CompositeFilter$VirtualFilterChain.doFilter(CompositeFilter.java:113)
+	at org.springframework.web.filter.CompositeFilter.doFilter(CompositeFilter.java:74)
+	at org.springframework.security.config.annotation.web.configuration.WebMvcSecurityConfiguration$CompositeFilterChainProxy.doFilter(WebMvcSecurityConfiguration.java:230)
+	at org.springframework.web.filter.DelegatingFilterProxy.invokeDelegate(DelegatingFilterProxy.java:362)
+	at org.springframework.web.filter.DelegatingFilterProxy.doFilter(DelegatingFilterProxy.java:278)
+	at org.apache.catalina.core.ApplicationFilterChain.internalDoFilter(ApplicationFilterChain.java:164)
+	at org.apache.catalina.core.ApplicationFilterChain.doFilter(ApplicationFilterChain.java:140)
+	at org.springframework.web.filter.RequestContextFilter.doFilterInternal(RequestContextFilter.java:100)
+	at org.springframework.web.filter.OncePerRequestFilter.doFilter(OncePerRequestFilter.java:116)
+	at org.apache.catalina.core.ApplicationFilterChain.internalDoFilter(ApplicationFilterChain.java:164)
+	at org.apache.catalina.core.ApplicationFilterChain.doFilter(ApplicationFilterChain.java:140)
+	at org.springframework.web.filter.FormContentFilter.doFilterInternal(FormContentFilter.java:93)
+	at org.springframework.web.filter.OncePerRequestFilter.doFilter(OncePerRequestFilter.java:116)
+	at org.apache.catalina.core.ApplicationFilterChain.internalDoFilter(ApplicationFilterChain.java:164)
+	at org.apache.catalina.core.ApplicationFilterChain.doFilter(ApplicationFilterChain.java:140)
+	at org.springframework.web.filter.ServerHttpObservationFilter.doFilterInternal(ServerHttpObservationFilter.java:113)
+	at org.springframework.web.filter.OncePerRequestFilter.doFilter(OncePerRequestFilter.java:116)
+	at org.apache.catalina.core.ApplicationFilterChain.internalDoFilter(ApplicationFilterChain.java:164)
+	at org.apache.catalina.core.ApplicationFilterChain.doFilter(ApplicationFilterChain.java:140)
+	at org.springframework.web.filter.CharacterEncodingFilter.doFilterInternal(CharacterEncodingFilter.java:201)
+	at org.springframework.web.filter.OncePerRequestFilter.doFilter(OncePerRequestFilter.java:116)
+	at org.apache.catalina.core.ApplicationFilterChain.internalDoFilter(ApplicationFilterChain.java:164)
+	at org.apache.catalina.core.ApplicationFilterChain.doFilter(ApplicationFilterChain.java:140)
+	at org.apache.catalina.core.StandardWrapperValve.invoke(StandardWrapperValve.java:167)
+	at org.apache.catalina.core.StandardContextValve.invoke(StandardContextValve.java:90)
+	at org.apache.catalina.authenticator.AuthenticatorBase.invoke(AuthenticatorBase.java:483)
+	at org.apache.catalina.core.StandardHostValve.invoke(StandardHostValve.java:115)
+	at org.apache.catalina.valves.ErrorReportValve.invoke(ErrorReportValve.java:93)
+	at org.apache.catalina.core.StandardEngineValve.invoke(StandardEngineValve.java:74)
+	at org.apache.catalina.valves.RemoteIpValve.invoke(RemoteIpValve.java:731)
+	at org.apache.catalina.connector.CoyoteAdapter.service(CoyoteAdapter.java:344)
+	at org.apache.coyote.http11.Http11Processor.service(Http11Processor.java:397)
+	at org.apache.coyote.AbstractProcessorLight.process(AbstractProcessorLight.java:63)
+	at org.apache.coyote.AbstractProtocol$ConnectionHandler.process(AbstractProtocol.java:905)
+	at org.apache.tomcat.util.net.NioEndpoint$SocketProcessor.doRun(NioEndpoint.java:1743)
+	at org.apache.tomcat.util.net.SocketProcessorBase.run(SocketProcessorBase.java:52)
+	at org.apache.tomcat.util.threads.ThreadPoolExecutor.runWorker(ThreadPoolExecutor.java:1190)
+	at org.apache.tomcat.util.threads.ThreadPoolExecutor$Worker.run(ThreadPoolExecutor.java:659)
+	at org.apache.tomcat.util.threads.TaskThread$WrappingRunnable.run(TaskThread.java:63
 
 
-Subject
-Update on Consent Management Development and Pending Clarifications
-Dear Team,
-We would like to inform you that the development of the Consent Management module has been completed from our end.
-However, we require a few clarifications and confirmations to proceed further:
-Consent Revocation API
-To enable the consent revocation functionality, we request you to provide the API details, including the request/response structure and the expected values to be passed in the API.
-Handling Multiple MIDs for a Single User
-In scenarios where a user is associated with multiple MIDs, we propose the following approach:
-Consent will be captured for one MID at the time of user login.
-For other MIDs, consent will be prompted when the user selects a specific MID.
-This approach has been discussed with Nilima. We request your confirmation/approval to proceed with this implementation.
-All other functionalities have been implemented using our simulator, and the system is ready for demonstration. We would be happy to schedule a demo at your convenience—please let us know a suitable time.
-Looking forward to your guidance and approval on the above points.
-Thanks and regards,
-[Your Name]
-
-
-
-
-Request for OTP Template and Connection Details for Profile Update
-
-
-Dear Team,
-
-I hope this message finds you well.
-
-We request you to kindly provide the OTP template and the necessary connection details (such as URL and port) required for OTP generation in the Merchant Service during profile updates.
-
-Currently, we are using the following message for notifying users upon profile update:
-"Dear user, your profile mobile/email has been updated. Kindly request you to check it."
-
-However, we require the appropriate OTP template and integration details to proceed with the implementation.
-
-We appreciate your support and request you to share the required information at the earliest.
-
-Thanks and regards,
-Saurabh Mahto
-
-
-
-
-
-
-ADMIN PORATL/ MERCHANT SERVICE:-
-1. consent Evaluate api 
-2. Consent Write API
-3. Kafka Consumer (Consent Write Response)
-4. Pending Consent Sync Scheduler
-
-Communication service:
-1. Consent Check API- sagar
-2. Privacy Notice Method (EIS Integration)- rahul p
-3. Purpose Method (EIS Integration)
-4. Consent Write Method
-5. Kafka Consumer & Producer (Consent Write Flow)
------------------------------------------------------------
-
-1.
-
-Description:
-Implement a Consent Evaluate API in Admin Server to determine consent status for a user.
-The API will check consent in the local database, integrate with Communication Service / EIS Wrapper APIs when required, and return consent status along with Privacy Notice and Purpose details.
-
-This API will be used at MIF Login and Merchant Panel Login touchpoints to validate whether consent is active or re-consent is required.
-
-API Details
-Endpoint: POST /admin/consent/evaluate
-
-Request Body:
-{
-  "merchantMifId": "String",
-  "dpCIF": "string",
-  "dpMobile": "string",
-  "touchPointId": "string",
-  "purposeSetId": "string"
-}
-
-Response Body:
-{
-  "merchantMifId": "String",
-  "isConsentActive": true,
-  "consentStatus": "Active | Inactive | Expired | Revoked",
-
-  "consentReadResponse": {
-    "status": "String",
-    "consentId": "string",
-    "dpIP": "String",
-    "locale": "string",
-    "timestamp": "YYYY-MM-DDTHH:MM:SSZ",
-    "version": "String"
-  },
-
-  "privacyNoticeResponse": {
-    "version": "String",
-    "privacyText": "String"
-  },
-
-  "purposeResponse": {
-    "purposes": [],
-    "code": "String",
-    "version": "int",
-    "title": "String",
-    "description": "String",
-    "isEssential": "String",
-    "validityDays": "long",
-    "timestamp": "YYYY-MM-DDTHH:MM:SSZ",
-    "locale": "string"
-  }
-}
-
-Developmnt Flow:-
-Step 1 — Validate Request
-
-Step 2 — Check Consent in Local DB
-Case A — Consent Active
-If status = Active and not expired:
-Return response from local DB.
-isConsentActive = true
-Do NOT call Communication Service.
-
-Step 3 — If Consent Not Active (Inactive / Expired / Revoked / Not Found)
-Call Consent Read API (via Communication/EIS Service).
-Case A — Communication Service returns Active Consent
-Insert/Update consent in local DB.
-Update consent version, timestamp, status.
-Return isConsentActive = true.
-
-Case B — Communication Service returns New Consent + Privacy + Purpose
-This means re-consent required.
-Then:
-Save privacy notice in privacy_master table.
-Save purpose in purpose_master table.
-Compare privacy version & purpose version with master table:
-If different → update master tables.
-Return:
-isConsentActive = false
-privacyNoticeResponse
-purposeResponse
-
-Step 4 — If Communication/EIS Service Down
-Fallback mechanism:
-Read latest privacy notice from privacy_master
-Read latest purposes from purpose_master
-Return them in response.
-isConsentActive = false.
-
-Acceptance Criteria
-API returns active consent if available locally.
-If not available, system calls Consent Read API.
-Privacy and Purpose master updated when version changes.
-Fallback works when external service is down.
-Response structure matches agreed contract.
-Consent stored per Mobile + MIF ID + Touchpoint + PurposeSet.
-Expiry calculated using validityDays.
-
-----------------------------------------------------------------------
-
-2.
-Issue: Admin Server – Consent Write API
-
-Description
-Implement Consent Write API in Admin Server to capture, modify, or revoke user consent.
-This API will not call CCMS/EIS synchronously. Instead, it will:
-Validate request
-Update consent sync status = PENDING
-Publish Kafka event
-Return success response immediately
-Kafka consumer service will call EIS Consent Write API and update sync status after success/failure.
-
-API Details 	
-
-Endpoint: POST /admin/consent/write
-
-Request Body:
-{
-  "dpCIF": "String",
-  "dpMobile": "String",
-  "dpEmail": "String",
-  "dpIP": "String",
-  "locale": "String",
-  "timestamp": "String",
-  "consentAction": "Capture | Modification | Revocation"
-}
-
-Response Body:
-{
-  "message": "Consent has been updated"
+@Builder
+@AllArgsConstructor
+@NoArgsConstructor
+@JsonInclude(JsonInclude.Include.NON_NULL)
+@Data
+public class EisPurposeResponse {
+    @JsonProperty("EIS_RESPONSE")
+    private EisPurposeInnerResponse eisResponse;
+    @JsonProperty("ERROR_CODE")
+    private String errorCode;
+    @JsonProperty("ERROR_DESCRIPTION")
+    private String errorDescription;
+    @JsonProperty("RESPONSE_STATUS")
+    private String responseStatus;
 }
 
 
+@Data
+@NoArgsConstructor
+@AllArgsConstructor
+public class EisPurposeInnerResponse {
 
-Detailed Flow (Step-by-Step)
-Step 1 — Validate Request
-
-Step 2 — Update Local Consent Table
-
-Find consent record using:
-
-dpCIF / dpMobile + touchPointId + purposeSetId
-
-Update:
-
-Field	Value
-consent_action	Capture / Modification / Revocation
-sync_status	PENDING
-updated_at	Current timestamp
-
-If Capture → status = Active
-If Modification → status = Active
-If Revocation → status = Revoked
-
-Step 3 — Publish Kafka Event
-Publish event to Kafka topic:
-Topic Name: "consent.write.request"
-
-Kafka Message Payload
-{
-  "dpCIF": "String",
-  "dpMobile": "String",
-  "dpEmail": "String",
-  "dpIP": "String",
-  "locale": "String",
-  "timestamp": "String",
-  "consentAction": "String",
-  "touchPointId": "String",
-  "purposeSetId": "String",
-  "consents": [
-    {
-      "purposeCode": "String",
-      "purposeVersion": "int",
-      "consentAction": "capture/modify/revoke"
-    }
-  ]
-}
-
-Kafka consumer will:
-Call EIS Consent Write API
-Receive consentId
-Update local DB sync_status = SUCCESS / FAILED
-
-Step 4 — Return Response
-Immediately return:
-{
-  "message": "Consent has been updated"
-}
-
-Acceptance Criteria
-API validates request.
-Consent sync_status updated to PENDING.
-Kafka event published.
-API returns success immediately.
-Consumer calls EIS API and updates DB.
-Retry mechanism implemented.
-Revocation updates status = Revoked.
-Consent ID stored after CCMS success.
-
-
-------------------------------------------------
-3.
-
-Issue: Admin Server – Kafka Consumer (Consent Write Response)
-
-Description
-Implement a Kafka Consumer in Admin Server that listens to consent write response events from Communication Service.
-Based on the response, the system will update the consent sync status in the local database.
-This consumer is part of the asynchronous consent write flow, where Admin Server publishes consent write events and Communication Service processes them and sends back the response via Kafka.
-
-Message Payload (Kafka Response Event):-
-
-Communication Service will publish response like:
-
-{
-  "merchantMifId": "String",
-  "dpCIF": "String",
-  "dpMobile": "String",
-  "consentId": "String",
-  "status": "SUCCESS | FAILED | TIMEOUT",
-  "errorMessage": "String",
-  "timestamp": "YYYY-MM-DDTHH:MM:SSZ"
-}
-Detailed Flow (Step-by-Step)
-Step 1 — Kafka Listener
-Create Kafka Listener in Admin Server:
-@KafkaListener(topics = "consent.write.response", groupId = "admin-consent-group")
-
-Step 2 — Consume Message
-When message received:
-Parse JSON
-Validate fields
-Find consent record using:
-merchantMifId + dpCIF/dpMobile
-
-Step 3 — Update Sync Status
-Kafka Status	DB sync_status
-SUCCESS	SUCCESS
-FAILED	PENDING
-TIMEOUT	PENDING
-
-If SUCCESS:
-
-Update consent_id
-Update sync_status = SUCCESS
-Update last_sync_time
-
-If FAILED/TIMEOUT:
-
-Keep sync_status = PENDING
-Increment retry_count
-Store error_message
-
-Acceptance Criteria:
-Kafka consumer listens to consent.write.response topic.
-On SUCCESS → sync_status updated to SUCCESS.
-On FAILED/TIMEOUT → sync_status remains PENDING.
-retry_count incremented on failure.
-consent_id stored on success.
-Error message stored on failure.
-Logs created for each event processed.
-
-----------------------------------------------------------------
-
-4.
-Issue: Admin Server – Pending Consent Sync Scheduler
-
-Description
-Implement a Scheduler in Admin Server to retry syncing consents whose sync_status = PENDING.
-Flow:
-Scheduler fetches pending consents from DB.
-Scheduler publishes each consent to Kafka (Communication Service).
-Communication Service calls CCMS Consent Write API.
-Communication Service publishes SUCCESS / FAILED event on Kafka.
-Admin Server Kafka Consumer listens to the response event.
-If SUCCESS → update DB sync_status = SUCCESS.
-If FAILED → keep sync_status = PENDING (will retry via scheduler).
-This ensures reliable and asynchronous consent sync with CCMS.
-
-
-Complete Flow (Step-by-Step)
-Step 1 — Scheduler Job
-Create scheduler that runs every 5 minutes.
-@Scheduled(cron = "0 */5 * * * *")
-Scheduler will:
-
-Fetch consents where sync_status = PENDING
-Send them one by one to Kafka topic → consent.write.request
-
-
-Step 2 — Fetch Pending Consents
-SELECT * FROM consent_table
-WHERE sync_status = 'PENDING'
-ORDER BY updated_at ASC;
-
-Process records one by one to avoid duplicate writes.
-
-Step 3 — Publish to Kafka
-
-Kafka Topic: consent.write.request
-
-Kafka Payload:
-
-{
-  "merchantMifId": "String",
-  "dpCIF": "String",
-  "dpMobile": "String",
-  "dpEmail": "String",
-  "dpIP": "String",
-  "locale": "String",
-  "timestamp": "String",
-  "consentAction": "String",
-  "touchPointId": "String",
-  "purposeSetId": "String",
-  "purposes": [
-    {
-      "purposeCode": "String",
-      "purposeVersion": "int",
-      "consentAction": "capture/modify/revoke"
-    }
-  ]
-}
-
-After publish → Do NOT change status. Keep PENDING.
-
-Step 4 — Communication Service
-Communication Service will:
-Consume Kafka event.
-Call EIS Consent Write API.
-Publish result event to Kafka topic:
-consent.write.response
-
-
-Step 5 — Admin Server Kafka Consumer
-Admin server listens to: consent.write.response
-
-Response Payload:
-{
-  "merchantMifId": "String",
-  "dpCIF": "String",
-  "dpMobile": "String",
-  "consentId": "String",
-  "status": "SUCCESS | FAILED",
-  "errorMessage": "String",
-  "timestamp": "String"
-}
-
-Step 6 — Update DB Based on Response
-Response Status	DB sync_status
-SUCCESS	SUCCESS
-FAILED	PENDING
-
-If SUCCESS:
-
-Update sync_status = SUCCESS
-Update consent_id
-Update last_sync_time
-
-If FAILED:
-
-Keep sync_status = PENDING
-Update error_message
-Will retry via scheduler
-
-Database Table (consent_table)
-
-Acceptance Criteria
-Scheduler runs every 5 minutes.
-Fetches consents with sync_status = PENDING.
-Publishes Kafka message for each consent.
-Communication Service sends SUCCESS/FAILED event.
-Admin Kafka consumer updates DB:
-SUCCESS → SUCCESS
-FAILED → Remains PENDING
-System retries automatically until success.
-Proper logging implemented.
-----------------------------------------------------------
-
-5.
-
-Issue: Communication Service – Consent Check API
-
-Description
-
-Implement Consent Check API in Communication Service.
-This API will:
-Validate request
-Call EIS Consent Read API
-Encrypt request using Gen6 Encryption (AES GCM)
-Decrypt EIS response
-If consent active → return consent details
-If consent inactive → call Privacy Notice API and Purpose API from EIS
-Return privacy notice and purpose in response
-This API acts as a wrapper between Admin Server and EIS/CCMS.
-
-
-API Details
-Endpoint: POST /communication/consent/check
-
-Request Body:
-{
-  "merchantMifId": "String",
-  "touchPointId": "String",
-  "purposeSetId": "String",
-  "dpCIF": "String",
-  "dpMobile": "String"
+    private Boolean success;
+    private Integer statusCode;
+    private String messages;
+    private String locale;
+    private String errors;
+    private List<BodyDto> body;
+    private String timestamp;
+    private String correlationId;
 }
 
 
-Response Body:
-{
-  "merchantMifId": "String",
-  "touchPointId": "String",
-  "purposeSetId": "String",
-  "dpCIF": "String",
-  "dpMobile": "String",
-  "isConsentActive": true,
-  "consentStatus": "Active | Inactive | Expired | Revoked",
+@Data
+@NoArgsConstructor
+@AllArgsConstructor
+@Builder
+public class BodyDto {
 
-  "consentReadResponse": {
-    "status": "String",
-    "consentId": "String",
-    "dpIP": "String",
-    "locale": "String",
-    "timestamp": "YYYY-MM-DDTHH:MM:SSZ",
-    "version": "String"
-  },
-
-  "privacyNoticeResponse": {
-    "version": "String",
-    "privacyText": "String"
-  },
-
-  "purposeResponse": {
-    "purposes": [],
-    "code": "String",
-    "version": "int",
-    "title": "String",
-    "description": "String",
-    "isEssential": "String",
-    "validityDays": "long",
-    "timestamp": "YYYY-MM-DDTHH:MM:SSZ",
-    "locale": "String"
-  }
-}
-
-Detailed Flow (Step-by-Step)
-Step 1 — Validate Request
-
-Step 2 — Call EIS Consent Read API
-
-EIS API:/api/consent-core/query/consents/read
-
-Before calling EIS:
-Encrypt request payload using Gen6 AES-GCM encryption
-Send encrypted payload to EIS
-Receive encrypted response
-Decrypt response
-(Encryption required as per EIS wrapper integration.)
-
-Step 3 — Check Consent Status
-Consent Status	Action
-Active	Return consent details
-Inactive	Fetch privacy + purpose
-Expired	Fetch privacy + purpose
-Revoked	Fetch privacy + purpose
-
-Step 4 — If Consent Active
-Return:
-isConsentActive = true
-consentReadResponse
-Do NOT call privacy/purpose API
-
-Step 5 — If Consent Not Active
-Call EIS APIs:
-Privacy Notice API:-
-/api/consent-core/query/privacy-notice/read
-Purpose API:-
-/api/consent-core/query/purposes/read
-
-Encrypt request → Call API → Decrypt response → Return privacy + purpose.
-
-Acceptance Criteria:-
-API validates request.
-EIS Consent Read API called with encrypted payload.
-Response decrypted correctly.
-If consent active → return consent details.
-If consent inactive → call privacy + purpose API.
-Privacy and purpose returned in response.
-Proper error handling implemented.
-Logging added for encryption, API call, response.
-
---------------------------------------------------
-6.
-
-Issue: Communication Service – Privacy Notice Method (EIS Integration)
-
-Description
-Implement a Privacy Notice method in Communication Service that will be used by the Consent Check API to fetch the latest privacy notice text from EIS.
-This method will:
-Create encrypted request using Gen6 Encryption (AES/GCM/NoPadding).
-Call EIS Privacy Notice API via WebClient.
-Decrypt the response received from EIS.
-Parse the privacy notice text.
-Return latest privacy notice in response.
-This method will be called when consent is inactive/expired/revoked to show latest privacy notice to the user.
-
-API Details (EIS)
-EIS Endpoint: POST /api/consent-core/query/privacy-notice/read
-
-Privacy Notice Request
-{
-  "touchPointId": "string"
-}
-
-Privacy Notice Response (After Decryption)
-{
-  "privacyNotice": "String"
+    private String containerTitle;
+    private String containerDescription;
+    private List<PurposeDto> purposes;
+    private Boolean isContainer;
 }
 
 
+@Data
+@NoArgsConstructor
+@AllArgsConstructor
+@Builder
+public class PurposeDto {
 
-Detailed Flow (Step-by-Step)
-Step 1 — Prepare Request
-Create request payload:
-{
-  "touchPointId": "value"
+    private String code;
+    private Integer version;
+    private String title;
+    private String description;
+    private Boolean hasValidity;
+    private Integer validityDays;
+    private List<String> dataPoints;
+    private List<String> bankProducts;
+    private Boolean isEssential;
+    private Boolean isProductSpecific;
+    private Boolean isNTB;
+    private Boolean isETB;
 }
 
-Step 2 — Encrypt Request
 
-Encrypt payload using:
-
-AES/GCM/NoPadding (Gen6 Encryption)
-
-Use utility:
-
-Step 3 — Call EIS API
-Use Spring WebClient:
-
-Step 4 — Decrypt Response
-After receiving response:
-
-Step 5 — Parse Response
-Extract:
-Field	Description
-privacyNotice	Privacy text
-
-Step 6 — Return Response
-
-Return object:
-
-{
-  "version": "String",
-  "privacyText": "String"
-}
-
-Version can be generated using:
-
-Hash of text OR
-Version from DB OR
-Version from EIS response
-
-Acceptance Criteria:
-Method created to fetch privacy notice.
-Request encrypted using Gen6 encryption.
-EIS API called via WebClient.
-Response decrypted successfully.
-Privacy text parsed and returned.
-Proper error handling implemented.
-Logging added.
-
---------------------------------------------------------
-7.
-Issue: Communication Service – Purpose Method (EIS Integration)
-
-Description
-
-Implement a Purpose method in Communication Service that will be used by the Consent Check API to fetch the latest purpose details from EIS.
-
-This method will:
-
-Create encrypted request using Gen6 Encryption (AES/GCM/NoPadding)
-Call EIS Purpose API using WebClient
-Decrypt the response
-Parse purpose data (including containers & purposes array)
-Return structured purpose response
-
-This is required when consent is inactive/expired/revoked to show updated purposes before re-consent.
-
-API Details (EIS)
-EIS Endpoint
-POST /api/consent-core/query/purposes/read
-Purpose Request
-{
-  "touchPointId": "string",
-  "purposeSetId": "string"
-}
-Purpose Response (After Decryption)
-{
-  "body": [
-    {
-      "isContainer": true,
-      "containerTitle": "string",
-      "containerDescription": "string",
-      "purposes": [
-        {
-          "code": "string",
-          "version": 1,
-          "title": "string",
-          "description": "string",
-          "isEssential": true,
-          "validityDays": 365,
-          "dataPoints": [],
-          "bankProducts": []
+   public EisPurposeResponse getConsentPurpose(String aesKey, String eisEncryptionKey, String encryptedRequest) {
+        EisConsentResponse eisResponse = eisServicesClient.postEncryptedRequest(aesKey, eisEncryptionKey,encryptedRequest, EisConsentResponse.class);
+        String decrypted = DCMSEISEncryptionDecryptionUtil.decrypt(eisResponse.getEncryptedResponse(),aesKey);
+        logger.info("Decrypted EIS Response: {}", decrypted);
+        try {
+            return objectMapper.readValue(decrypted, EisPurposeResponse.class);
+        }catch (JsonProcessingException e) {
+            logger.error("Error parsing purpose response {}", e.getMessage());
+            throw new CommunicationException(JSON_ERROR_CODE, MessageFormat.format(JSON_ERROR_MESSAGE, EIS_API));
         }
-      ]
     }
-  ]
-}
-Method to Implement
-Service Method
-fetchPurpose(String touchPointId, String purposeSetId)
-Detailed Flow (Step-by-Step)
-
-Step 1 — Prepare Request
-{
-  "touchPointId": "value",
-  "purposeSetId": "value"
-}
-
-Step 2 — Encrypt Request
-
-Use:
-
-AES/GCM/NoPadding
-
-Step 3 — Call EIS API
-Using WebClient:
-
-Step 4 — Decrypt Response
-
-Step 5 — Parse Response
-
-Step 6 — Build Response
-Return structured response:
-
-{
-  "purposes": [],
-  "code": "String",
-  "version": "int",
-  "title": "String",
-  "description": "String",
-  "isEssential": "boolean",
-  "validityDays": "long",
-  "timestamp": "YYYY-MM-DDTHH:MM:SSZ",
-  "locale": "string"
-}
-
-Acceptance Criteria:
-Method implemented to fetch purpose data.
-Request encrypted using Gen6 encryption.
-EIS API invoked via WebClient.
-Response decrypted successfully.
-Purpose data parsed correctly (including nested structure).
-Structured response returned.
-Error handling implemented.
-Logging added.
-
------------------------------------------------------------------------
-8.
-
-Issue: Communication Service – Consent Write Method
-
-Description
-Implement a Consent Write method in Communication Service.
-This method will be used by the Kafka Listener to send consent write request to EIS/CCMS and publish the response back to Kafka so that Admin Server / Merchant Service can update consent sync status.
-This method will:
-Receive consent write event from Kafka Listener.
-Create encrypted request using Gen6 Encryption (AES/GCM/NoPadding).
-Call EIS Consent Write API via WebClient.
-Decrypt the response.
-Build consent write response.
-Publish response event to Kafka (Success / Failure).
-
-This completes the async consent write flow between Admin → Communication Service → EIS → Admin.
 
 
-EIS API Details
-EIS Endpoint:POST /api/consent-core/command/consents/write
-Consent Write Request (From Kafka)
-{
-  "touchPointId": "value",
-  "purposeSetId": "value",
-  "dpData": {
-    "dpCIF": "value",
-    "dpMobile": "value",
-    "dpEmail": "value",
-    "dpIP": "value",
-    "locale": "value",
-    "timestamp": "value"
-  },
-  "consents": [
-    {
-      "purposeCode": "value",
-      "purposeVersion": 1,
-      "consentAction": "Capture | Modification | Revocation",
-      "consentedProducts": ["value", "value"]
+
+    public <T> T postEncryptedRequest(String aesKey, String eisEncryptionKey, String encryptedRequest, Class<T> responseType){
+        logger.info("Calling EIS Privacy Notice API");
+        logger.info("AccessToken is : {}", eisEncryptionKey);
+        URI uri = URI.create(getBaseUrl() + EIS_SERVICES_ENDPOINT);
+        logger.info("EIS URI: {}",uri);
+//        String safeToken = Base64.getUrlEncoder().withoutPadding().encodeToString(eisEncryptionKey.getBytes());
+        String responseString = getWebClient().post()
+                .uri(uri)
+                .header("Content-Type", MediaType.APPLICATION_JSON_VALUE)
+                .header("Accept", MediaType.APPLICATION_JSON_VALUE)
+                .header("AccessToken", eisEncryptionKey)
+//                .headers(httpHeaders -> httpHeaders.addAll(prepareHttpHeaders(safeToken)))
+                .bodyValue(encryptedRequest)
+                .retrieve()
+                .onStatus(
+                        httpStatus -> httpStatus.is4xxClientError() || httpStatus.is5xxServerError(),
+                        clientResponse -> clientResponse.bodyToMono(String.class).flatMap(errorBody -> {
+                            logger.error("EIS Service call failed with status: {}, error body: {}",
+                                    clientResponse.statusCode().value(), errorBody); // 👈 log status & body
+                            return Mono.error(new CommunicationException(
+                                    "1001",
+                                    MessageFormat.format(" is down", "EIS Service")
+                            ));
+                        })
+                )
+                .bodyToMono(new ParameterizedTypeReference<String>() {})
+                .block();
+        logger.info("RAW response received from EIS {}", responseString);
+        return decryptResponse(aesKey, responseString, responseType);
     }
-  ]
-}
 
-Consent Write Response (After Decryption from EIS)
-{
-  "status": "SUCCESS | FAILED",
-  "consentId": "string",
-  "message": "string",
-  "timestamp": "YYYY-MM-DDTHH:MM:SSZ"
-}
-
-
-Detailed Flow (Step-by-Step)
-Step 1 — Kafka Listener Receives Event
-
-Kafka Topic:consent-write-request-topic
-
-Listener: ConsentWriteKafkaListener
-
-Step 2 — Encrypt Request
-
-Step 3 — Call EIS Consent Write API
-Using WebClient:
-
-Step 4 — Decrypt Response
-
-Step 5 — Build Response Event
-Create response event:
-
-{
-  "dpCIF": "value",
-  "status": "SUCCESS | FAILED",
-  "consentId": "string",
-  "message": "string",
-  "timestamp": "value"
-}
-Step 6 — Publish Response to Kafka
-Kafka Topic: consent-write-response-topic
-Kafka Publisher:
-
-Acceptance Criteria:
-Kafka listener implemented.
-Consent write method implemented.
-Request encrypted using Gen6 encryption.
-EIS Consent Write API called.
-Response decrypted successfully.
-Kafka response event published.
-Success/Failure handled correctly.
-Logging implemented.
-
---------------------------------------------------------------
-9
-
-Issue: Communication Service – Kafka Consumer & Producer (Consent Write Flow)
-
-Description:
-Implement Kafka Consumer and Producer in Communication Service for Consent Write asynchronous flow.
-
-This component will:
-
-Consume Consent Write Request event from Admin Server / Merchant Service.
-Call Consent Write Method (EIS API call with Gen6 encryption).
-Store Kafka request and response (including error) in DB for audit/logging.
-Publish Consent Write Response event to Kafka for Admin Server / Merchant Service.
-
-This enables full async consent processing via Kafka.
-
-Database Table (Kafka Event Log)
+    private <T> T decryptResponse(String aesKey, String responseString, Class<T> responseType){
+        try {
+            logger.info("Decrypting EIS Response...");
+            EisConsentResponse eisResponse = objectMapper.readValue(responseString, EisConsentResponse.class);
+            String decrypted = DCMSEISEncryptionDecryptionUtil.decrypt(eisResponse.getEncryptedResponse(),aesKey);
+            logger.info("Decrypted EIS Response: {}", decrypted);
+//            logger.info("Decrypted eisPurposeMapper EIS Response: {}", eisPurposeMapper.convert(decrypted));
+            return (T) eisResponse;
+//            return (T) objectMapper.readValue(decrypted, EisResponse.class);
+        } catch (JsonProcessingException e) {
+            logger.error("Error decrypting privacy notice response {}", e.getMessage());
+            throw new CommunicationException(JSON_ERROR_CODE, MessageFormat.format(JSON_ERROR_MESSAGE, EIS_API));
+        }
+    }
