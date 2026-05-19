@@ -1,3 +1,22 @@
+@Repository
+public interface ConsentCaptureInfoRepository extends JpaRepository<ConsentCaptureInfo, UUID> {
+
+    @Query("""
+            SELECT COUNT(c) > 0 FROM ConsentCaptureInfo c
+            WHERE c.consentCode = :consentCode
+            AND c.touchpointCode = :touchpointCode
+            AND c.purposeCode = :purposeCode
+            AND c.syncStatus = :syncStatus
+            """)
+    boolean existsByFields(
+            @Param("consentCode") String consentCode,
+            @Param("touchpointCode") String touchpointCode,
+            @Param("purposeCode") String purposeCode,
+            @Param("syncStatus") SyncStatus syncStatus
+    );
+}
+
+
 @Table(name = "CONSENT_CAPTURE_INFO")
 public class ConsentCaptureInfo extends AuditEntityByDate {
     @Id
