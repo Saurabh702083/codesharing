@@ -1,6 +1,43 @@
 @Repository
 public interface ConsentCaptureInfoRepository extends JpaRepository<ConsentCaptureInfo, UUID> {
 
+    Optional<ConsentCaptureInfo> findByConsentCode(String consentCode);
+}
+
+@Service
+@RequiredArgsConstructor
+public class ConsentCaptureInfoService {
+
+    private final ConsentCaptureInfoRepository repository;
+
+    @Transactional
+    public ConsentCaptureInfo upsert(ConsentCaptureInfo incoming) {
+        return repository.findByConsentCode(incoming.getConsentCode())
+                .map(existing -> updateFields(existing, incoming))
+                .orElse(incoming);
+        // save() handles both insert and update
+        // Hibernate detects if entity is new (null id) or managed (existing id)
+    }
+
+    private ConsentCaptureInfo updateFields(ConsentCaptureInfo existing, ConsentCaptureInfo incoming) {
+        existing.setTouchpointCode(incoming.getTouchpointCode());
+        existing.setPurposeCode(incoming.getPurposeCode());
+        existing.setRequest(incoming.getRequest());
+        existing.setResponse(incoming.getResponse());
+        existing.setRetryCount(incoming.getRetryCount());
+        existing.setSyncStatus(incoming.getSyncStatus());
+        existing.setConsentStatus(incoming.getConsentStatus());
+        return existing;
+    }
+}
+
+
+
+
+
+@Repository
+public interface ConsentCaptureInfoRepository extends JpaRepository<ConsentCaptureInfo, UUID> {
+
     @Query("""
             SELECT COUNT(c) > 0 FROM ConsentCaptureInfo c
             WHERE c.consentCode = :consentCode
