@@ -1,3 +1,27 @@
+@Table(name = "CONSENT_CAPTURE_INFO")
+public class ConsentCaptureInfo extends AuditEntityByDate {
+    @Id
+    @GeneratedValue(strategy = GenerationType.UUID)
+    private UUID id;
+
+    private String consentCode; 
+    private String touchpointCode;
+    private String purposeCode; 
+    private String request;
+    @Lob
+    @Column(columnDefinition = "CLOB")
+    private String response;
+    private int retryCount;
+    @Enumerated(EnumType.STRING)
+    private SyncStatus syncStatus;
+    @Enumerated(EnumType.STRING)
+    private ConsentStatus consentStatus;
+}
+
+write a java code to check if data is present for consentCode,touchpointCode,purposeCode,syncStatus
+
+
+
 Error parsing purpose response Cannot deserialize value of type `java.lang.String` from Object value (token `JsonToken.START_OBJECT`)
  at [Source: REDACTED (`StreamReadFeature.INCLUDE_SOURCE_IN_LOCATION` disabled); line: 1, column: 1469] (through reference chain: com.epay.cs.model.response.EisPurposeResponse["EIS_RESPONSE"]->com.epay.cs.model.response.EisPurposeInnerResponse["body"]->java.util.ArrayList[1]->com.epay.cs.model.response.BodyDto["purposes"]->java.util.ArrayList[0]->com.epay.cs.model.response.PurposeDto["bankProducts"]->java.util.ArrayList[0])
 2026-05-18 07:11:49.155 ERROR | com.epay.cs.exceptionhandlers.CommunicationExceptionHandler:57 | principal= | scenario=/api/communication/v1/testconsent/purpose | operation=POST | correlation=79a1bd97-3b25-4b51-8cf0-9f5a69d12c33 | handleEPayServiceException | ReportingException occurred: Invalid JSON data provided in Eis Api.
