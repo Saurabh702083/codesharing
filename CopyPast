@@ -1,3 +1,126 @@
+
+package com.epay.merchant.validator;
+
+import com.epay.merchant.dao.MerchantUserDao;
+import com.epay.merchant.util.ErrorConstants;
+import com.sbi.epay.logging.utility.LoggerFactoryUtility;
+import com.sbi.epay.logging.utility.LoggerUtility;
+import lombok.RequiredArgsConstructor;
+import org.springframework.stereotype.Component;
+
+import java.text.MessageFormat;
+
+@Component
+@RequiredArgsConstructor
+public class ConsentValidator extends BaseValidator {
+
+    private final LoggerUtility logger = LoggerFactoryUtility.getLogger(this.getClass());
+    private final MerchantUserDao merchantUserDao;
+
+    public void validateConsentForMId(String mId) {
+        logger.info("Checking consent for mId: {}", mId);
+        boolean consentExist = merchantUserDao.isConsentAvail(mId);
+        if (!consentExist) {
+            addError(
+                ErrorConstants.NOT_FOUND_ERROR_CODE,
+                MessageFormat.format(ErrorConstants.NOT_FOUND_ERROR_MESSAGE, "consent")
+            );
+        }
+        throwIfErrors();
+    }
+}
+
+
+
+@RequiredArgsConstructor
+@Component
+public class MerchantBankAccountValidator extends BaseValidator {
+
+    private final LoggerUtility logger = LoggerFactoryUtility.getLogger(this.getClass());
+    private final MerchantBankDao merchantBankDao;
+    private final MerchantInfoDao merchantInfoDao;
+    private final AdminServicesClient adminServicesClient;
+    private final ConsentValidator consentValidator;   // ← replaced MerchantUserValidator
+
+    // ... all other methods remain unchanged ...
+
+    public void validateMId(String mId) {
+        validateMid(mId);
+        consentValidator.validateConsentForMId(mId);   // ← changed call
+        String userName = EPayIdentityUtil.getUserPrincipal().getUsername();
+        List<MerchantInfoDto> merchantInfoForMerchantUser =
+            merchantInfoDao.getAllAccessMerchantInfoForMerchantUser(userName);
+        List<String> validMIds = merchantInfoForMerchantUser.stream()
+            .filter(m -> MerchantStatus.ACTIVE.name().equalsIgnoreCase(m.getStatus()))
+            .map(MerchantInfoDto::getMId)
+            .toList();
+        if (validMIds.contains(mId)) {
+            return;
+        }
+        throw new ValidationException(
+            INVALID_ERROR_CODE,
+            MessageFormat.format(INVALID_ERROR_MESSAGE, MerchantConstant.MID, INVALID_MID_ERROR_MESSAGE)
+        );
+    }
+}
+
+
+
+
+
+@Component
+@RequiredArgsConstructor
+public class MerchantUserValidator extends BaseValidator {
+
+    private final LoggerUtility logger = LoggerFactoryUtility.getLogger(this.getClass());
+    private final MerchantUserDao merchantUserDao;
+    private final MerchantInfoDao merchantInfoDao;
+    private final OtpManagementDao otpManagementDao;
+    private final MerchantBankAccountValidator merchantBankAccountValidator;
+    private final OtpValidator otpValidator;
+    private final ConsentValidator consentValidator;   // ← added
+
+    // ... all other methods remain unchanged ...
+
+    public void validateMid(String mId) {
+        logger.debug("Request Validation start for {}", mId);
+        errorDtoList = new ArrayList<>();
+        checkMandatoryField(mId, MID);
+        throwIfErrors();
+        checkForLeadingTrailingAndSingleSpace(mId, MID);
+        throwIfErrors();
+        validateFixedFieldLength(mId, MID_LENGTH, MID);
+        throwIfErrors();
+        validateFieldWithRegex(mId, ALLOWED_DIGIT_REGEX, MID, INVALID_FORMAT);
+        throwIfErrors();
+        consentValidator.validateConsentForMId(mId);   // ← delegated
+        logger.debug("Request Validation end for {}", mId);
+    }
+
+    public void validateActiveMId(String mId) {
+        boolean existsByMIdAndStatus =
+            merchantInfoDao.isExistsByMIdAndStatus(mId, MerchantStatus.ACTIVE.name());
+        if (!existsByMIdAndStatus) {
+            addError(
+                ErrorConstants.NOT_FOUND_ERROR_CODE,
+                MessageFormat.format(ErrorConstants.NOT_FOUND_ERROR_MESSAGE, VALID_MID)
+            );
+        }
+        throwIfErrors();
+        consentValidator.validateConsentForMId(mId);   // ← delegated
+    }
+
+    public void validateConsentForMId(String mId) {
+        consentValidator.validateConsentForMId(mId);   // ← delegated, kept public for any external callers
+    }
+}
+
+
+
+
+
+
+
 ***************************
 APPLICATION FAILED TO START
 ***************************
