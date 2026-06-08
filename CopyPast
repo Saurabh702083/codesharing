@@ -1,1714 +1,391 @@
+package com.epay.admin.portal.master.util.ENUM;
 
-package com.epay.merchant.validator;
-
-import com.epay.merchant.dao.MerchantUserDao;
-import com.epay.merchant.util.ErrorConstants;
-import com.sbi.epay.logging.utility.LoggerFactoryUtility;
-import com.sbi.epay.logging.utility.LoggerUtility;
-import lombok.RequiredArgsConstructor;
-import org.springframework.stereotype.Component;
+import com.epay.admin.portal.exceptions.AdminPortalException;
+import com.epay.admin.portal.util.ErrorConstants;
 
 import java.text.MessageFormat;
-
-@Component
-@RequiredArgsConstructor
-public class ConsentValidator extends BaseValidator {
-
-    private final LoggerUtility logger = LoggerFactoryUtility.getLogger(this.getClass());
-    private final MerchantUserDao merchantUserDao;
-
-    public void validateConsentForMId(String mId) {
-        logger.info("Checking consent for mId: {}", mId);
-        boolean consentExist = merchantUserDao.isConsentAvail(mId);
-        if (!consentExist) {
-            addError(
-                ErrorConstants.NOT_FOUND_ERROR_CODE,
-                MessageFormat.format(ErrorConstants.NOT_FOUND_ERROR_MESSAGE, "consent")
-            );
-        }
-        throwIfErrors();
-    }
-}
-
-
-
-@RequiredArgsConstructor
-@Component
-public class MerchantBankAccountValidator extends BaseValidator {
-
-    private final LoggerUtility logger = LoggerFactoryUtility.getLogger(this.getClass());
-    private final MerchantBankDao merchantBankDao;
-    private final MerchantInfoDao merchantInfoDao;
-    private final AdminServicesClient adminServicesClient;
-    private final ConsentValidator consentValidator;   // ← replaced MerchantUserValidator
-
-    // ... all other methods remain unchanged ...
-
-    public void validateMId(String mId) {
-        validateMid(mId);
-        consentValidator.validateConsentForMId(mId);   // ← changed call
-        String userName = EPayIdentityUtil.getUserPrincipal().getUsername();
-        List<MerchantInfoDto> merchantInfoForMerchantUser =
-            merchantInfoDao.getAllAccessMerchantInfoForMerchantUser(userName);
-        List<String> validMIds = merchantInfoForMerchantUser.stream()
-            .filter(m -> MerchantStatus.ACTIVE.name().equalsIgnoreCase(m.getStatus()))
-            .map(MerchantInfoDto::getMId)
-            .toList();
-        if (validMIds.contains(mId)) {
-            return;
-        }
-        throw new ValidationException(
-            INVALID_ERROR_CODE,
-            MessageFormat.format(INVALID_ERROR_MESSAGE, MerchantConstant.MID, INVALID_MID_ERROR_MESSAGE)
-        );
-    }
-}
-
-
-
-
-
-@Component
-@RequiredArgsConstructor
-public class MerchantUserValidator extends BaseValidator {
-
-    private final LoggerUtility logger = LoggerFactoryUtility.getLogger(this.getClass());
-    private final MerchantUserDao merchantUserDao;
-    private final MerchantInfoDao merchantInfoDao;
-    private final OtpManagementDao otpManagementDao;
-    private final MerchantBankAccountValidator merchantBankAccountValidator;
-    private final OtpValidator otpValidator;
-    private final ConsentValidator consentValidator;   // ← added
-
-    // ... all other methods remain unchanged ...
-
-    public void validateMid(String mId) {
-        logger.debug("Request Validation start for {}", mId);
-        errorDtoList = new ArrayList<>();
-        checkMandatoryField(mId, MID);
-        throwIfErrors();
-        checkForLeadingTrailingAndSingleSpace(mId, MID);
-        throwIfErrors();
-        validateFixedFieldLength(mId, MID_LENGTH, MID);
-        throwIfErrors();
-        validateFieldWithRegex(mId, ALLOWED_DIGIT_REGEX, MID, INVALID_FORMAT);
-        throwIfErrors();
-        consentValidator.validateConsentForMId(mId);   // ← delegated
-        logger.debug("Request Validation end for {}", mId);
-    }
-
-    public void validateActiveMId(String mId) {
-        boolean existsByMIdAndStatus =
-            merchantInfoDao.isExistsByMIdAndStatus(mId, MerchantStatus.ACTIVE.name());
-        if (!existsByMIdAndStatus) {
-            addError(
-                ErrorConstants.NOT_FOUND_ERROR_CODE,
-                MessageFormat.format(ErrorConstants.NOT_FOUND_ERROR_MESSAGE, VALID_MID)
-            );
-        }
-        throwIfErrors();
-        consentValidator.validateConsentForMId(mId);   // ← delegated
-    }
-
-    public void validateConsentForMId(String mId) {
-        consentValidator.validateConsentForMId(mId);   // ← delegated, kept public for any external callers
-    }
-}
-
-
-
-
-
-
-
-***************************
-APPLICATION FAILED TO START
-***************************
-Description:
-The dependencies of some of the beans in the application context form a cycle:
-adminController defined in URL [jar:nested:/home/default/epay_merchant_service-v-develop-20260601092655.jar/!BOOT-INF/classes/!/com/epay/merchant/controller/AdminController.class]
-↓
-adminService defined in URL [jar:nested:/home/default/epay_merchant_service-v-develop-20260601092655.jar/!BOOT-INF/classes/!/com/epay/merchant/service/AdminService.class]
-↓
-adminValidator defined in URL [jar:nested:/home/default/epay_merchant_service-v-develop-20260601092655.jar/!BOOT-INF/classes/!/com/epay/merchant/validator/AdminValidator.class]
-┌─────┐
-| merchantUserValidator defined in URL [jar:nested:/home/default/epay_merchant_service-v-develop-20260601092655.jar/!BOOT-INF/classes/!/com/epay/merchant/validator/MerchantUserValidator.class]
-↑ ↓
-| merchantBankAccountValidator defined in URL [jar:nested:/home/default/epay_merchant_service-v-develop-20260601092655.jar/!BOOT-INF/classes/!/com/epay/merchant/validator/MerchantBankAccountValidator.class]
-└─────┘
-
-
-
-@RestController
-@RequestMapping("/admin")
-@Tag(name = "Admin APIs")
-@RequiredArgsConstructor
-public class AdminController {
-    private final LoggerUtility log = LoggerFactoryUtility.getLogger(this.getClass());
-    private final AdminService adminService;
-
-
-    @PostMapping("/entity")
-    @Operation(summary = "Create Entity Group for a Set of Merchant IDs", description = "This API allows the creation of merchant groups (entities) by SBI Admin.")
-    public MerchantResponse<MerchantEntityGroupResponse> createMerchantEntityGroup(@Valid @RequestBody MerchantEntityGroupRequest merchantEntityGroupRequest) {
-        log.info("Entity Creation -  merchantRequest {}", merchantEntityGroupRequest);
-        return adminService.createMerchantEntityGroup(merchantEntityGroupRequest);
-    }
-
-  
-    @PostMapping("/onboarding")
-    @PreAuthorize("hasRole('SBI_ADMIN')")
-    @Operation(summary = "Onboarding Merchant and Merchant Admin User Creation API for SBI Admin Use.", description = "This API is used to onboard a merchant and create a merchant admin user.It can only be accessed by SBI Admin.")
-    public MerchantResponse<OnboardingApiResponse> onboardingMerchant(@Valid @RequestBody OnboardingRequest onboardingRequest) {
-        log.info("Onboarding Merchant called: onboardingRequest {}", onboardingRequest);
-        return adminService.onboardingMerchant(onboardingRequest);
-    }
-
-
-    @GetMapping("/users/{mid}")
-    @Operation(summary = "Retrieve All Users for a merchant.", description = "This API provides a list of all users for a specific merchant.")
-    public MerchantResponse<MerchantUserResponse> getAllUser(@Parameter(description = "Merchant ID for Retrieving all users for a merchant.", required = true)@PathVariable String mid, @Parameter(description = "Pagination details for the request") @PageableDefault(sort = {"createdAt"}, direction = Sort.Direction.DESC, size = 50) Pageable pageable) {
-        log.info("Received request to get user list based on mid: {}", mid);
-        return adminService.getAllMerchantUsers(mid, pageable);
-    }
-
-
-    @PostMapping("/help/update/{mId}")
-    @Operation(summary = "Update Help & Support information for a merchant.", description = "This API allows updating help and support information for a specific merchant.")
-    public MerchantResponse<HelpSupportResponse> saveHelpSupport(@Parameter(description = "Merchant ID for which which  Help & Support info is being updated", required = true) @PathVariable String mId, @RequestBody @Valid HelpSupportRequest helpSupportRequest) {
-        log.info("Update Help & Support mId[{}] and helpSupportRequest: {}", mId, helpSupportRequest);
-        return adminService.saveHelpSupport(mId, helpSupportRequest);
-    }
-
-
-    @PostMapping("/entity/mapping")
-    @Operation(summary = "Map a User to an Entity", description = "This API is used to map a user to a specific entity (merchant group).")
-    public MerchantResponse<String> userEntityMapping(@Valid @RequestBody UserEntityMappingRequest userEntityMappingRequest) {
-        log.info("Received request for user entity mapping with details: {}", userEntityMappingRequest);
-        return adminService.userEntityMapping(userEntityMappingRequest);
-    }
-
-
-
-    @PostMapping("/footer")
-    @Operation(summary = "Create or Update Footer Labels", description = "This API allows merchants to create or update footer labels.")
-    public MerchantResponse<String> saveFooterLabels(@Valid @RequestBody FooterRequest footerRequest) {
-        log.info("Post endpoint {/footer} create/update", footerRequest);
-        return adminService.saveFooterInfo(footerRequest);
-    }
-
-
-    @PreAuthorize("hasRole('SBI_ADMIN')")
-    @PostMapping("/bank/approval/update")
-    @Operation(summary = "Update Bank Account")
-    public MerchantResponse<String> approvedBankAccount(@Valid @RequestBody MerchantBankAccountApprovalRequest bankAccountApprovalRequest) {
-        log.info("Received request to bank approval for mId: {}", bankAccountApprovalRequest.getMId());
-        return adminService.approvedBankAccount(bankAccountApprovalRequest);
-    }
-
-
-    @GetMapping("/bank/{ifscCode}")
-    public MerchantResponse<BankDetailsResponse> getBankDetailsByIfscCode(@PathVariable String ifscCode) {
-        log.info("Received request to get bank details for IFSC Code: {}", ifscCode);
-        return adminService.getBankDetailsByIfscCode(ifscCode);
-    }
-
- 
-    @GetMapping("/bank")
-    public MerchantResponse<BankResponse> getAllBanks() {
-        log.info("Received request to fetch all banks");
-        return adminService.getAllBanks();
-    }
-
-
- 
-    @GetMapping("/bank/branch/{bankId}")
-    public MerchantResponse<BranchResponse> getAllBranches(@PathVariable String bankId) {
-        log.info("Received request to fetch all branches for bank ID: {}", bankId);
-        return adminService.getAllBranches(bankId);
-    }
-
-    @PostMapping("/sbi/authenticate")
-    public MerchantResponse<String> authenticate(@Valid @RequestBody SbiAdminLoginReqDto sbiAdminLoginReqDto) {
-        log.info("SBI authentication request received.");
-        return adminService.authenticate(sbiAdminLoginReqDto);
-    }
-}
-
-
-package com.epay.merchant.service;
-
-import static com.epay.merchant.util.DateTimeUtils.*;
-import static com.epay.merchant.util.ErrorConstants.*;
-import static com.epay.merchant.util.ErrorConstants.RESPONSE_SUCCESS;
-import static com.epay.merchant.util.MerchantConstant.*;
-import static com.epay.merchant.util.MerchantConstant.SUCCESS_MESSAGE;
-
-import com.epay.merchant.dao.AdminDao;
-import com.epay.merchant.dto.*;
-import com.epay.merchant.exception.MerchantException;
-import com.epay.merchant.exception.ValidationException;
-import com.epay.merchant.externalservice.response.BankDetailsResponse;
-import com.epay.merchant.externalservice.response.BankResponse;
-import com.epay.merchant.externalservice.response.BranchResponse;
-import com.epay.merchant.mapper.MerchantEntityGroupMapper;
-import com.epay.merchant.mapper.MerchantMapper;
-import com.epay.merchant.model.request.*;
-import com.epay.merchant.model.response.*;
-import com.epay.merchant.util.DateTimeUtils;
-import com.epay.merchant.util.enums.MerchantStatus;
-import com.epay.merchant.util.enums.NotificationType;
-import com.epay.merchant.validator.AdminValidator;
-import com.epay.merchant.validator.MerchantUserValidator;
-import com.epay.merchant.validator.OnboardingValidator;
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.sbi.epay.authentication.util.EPayAuthenticationConstant;
-import com.sbi.epay.encryptdecrypt.util.enums.HashAlgorithm;
-import com.sbi.epay.logging.utility.LoggerFactoryUtility;
-import com.sbi.epay.logging.utility.LoggerUtility;
-import java.text.MessageFormat;
-import java.util.*;
 import java.util.Arrays;
-import java.util.List;
+
+import static com.epay.admin.portal.util.ErrorConstants.INVALID_ENUM_ERROR_MESSAGE;
+
+public enum MasterType {
+    // Standalone masters
+    CONSTITUTION,
+    NATURE_OF_BUSINESS,
+    COUNTRY,
+
+    // Child/Dependent masters
+    COUNTRY_CURRENCY;
+
+    public static MasterType getMasterType(String masterType) {
+        return Arrays.stream(values())
+                .filter(s -> s.name().equalsIgnoreCase(masterType))
+                .findFirst()
+                .orElseThrow(() -> new AdminPortalException(ErrorConstants.INVALID_ENUM_ERROR_CODE, MessageFormat.format(INVALID_ENUM_ERROR_MESSAGE, "masterType")));
+    }
+}
+
+
+----------------
+package com.epay.admin.portal.master.dao;
+
+import com.epay.admin.portal.master.entity.NatureOfBusiness;
+import com.epay.admin.portal.master.repository.NatureOfBusinessRepository;
+import com.sbi.epay.logging.utility.LoggerFactoryUtility;
+import com.sbi.epay.logging.utility.LoggerUtility;
 import lombok.RequiredArgsConstructor;
-import org.apache.commons.collections4.CollectionUtils;
-import org.apache.commons.lang3.ObjectUtils;
-import org.apache.commons.lang3.StringUtils;
-import org.slf4j.MDC;
-import org.springframework.dao.DataIntegrityViolationException;
-import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
-import org.springframework.orm.jpa.JpaSystemException;
-import org.springframework.stereotype.Service;
+import org.springframework.data.jpa.domain.Specification;
+import org.springframework.stereotype.Component;
 
-
-@Service
-@RequiredArgsConstructor
-public class AdminService {
-
-    private final LoggerUtility log = LoggerFactoryUtility.getLogger(this.getClass());
-    private final OnboardingValidator onboardingValidator;
-    private final AdminValidator adminValidator;
-    private final MerchantUserValidator mIdValidator;
-    private final MerchantEntityGroupMapper merchantEntityGroupMapper;
-    private final MerchantMapper merchantMapper;
-    private final HelpSupportService helpSupportService;
-    private final MerchantBankService merchantBankService;
-    private final AdminDao adminDao;
-    private final ObjectMapper objectMapper;
-    private final TokenService tokenService;
-
-
-    public MerchantResponse<MerchantEntityGroupResponse> createMerchantEntityGroup(MerchantEntityGroupRequest merchantEntityGroupRequest) {
-        log.info("Method createMerchantEntityGroup started for EntityId {}", merchantEntityGroupRequest.getEntityId());
-        //Step 1 : MerchantEntityGroupRequest validation
-        adminValidator.entityValidator(merchantEntityGroupRequest);
-        MerchantEntityGroupDto merchantEntityGroupDto = merchantEntityGroupMapper.mapEntityRequestToMerchantEntityGroupDto(merchantEntityGroupRequest);
-        //Step 2 : Save Merchant Entity Group
-        merchantEntityGroupDto = adminDao.saveMerchantEntityGroup(merchantEntityGroupDto);
-        //Step 3 : Build MerchantResponse and return to caller
-        log.info("Method createMerchantEntityGroup completed for EntityId {}", merchantEntityGroupRequest.getEntityId());
-        return MerchantResponse.<MerchantEntityGroupResponse>builder().data(List.of(merchantEntityGroupMapper.mapMerchantEntityGroupDtoToEntityResponse(merchantEntityGroupDto))).status(RESPONSE_SUCCESS).total(1L).build();
-    }
-
-
-    public MerchantResponse<MerchantUserResponse> getAllMerchantUsers(String mId, Pageable pageable) {
-        mIdValidator.validateMidAndAccess(mId);
-        Pageable updatedPage = mIdValidator.validateAndSanitizePageable(pageable);
-        log.info("getting userList based on mId: {}", mId);
-        Page<MerchantUserDto> merchantUsers = adminDao.findAllMerchantUsersByMId(mId, updatedPage);
-        log.info("Mapping users for Merchant ID: {}", mId);
-        List<MerchantUserResponse> merchantUserResponseList = merchantMapper.mapMerchantUserDTOListToResponseList(merchantUsers.getContent());
-        return MerchantResponse.<MerchantUserResponse>builder().status(RESPONSE_SUCCESS).data(merchantUserResponseList).count(merchantUsers.stream().count()).total(merchantUsers.getTotalElements()).build();
-    }
-
-
-    public MerchantResponse<String> userEntityMapping(UserEntityMappingRequest userEntityMappingRequest) {
-        log.info("Received request to map entity with details: {}", userEntityMappingRequest);
-
-        // Step 1: Validate the request
-        adminValidator.userEntityRequestValidator(userEntityMappingRequest);
-
-        // Step 2: Perform action based on user role
-        adminDao.updateUserRole(userEntityMappingRequest.getUserId(), userEntityMappingRequest.getUserName(), userEntityMappingRequest.getEntityId());
-
-        // Step 3: Build and return the response
-        log.info("Returning merchant success response");
-        return MerchantResponse.<String>builder().status(RESPONSE_SUCCESS).data(List.of("role has been updated successfully")).total(1L).build();
-    }
-
-
-    public MerchantResponse<BankDetailsResponse> getBankDetailsByIfscCode(String ifscCode){
-        log.info("Fetching bank details from DAO for IFSC Code: {}", ifscCode);
-        adminValidator.validateGetBankRequest(ifscCode);
-        BankDetailsResponse bankDetailsResponse = adminDao.getBankDetailsByIfscCode(ifscCode);
-        log.info("Fetched bank details: {}", bankDetailsResponse);
-        return MerchantResponse.<BankDetailsResponse>builder().data(List.of(bankDetailsResponse)).build();
-    }
-
-    public MerchantResponse<BankResponse> getAllBanks(){
-        log.info("Fetching all banks from DAO");
-        List<BankResponse> bankResponseList = adminDao.getAllBanks();
-        log.info("Fetched all banks: {}", CollectionUtils.size(bankResponseList));
-        return MerchantResponse.<BankResponse>builder().data(bankResponseList).build();
-    }
-
-    public MerchantResponse<BranchResponse> getAllBranches(String bankId){
-        log.info("Fetching all branches from DAO for bank ID: {}", bankId);
-        adminValidator.validateBankId(bankId);
-        List<BranchResponse> branchResponseList = adminDao.getAllBranches(bankId);
-        log.info("Fetched branches: {}", CollectionUtils.size(branchResponseList));
-        return MerchantResponse.<BranchResponse>builder().data(branchResponseList).build();
-    }
-
-
-    private void setMerchantDefaultValues(MerchantDto merchant) {
-        log.info("Method setMerchantDefaultValues started");
-
-        if (Arrays.stream(NotificationType.values()).noneMatch(nt -> StringUtils.equalsAnyIgnoreCase(merchant.getNotification(), nt.name()))) {
-            merchant.setNotification(NotificationType.BOTH.name());
-            log.info("Defaulting notification: {}", NotificationType.BOTH);
-        }
-        if (StringUtils.isEmpty(merchant.getEncryptedAlgo())) {
-            merchant.setEncryptedAlgo(HashAlgorithm.SHA_512.toString());
-            log.info("Defaulting EncryptedAlgo: {}", HashAlgorithm.SHA_512);
-        }
-        if (ObjectUtils.isEmpty(merchant.getStatus())) {
-            merchant.setStatus(MerchantStatus.ACTIVE);
-            log.info("Defaulting Status: {}", MerchantStatus.ACTIVE);
-        }
-        log.info("Method setMerchantDefaultValues completed.");
-    }
-
-
-    public MerchantResponse<HelpSupportResponse> saveHelpSupport(String mId, HelpSupportRequest helpSupportRequest) {
-        mIdValidator.validateMid(mId);
-        log.info("Method saveHelpSupport started for merchant ID: {}", mId);
-        return helpSupportService.saveHelpSupport(mId, helpSupportRequest);
-    }
-
-
-    public MerchantResponse<String> saveFooterInfo(FooterRequest footerRequest) {
-        log.info("validating footerRequest {}", footerRequest);
-        //Step 1 : FooterUpdateRequest validation
-        adminValidator.footerValidator(footerRequest);
-        log.info("Saving footerRequest {}", footerRequest);
-        //Step 2 : Save Footer Entity
-        adminDao.saveFooterRequest(footerRequest);
-        log.info("Returning the MerchantResponse");
-        //Step 3 : Build FooterResponse and return to caller
-        return MerchantResponse.<String>builder().status(RESPONSE_SUCCESS).data(List.of(MessageFormat.format(SUCCESS_MESSAGE, "Updated"))).total(1L).build();
-    }
-
-
-    public MerchantResponse<String> approvedBankAccount(MerchantBankAccountApprovalRequest merchantBankAccountApprovalRequest) {
-        adminValidator.validateApprovalRequest(merchantBankAccountApprovalRequest);
-        return merchantBankService.approvedBankAccount(merchantBankAccountApprovalRequest);
-    }
-
-
-    public MerchantResponse<String> authenticate(SbiAdminLoginReqDto sbiAdminLoginReqDto) {
-        adminValidator.validateSbiLogin(sbiAdminLoginReqDto);
-        return MerchantResponse.<String>builder().status(RESPONSE_SUCCESS).data(List.of(tokenService.generateUserToken(sbiAdminLoginReqDto.getUserName()))).total(1L).build();
-    }
-
- 
-    public void merchantSyncUp() {
-        //Step1: Fetch merchant scheduler config by job name.
-        List<OnboardingResponse> onboardingList;
-        List<OnboardingFailedMerchantDto> badRecords;
-        Optional<MerchantConfigDto> schedulerConfig = adminDao.getMerchantConfig(ONBOARDING);
-        if(schedulerConfig.isPresent()) {
-            //Step2: Fetch merchant details from admin's merchant info view.
-            log.info("Calling admin service to get the merchant list for timestamp: {}", toDateTimeFormat(Long.valueOf(schedulerConfig.get().getValue())));
-            onboardingList = adminDao.getAdminMerchants(Long.valueOf(schedulerConfig.get().getValue()));
-            log.info("Got merchants[{}] from admin service.", CollectionUtils.size(onboardingList));
-            log.debug("Admin service merchants: {}", onboardingList);
-            if(CollectionUtils.isNotEmpty(onboardingList)) {
-                //Step3: Onboard merchant in merchant-service.
-                badRecords = onboardingList.stream().map(this::onboardingMerchant).filter(Objects::nonNull).toList();
-                //Step4: Add bad records.
-                if(CollectionUtils.isNotEmpty(badRecords)) {
-                    log.info("Failed to onboard merchants: {}", badRecords);
-                    adminDao.saveFailedOnboardingRecords(badRecords);
-                }
-                //Step5: Update merchant scheduler config.
-                schedulerConfig.get().setValue(String.valueOf(DateTimeUtils.getCurrentTimeInMills()));
-                adminDao.updateScheduleConfig(schedulerConfig.get());
-            }
-        } else {
-            log.info("No Merchant config found for {}", ONBOARDING);
-        }
-    }
-
-
-    public MerchantResponse<OnboardingApiResponse> onboardingMerchant(OnboardingRequest onboardingRequest) {
-        log.info("Started onboardingRequest for merchant {}", onboardingRequest.getMerchant());
-        //Step 1 : OnboardingRequest validation
-        onboardingValidator.validateOnboardingRequest(onboardingRequest);
-        //Step 2 : Set up the default value for Merchant
-        setMerchantDefaultValues(onboardingRequest.getMerchant());
-        //Step 3 : Save the Merchant and Merchant User Data in DB
-        OnboardingDto onboardingDto = adminDao.onboardMerchant(onboardingRequest);
-        //Step 5 : Build MerchantResponse and return to caller
-        log.info("Returning OnboardingApiResponse for merchant");
-        return MerchantResponse.<OnboardingApiResponse>builder().data(List.of(OnboardingApiResponse.builder().merchant(onboardingDto.getMerchant()).user(onboardingDto.getUser()).build())).status(RESPONSE_SUCCESS).total(1L).build();
-    }
-
-
-    protected OnboardingFailedMerchantDto onboardingMerchant(OnboardingResponse onboardingResponse) {
-        log.info("Started onboardingRequest for mId: {}", onboardingResponse.getMerchant().getMId());
-        log.debug("Admin Merchant Info: {}", onboardingResponse);
-        try {
-            var merchantInfoId = adminDao.getMerchantIdByMId(onboardingResponse.getMerchant().getMId());
-            if (Objects.isNull(merchantInfoId)) {
-                OnboardingRequest onboardingRequest = buildOnboardingRequest(onboardingResponse);
-                // Step 1 : OnboardingRequest validation
-                onboardingValidator.validateOnboardingRequest(onboardingRequest);
-                // Step 2 : Set up the default value for Merchant
-                setMerchantDefaultValues(onboardingRequest.getMerchant());
-                // Step 3 : Save the Merchant and Merchant User Data in DB
-                OnboardingDto onboardingDto = adminDao.onboardMerchant(onboardingRequest);
-                // Step 4 : Build MerchantResponse and return to caller
-                log.info("Merchant Onboarded mId: {}", onboardingDto.getMerchant().getMId());
-            } else {
-                onboardingValidator.validateUpdateRequest(merchantMapper.mapAdminDto(onboardingResponse.getMerchant()));
-                adminDao.updateMerchantInfo(merchantInfoId, onboardingResponse.getMerchant());
-            }
-        } catch (ValidationException | MerchantException |
-                 DataIntegrityViolationException | OptimisticLockingFailureException | JpaSystemException ex) {
-            log.error("Onboarding/update failed for mId: {}, errors: {}", onboardingResponse.getMerchant().getMId(), ex.toString());
-            try {
-                return OnboardingFailedMerchantDto.builder()
-                        .mId(onboardingResponse.getMerchant().getMId())
-                        .onboardingJson(objectMapper.writeValueAsString(onboardingResponse))
-                        .reason(ex.toString())
-                        .correlationId(MDC.get(EPayAuthenticationConstant.CORRELATION_ID))
-                        .build();
-            } catch (JsonProcessingException e) {
-                log.error("Failed to convert onboardingResponse in JSON string, error: {}", e.getMessage());
-            }
-        }
-        return null;
-    }
-
- 
-    private OnboardingRequest buildOnboardingRequest(OnboardingResponse onboarding) {
-        MerchantDto merchant = merchantMapper.mapAdminDto(onboarding.getMerchant());
-        MerchantUserDto user = merchantMapper.mapAdminDto(onboarding.getUser());
-        if(null == user) {
-            throw new ValidationException(NOT_FOUND_ERROR_CODE, MessageFormat.format(NOT_FOUND_ERROR_MESSAGE, USER));
-        }
-        return OnboardingRequest.builder().merchant(merchant).user(user).bankAccounts(onboarding.getBankAccounts()).build();
-    }
-
- 
-    public void  onboardAdminPortalMerchant(String mId){
-        log.info("Processing merchant onboarding request for mid : {}",mId);
-        MerchantResponse<MerchantOnboardingDto> adminMerchantInfoDto = adminDao.getMerchantsDetailsByMId(mId);
-        MerchantOnboardingDto onboardingDto = adminMerchantInfoDto.getData().getFirst();
-        OnboardingRequest onboardingRequest = merchantMapper.toOnboardingRequest(onboardingDto);
-        onboardingRequest.getMerchant().setOnboardingTime(System.currentTimeMillis());
-        onboardingMerchant(onboardingRequest);
-        log.info("Completed merchant onboarding for mid : {}",mId);
-    }
-}
-
-
-package com.epay.merchant.validator;
-
-import static com.epay.merchant.util.ErrorConstants.*;
-import static com.epay.merchant.util.MerchantConstant.*;
-
-import com.epay.merchant.dao.AdminDao;
-import com.epay.merchant.dto.ErrorDto;
-import com.epay.merchant.dto.MerchantUserDto;
-import com.epay.merchant.dto.SbiAdminLoginReqDto;
-import com.epay.merchant.entity.MerchantUser;
-import com.epay.merchant.exception.MerchantException;
-import com.epay.merchant.exception.ValidationException;
-import com.epay.merchant.model.request.*;
-import com.epay.merchant.util.MerchantConstant;
-import com.epay.merchant.util.enums.MerchantUserRoles;
-import com.epay.merchant.util.enums.UserStatus;
-import com.sbi.epay.logging.utility.LoggerFactoryUtility;
-import com.sbi.epay.logging.utility.LoggerUtility;
-import java.text.MessageFormat;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
-import lombok.RequiredArgsConstructor;
-import org.apache.commons.collections4.CollectionUtils;
-import org.apache.commons.lang3.StringUtils;
-import org.springframework.stereotype.Component;
-
 
 @Component
 @RequiredArgsConstructor
-public class AdminValidator extends BaseValidator {
-    private final LoggerUtility logger = LoggerFactoryUtility.getLogger(this.getClass());
-    private final AdminDao adminDao;
-    private final MerchantUserValidator merchantUserValidator;
+public class NatureOfBusinessDao {
 
-   
-    public void entityValidator(MerchantEntityGroupRequest merchantEntityGroupRequest) {
-        errorDtoList = new ArrayList<>();
-        validateMandatory(merchantEntityGroupRequest);
-        checkLeadingTrailingAndSingleSpace(merchantEntityGroupRequest);
-        validateFieldsValue(merchantEntityGroupRequest);
-        validateDuplicateItem(merchantEntityGroupRequest.getMIds());
-        validatedEntityId(merchantEntityGroupRequest);
-        validatedMId(merchantEntityGroupRequest);
+    private final NatureOfBusinessRepository natureOfBusinessRepository;
+    private final LoggerUtility log = LoggerFactoryUtility.getLogger(this.getClass());
+
+    public boolean existsByNatureOfBusinessName(String natureOfBusinessName) {
+        log.debug("DAO: Checking existence for natureOfBusinessName={}", natureOfBusinessName);
+        return natureOfBusinessRepository.existsByNatureOfBusinessNameIgnoreCase(natureOfBusinessName);
     }
 
-
-    public void userEntityRequestValidator(UserEntityMappingRequest userEntityMappingRequest) {
-        errorDtoList = new ArrayList<>();
-        validateMandatoryFields(userEntityMappingRequest);
-        validateLeadingTrailingAndSingleSpace(userEntityMappingRequest);
-        validateFieldLength(userEntityMappingRequest);
-        validateFieldWithRegex(userEntityMappingRequest);
-        validateUserData(userEntityMappingRequest);
-        validateEntityId(userEntityMappingRequest.getEntityId());
-        isAlreadyMapped(userEntityMappingRequest);
+    public Optional<NatureOfBusiness> findById(UUID id) {
+        log.debug("DAO: Fetching nature of business for id={}", id);
+        return natureOfBusinessRepository.findById(id);
     }
 
-    public void validateApprovalRequest(MerchantBankAccountApprovalRequest merchantBankAccountApprovalRequest){
-        errorDtoList = new ArrayList<>();
-        merchantUserValidator.validateMid(merchantBankAccountApprovalRequest.getMId());
-        validateLeadingTrailingAndSingleSpace(merchantBankAccountApprovalRequest);
+    public NatureOfBusiness save(NatureOfBusiness natureOfBusiness) {
+        log.debug("DAO: Saving nature of business for natureOfBusinessName={}", natureOfBusiness.getNatureOfBusinessName());
+        return natureOfBusinessRepository.save(natureOfBusiness);
     }
 
-
-    private void validateUserData(UserEntityMappingRequest userEntityMappingRequest) {
-        boolean isUserNamePresent = isUserPresent(userEntityMappingRequest.getUserName());
-        boolean isUserIdPresent = isUserPresent(userEntityMappingRequest.getUserId());
-        validateValues(isUserNamePresent, isUserIdPresent);
-        throwIfErrors();
-        checkMerchantUserExistByUserName(userEntityMappingRequest.getUserName(), userEntityMappingRequest.getUserId());
-        boolean isMerchantUserExist = false;
-        if (isUserNamePresent) {
-            isMerchantUserExist = adminDao.isMerchantUserExistWithRoles(userEntityMappingRequest.getUserName(), List.of(MerchantUserRoles.ADMIN.name(), MerchantUserRoles.SUPER_ADMIN.name()));
-        } else if (isUserIdPresent) {
-            isMerchantUserExist = adminDao.isMerchantUserExistWithRoles(UUID.fromString(userEntityMappingRequest.getUserId()), List.of(MerchantUserRoles.ADMIN.name(), MerchantUserRoles.SUPER_ADMIN.name()));
-        }
-        if (!isMerchantUserExist) {
-            errorDtoList.add(ErrorDto.builder().errorCode(INVALID_ERROR_CODE).errorMessage(MessageFormat.format(INVALID_ERROR_MESSAGE, MerchantConstant.ROLE, "Reason : only ADMIN and SUPER_ADMIN are allowed")).build());
-        }
-        throwIfErrors();
-    }
-
-
-    public boolean isUserPresent(String userName) {
-        if (isEmpty(userName)) {
-            return false;
-        } else return isNotContainsNull(userName);
-    }
-
-
-    private void checkMerchantUserExistByUserName(String userName, String userId) {
-        boolean isExist = isUserPresent(userName) ? adminDao.isMerchantUserExist(userName,userName,userName) : adminDao.isMerchantUserExistByUserId(UUID.fromString(userId));
-        if (!isExist) {
-           errorDtoList.add(ErrorDto.builder().errorCode(NOT_FOUND_ERROR_CODE).errorMessage(MessageFormat.format(NOT_FOUND_ERROR_MESSAGE, MerchantConstant.MERCHANT_USER)).build());
-        }
-        throwIfErrors();
-    }
-
-    private void validatedMId(MerchantEntityGroupRequest merchantEntityGroupRequest) {
-        validateMappedEntityMIds(merchantEntityGroupRequest);
-        validateMIds(merchantEntityGroupRequest);
-    }
-
-  
-    private void isAlreadyMapped(UserEntityMappingRequest userEntityMappingRequest) {
-        MerchantUser merchantUser = MerchantUser.builder().build();
-        buildMerchantUser(merchantUser, userEntityMappingRequest);
-        if(adminDao.isUserAlreadyMappedToEntity(merchantUser.getId(), userEntityMappingRequest.getEntityId())) {
-            errorDtoList.add(ErrorDto.builder().errorCode(ALREADY_MAPPED_ERROR_CODE).errorMessage(MessageFormat.format(ALREADY_MAPPED_ERROR_MESSAGE, MerchantConstant.USER)).build());
-        }
-        throwIfErrors();
-    }
-
-    private void buildMerchantUser(MerchantUser merchantUser, UserEntityMappingRequest userEntityMappingRequest) {
-        if( StringUtils.isEmpty(userEntityMappingRequest.getUserId())) {
-            MerchantUserDto merchantUserDto = adminDao.getMerchantIdByUserName(userEntityMappingRequest.getUserName());
-            merchantUser.setId(merchantUserDto.getId());
-        } else {
-            merchantUser.setId(UUID.fromString(userEntityMappingRequest.getUserId()));
-        }
-    }
-
-    public void validateDuplicateItem(List<String> mIds) {
-        if( mIds.size() != mIds.stream().distinct().count()) {
-            errorDtoList.add(ErrorDto.builder().errorCode(INVALID_ERROR_CODE).errorMessage(MessageFormat.format(INVALID_ERROR_MESSAGE, MerchantConstant.MID, MerchantConstant.DUPLICATE_MID_FOUND)).build());
-        }
-        throwIfErrors();
-    }
-
-  
-    private void validateMappedEntityMIds(MerchantEntityGroupRequest merchantEntityGroupRequest) {
-        List<String> mIdsAlreadyMapped = adminDao.findMappedEntityMIds(merchantEntityGroupRequest.getMIds());
-        if (CollectionUtils.isNotEmpty(mIdsAlreadyMapped)) {
-            errorDtoList.add(ErrorDto.builder().errorCode(ALREADY_EXIST_ERROR_CODE).errorMessage(MessageFormat.format(ALREADY_EXIST_ERROR_MESSAGE, "mId " + Arrays.toString(mIdsAlreadyMapped.toArray()))).build());
-        }
-        throwIfErrors();
-    }
-
- 
-    private void validateMIds(MerchantEntityGroupRequest merchantEntityGroupRequest) {
-        List<String> invalidsMIds = adminDao.findInvalidsMIds(merchantEntityGroupRequest.getMIds());
-        if (CollectionUtils.isNotEmpty(invalidsMIds)) {
-            errorDtoList.add(ErrorDto.builder().errorCode(INVALID_ERROR_CODE).errorMessage(MessageFormat.format(INVALID_ERROR_MESSAGE, "MId", "MId " + Arrays.toString(invalidsMIds.toArray()) + " are not valid")).build());
-        }
-        throwIfErrors();
-    }
-
-  
-    private void validatedEntityId(MerchantEntityGroupRequest merchantEntityGroupRequest) {
-        validateFieldLength(merchantEntityGroupRequest.getEntityId(), MerchantConstant.ENTITY_ID_LENGTH, MerchantConstant.ENTITY_ID);
-        throwIfErrors();
-        boolean entityIdPresent = adminDao.isEntityIdPresent(merchantEntityGroupRequest.getEntityId());
-        if (entityIdPresent) {
-            errorDtoList.add(ErrorDto.builder().errorCode(ALREADY_EXIST_ERROR_CODE).errorMessage(MessageFormat.format(ALREADY_EXIST_ERROR_MESSAGE, "EntityId")).build());
-        }
-        throwIfErrors();
-    }
-
-
-    private void validateLeadingTrailingAndSingleSpace(UserEntityMappingRequest userEntityMappingRequest) {
-        checkForLeadingTrailingAndSingleSpace(userEntityMappingRequest.getEntityId(), MerchantConstant.ENTITY_ID);
-        if (!isEmpty(userEntityMappingRequest.getUserName()) && isNotContainsNull(userEntityMappingRequest.getUserName())) {
-            checkForLeadingTrailingAndSingleSpace(userEntityMappingRequest.getUserName(), MerchantConstant.USER_NAME);
-        }
-        if (!isEmpty(userEntityMappingRequest.getUserId()) && isNotContainsNull(userEntityMappingRequest.getUserId())) {
-            checkForLeadingTrailingAndSingleSpace(String.valueOf(userEntityMappingRequest.getUserId()), MerchantConstant.USER_ID);
-        }
-        throwIfErrors();
-    }
-
-
-    private void validateFieldLength(UserEntityMappingRequest userEntityMappingRequest) {
-        if (!isEmpty(userEntityMappingRequest.getUserName()) && isNotContainsNull(userEntityMappingRequest.getUserName())) {
-            validateFieldLength(userEntityMappingRequest.getUserName(), MerchantConstant.MAX_USER_NAME_LENGTH, MerchantConstant.USER_NAME);
-        }
-        if (!isEmpty(userEntityMappingRequest.getUserId()) && isNotContainsNull(userEntityMappingRequest.getUserId())) {
-            validateFixedFieldLength(String.valueOf(userEntityMappingRequest.getUserId()), MerchantConstant.UUID_LENGTH, MerchantConstant.USER_ID);
-        }
-        validateFieldLength(userEntityMappingRequest.getEntityId(), MerchantConstant.ENTITY_ID_LENGTH, MerchantConstant.ENTITY_ID);
-        throwIfErrors();
-    }
-
-
-    private void validateFieldWithRegex(UserEntityMappingRequest userEntityMappingRequest) {
-        validateFieldWithRegex(userEntityMappingRequest.getEntityId(), MerchantConstant.ALLOWED_ALPHA_NUMERIC_REGEX, MerchantConstant.ENTITY_ID, INCORRECT_FORMAT);
-        if (!isEmpty(userEntityMappingRequest.getUserName()) && isNotContainsNull(userEntityMappingRequest.getUserName())) {
-            validateFieldWithRegex(userEntityMappingRequest.getUserName(), MerchantConstant.USER_NAME_REGEX, MerchantConstant.USER_NAME, INCORRECT_FORMAT);
-        }
-        if (!isEmpty(userEntityMappingRequest.getUserId()) && isNotContainsNull(userEntityMappingRequest.getUserId())) {
-            validateFieldWithRegex(userEntityMappingRequest.getUserId(), MerchantConstant.UUID_FORMAT_REGEX, MerchantConstant.USER_ID, INCORRECT_FORMAT);
-        }
-        throwIfErrors();
-    }
-
-  
-    private void validateMandatory(MerchantEntityGroupRequest merchantEntityGroupRequest) {
-        checkMandatoryField(merchantEntityGroupRequest.getEntityId(), MerchantConstant.ENTITY_ID);
-        checkMandatoryCollection(merchantEntityGroupRequest.getMIds(), MerchantConstant.MID_MAPPING_LIST);
-        throwIfErrors();
-        merchantEntityGroupRequest.getMIds()
-                .forEach(mId -> checkMandatoryField(mId, MerchantConstant.MID));
-        throwIfErrors();
-    }
-
-    private void validateMandatoryFields(UserEntityMappingRequest userEntityMappingRequest) {
-        checkMandatoryField(userEntityMappingRequest.getEntityId(), MerchantConstant.ENTITY_ID);
-        checkMandatoryFields(userEntityMappingRequest.getUserName(), userEntityMappingRequest.getUserId(), List.of(MerchantConstant.USER_NAME, MerchantConstant.USER_ID));
-        throwIfErrors();
-    }
-
-
-    private boolean isEmpty(String value) {
-        return StringUtils.isEmpty(StringUtils.strip(value));
-    }
-
-
-    private boolean isNotContainsNull(String value) {
-        return !StringUtils.equalsAnyIgnoreCase(StringUtils.strip(value), "null");
-    }
-
-
-    private void validateValues(boolean isUserNamePresent, boolean isUserIdPresent) {
-        if (!isUserNamePresent && !isUserIdPresent) {
-            errorDtoList.add(ErrorDto.builder().errorCode(MANDATORY_ERROR_CODE).errorMessage(MessageFormat.format(MANDATORY_ERROR_MESSAGE, "value of userName or userId")).build());
-        }
-    }
-
- 
-
-    protected void checkMandatoryFields(String value1, String value2, Object... fieldNames) {
-        if ((StringUtils.isEmpty(StringUtils.strip(value1)) || StringUtils.equalsAnyIgnoreCase(StringUtils.strip(value1), "null")) &&
-                (StringUtils.isEmpty(StringUtils.strip(value2)) || StringUtils.equalsAnyIgnoreCase(StringUtils.strip(value2), "null"))) {
-            addError( MessageFormat.format("Either {0} or {1}", MerchantConstant.USER_NAME , MerchantConstant.USER_ID), MANDATORY_ERROR_CODE, MANDATORY_ERROR_MESSAGE);
-        }
-    }
-
-  
-    private void validateEntityId(String entityId) {
-        if (!adminDao.isEntityIdPresent(entityId)) {
-            errorDtoList.add(ErrorDto.builder().errorCode(NOT_FOUND_ERROR_CODE).errorMessage(MessageFormat.format(NOT_FOUND_ERROR_MESSAGE, MerchantConstant.ENTITY_ID)).build());
-        }
-        throwIfErrors();
-    }
-
-
-    private void checkLeadingTrailingAndSingleSpace(MerchantEntityGroupRequest merchantEntityGroupRequest) {
-        checkForLeadingTrailingAndSingleSpace(merchantEntityGroupRequest.getEntityId(), MerchantConstant.ENTITY_ID);
-        merchantEntityGroupRequest.getMIds()
-                        .forEach(mid -> {
-                            checkForLeadingTrailingAndSingleSpace(mid, MerchantConstant.MID);
-                            throwIfErrors();
-                        });
-        throwIfErrors();
-    }
-
- 
-    private void validateFieldsValue(MerchantEntityGroupRequest merchantEntityGroupRequest) {
-        validateFieldWithRegex(merchantEntityGroupRequest.getEntityId(), MerchantConstant.ALLOWED_ALPHA_NUMERIC_REGEX, MerchantConstant.ENTITY_ID, INCORRECT_FORMAT);
-        merchantEntityGroupRequest.getMIds()
-                .forEach(mid -> {
-                    validateFixedFieldLength(mid, MerchantConstant.MID_LENGTH, MerchantConstant.MID);
-                    throwIfErrors();
-                    validateFieldWithRegex(mid, MerchantConstant.ALLOWED_DIGIT_REGEX, MerchantConstant.MID, INCORRECT_FORMAT);
-                    throwIfErrors();
-                });
-        throwIfErrors();
-    }
-
-  
-    public void footerValidator(FooterRequest footerRequest) {
-        errorDtoList = new ArrayList<>();
-        if(CollectionUtils.isEmpty(footerRequest.getFooterLabels())) {
-            errorDtoList.add(ErrorDto.builder()
-                    .errorCode(MANDATORY_ERROR_CODE)
-                    .errorMessage(MessageFormat.format(MANDATORY_ERROR_MESSAGE,FOOTER))
-                    .build());
-        } else {
-            footerRequest.getFooterLabels().forEach(footerLabelDto -> {
-                checkMandatoryField(footerLabelDto.getLabel(), "Label");
-                checkMandatoryField(footerLabelDto.getValue(), "Value");
-            });
-        }
-        throwIfErrors();
-    }
-
-
-    protected void validateLeadingTrailingAndSingleSpace(MerchantBankAccountApprovalRequest merchantBankAccountApprovalRequest) {
-        checkForLeadingTrailingAndSingleSpace(merchantBankAccountApprovalRequest.getAccountName(), MerchantConstant.ACCOUNT_NAME);
-        checkForLeadingTrailingAndSingleSpace(merchantBankAccountApprovalRequest.getOperationType(), MerchantConstant.OPERATION_TYPE);
-        checkForLeadingTrailingAndSingleSpace(merchantBankAccountApprovalRequest.getRemarks(), MerchantConstant.REMARKS);
-        checkForLeadingTrailingAndSingleSpace(merchantBankAccountApprovalRequest.getAccountUniqueIdentifier(), MerchantConstant.ACCOUNT_UNIQUE_IDENTIFIER);
-        throwIfErrors();
-    }
-
-
-  public void validateGetBankRequest(String ifscCode) {
-    logger.debug("Validating ifsc code: {}", ifscCode);
-    errorDtoList = new ArrayList<>();
-    checkMandatoryField(ifscCode, MerchantConstant.IFSC_CODE);
-    throwIfErrors();
-    checkForLeadingTrailingAndSingleSpace(ifscCode, MerchantConstant.IFSC_CODE);
-    throwIfErrors();
-    validateFieldLength(ifscCode, MerchantConstant.IFSC_CODE_LENGTH, MerchantConstant.IFSC_CODE);
-    throwIfErrors();
-    validateFieldWithRegex(ifscCode, MerchantConstant.IFSC_REGEX, MerchantConstant.IFSC_CODE, INCORRECT_FORMAT);
-    throwIfErrors();
-  }
-    
-    public void validateBankId(String bankId) {
-        logger.debug("Validating ifsc code: {}", bankId);
-        errorDtoList = new ArrayList<>();
-        checkMandatoryField(bankId, MerchantConstant.BANK_ID);
-        throwIfErrors();
-        checkForLeadingTrailingAndSingleSpace(bankId, MerchantConstant.BANK_ID);
-        throwIfErrors();
-        validateFieldLength(bankId, MerchantConstant.BANK_ID_LENGTH, MerchantConstant.BANK_ID);
-        throwIfErrors();
-        validateFieldWithRegex(bankId, MerchantConstant.ALLOWED_DIGIT_REGEX, MerchantConstant.BANK_ID, INCORRECT_FORMAT);
-        throwIfErrors();
-    }
-
- 
-    public void validateSbiLogin(SbiAdminLoginReqDto sbiAdminReqDto) {
-        logger.info("Validating SBI admin login request.");
-        errorDtoList = new ArrayList<>();
-        checkMandatoryField(sbiAdminReqDto.getUserName(), USER_NAME);
-        checkMandatoryField(sbiAdminReqDto.getPassword(), PSW);
-        throwIfErrors();
-        checkForLeadingTrailingAndSingleSpace(sbiAdminReqDto.getUserName(), USER_NAME);
-        checkForLeadingTrailingAndSingleSpace(sbiAdminReqDto.getPassword(), PSW);
-        throwIfErrors();
-        validateFieldLength(sbiAdminReqDto.getUserName(), MAX_USER_NAME_LENGTH, USER_NAME);
-        validateFieldLength(sbiAdminReqDto.getPassword(), MAX_PASSWORD_LENGTH, PSW);
-        throwIfErrors();
-        validateFieldWithRegex(sbiAdminReqDto.getUserName(), USER_NAME_REGEX, USER_NAME, INVALID_FORMAT);
-        throwIfErrors();
-        MerchantUserDto sbiAdmin;
-        try {
-            sbiAdmin = adminDao.getMerchantIdByUserName(sbiAdminReqDto.getUserName());//will give active user details by userName
-        } catch (MerchantException ex) {
-            MerchantException merchantException = ex;
-            if(StringUtils.equals(NOT_FOUND_ERROR_CODE, merchantException.getErrorCode())) {
-                 merchantException = new MerchantException(NOT_FOUND_ERROR_CODE, MessageFormat.format(NOT_FOUND_ERROR_MESSAGE, StringUtils.joinWith(" ", UserStatus.ACTIVE, USER)));
-            }
-            throw merchantException;
-        }
-        if (!StringUtils.equals(sbiAdmin.getPassword(), sbiAdminReqDto.getPassword()) && !adminDao.isSbiAdminRoleId(sbiAdmin.getRole())) {
-            throw new ValidationException(NOT_FOUND_ERROR_CODE, MessageFormat.format(NOT_FOUND_ERROR_MESSAGE, USER));
-        }
+    public Page<NatureOfBusiness> findAll(Specification<NatureOfBusiness> spec, Pageable pageable) {
+        log.debug("DAO: Fetching nature of business records with pageable={}", pageable);
+        return natureOfBusinessRepository.findAll(spec, pageable);
     }
 }
+------------------
+package com.epay.admin.portal.master.dto.request;
 
-package com.epay.merchant.validator;
+import jakarta.validation.constraints.NotBlank;
+import lombok.Data;
 
-import com.epay.merchant.dao.MerchantBankDao;
-import com.epay.merchant.dao.MerchantInfoDao;
-import com.epay.merchant.dto.ErrorDto;
-import com.epay.merchant.dto.MerchantInfoDto;
-import com.epay.merchant.exception.ValidationException;
-import com.epay.merchant.externalservice.AdminServicesClient;
-import com.epay.merchant.model.request.MerchantBankAccountApprovalRequest;
-import com.epay.merchant.model.request.MerchantBankAccountRequest;
-import com.epay.merchant.model.request.MerchantBankAccountUpdateRequest;
-import com.epay.merchant.util.EPayIdentityUtil;
-import com.epay.merchant.util.MerchantConstant;
-import com.epay.merchant.util.enums.*;
-import com.sbi.epay.logging.utility.LoggerFactoryUtility;
-import com.sbi.epay.logging.utility.LoggerUtility;
-import lombok.RequiredArgsConstructor;
-import org.springframework.stereotype.Component;
+@Data
+public class NatureOfBusinessDto {
 
-import java.text.MessageFormat;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.List;
-
-import static com.epay.merchant.util.ErrorConstants.*;
-import static com.epay.merchant.util.MerchantConstant.*;
-import static com.epay.merchant.util.enums.AccountStatus.*;
-import static com.epay.merchant.util.enums.AccountStatus.ACTIVE;
-
-
-@RequiredArgsConstructor
-@Component
-public class MerchantBankAccountValidator extends BaseValidator {
-    private final LoggerUtility logger = LoggerFactoryUtility.getLogger(this.getClass());
-    private final MerchantBankDao merchantBankDao;
-    private final MerchantInfoDao merchantInfoDao;
-    private final AdminServicesClient adminServicesClient;
-    private final MerchantUserValidator merchantUserValidator;
-
-
-    public void validateMerchantAccountRequest(MerchantBankAccountRequest merchantBankAccountRequest) {
-        logger.debug("Merchant bank account details validation start for mId: {}", merchantBankAccountRequest.getMId());
-        errorDtoList = new ArrayList<>();
-        validatedMandatoryFields(merchantBankAccountRequest);
-        checkLeadingTrailingAndSingleSpace(merchantBankAccountRequest);
-        validateFieldLength(merchantBankAccountRequest);
-        validateFieldsValue(merchantBankAccountRequest);
-        validateRequestValues(merchantBankAccountRequest);
-        validateMId(merchantBankAccountRequest.getMId());
-        validateAccountUniqueIdentifier(merchantBankAccountRequest);
-        validateBankDetails(merchantBankAccountRequest);
-        logger.debug("Merchant bank account details validation completed for mId: {}", merchantBankAccountRequest.getMId());
-    }
-
-
-    public void validateMerchantAccountUpdateRequest(MerchantBankAccountUpdateRequest merchantBankAccountUpdateRequest) {
-        logger.debug("Merchant bank account details validation start for mId: {}", merchantBankAccountUpdateRequest.getMId());
-        errorDtoList = new ArrayList<>();
-        validatedMandatoryFields(merchantBankAccountUpdateRequest);
-        checkLeadingTrailingAndSingleSpace(merchantBankAccountUpdateRequest);
-        validateFieldLength(merchantBankAccountUpdateRequest);
-        validateFieldsValue(merchantBankAccountUpdateRequest);
-        validateMId(merchantBankAccountUpdateRequest.getMId());
-        validateAccountUniqueIdentifier(merchantBankAccountUpdateRequest.getMId(), merchantBankAccountUpdateRequest.getAccountUniqueIdentifier());
-        validatePrimaryForInActiveStatus(merchantBankAccountUpdateRequest);
-        validateAccountUniqueIdentifierAndStatus(merchantBankAccountUpdateRequest.getMId(), merchantBankAccountUpdateRequest.getAccountUniqueIdentifier(), ACTIVE);
-        logger.debug("Merchant bank account details validation completed for mId: {}", merchantBankAccountUpdateRequest.getMId());
-    }
-
-   
-    public void validateMerchantAccountApprovalRequest(MerchantBankAccountApprovalRequest merchantBankAccountApprovalRequest) {
-        logger.debug("Merchant bank account approval validation start for mId: {}", merchantBankAccountApprovalRequest.getMId());
-        errorDtoList = new ArrayList<>();
-        validateMandatoryFields(merchantBankAccountApprovalRequest);
-        checkLeadingTrailingAndSingleSpace(merchantBankAccountApprovalRequest);
-        validateFieldsValue(merchantBankAccountApprovalRequest);
-        validateAccountUniqueIdentifier(merchantBankAccountApprovalRequest.getMId(), merchantBankAccountApprovalRequest.getAccountUniqueIdentifier());
-        validateRequestValues(merchantBankAccountApprovalRequest);
-    }
-
-    public void validateMidForSbiAdmin(String mId) {
-        validateMid(mId);
-        if (!merchantInfoDao.isExistsByMIdAndStatus(mId, UserStatus.ACTIVE.name())) {
-            throw new ValidationException(INVALID_ERROR_CODE, MessageFormat.format(INVALID_ENUM_ERROR_MESSAGE, MerchantConstant.MID));
-        }
-    }
-
-    public void validateMId(String mId) {
-        validateMid(mId);
-        merchantUserValidator.validateConsentForMId(mId);
-        String userName = EPayIdentityUtil.getUserPrincipal().getUsername();
-        List<MerchantInfoDto> merchantInfoForMerchantUser = merchantInfoDao.getAllAccessMerchantInfoForMerchantUser(userName);
-        List<String> validMIds = merchantInfoForMerchantUser.stream().filter(m -> MerchantStatus.ACTIVE.name().equalsIgnoreCase(m.getStatus())).map(MerchantInfoDto::getMId).toList();
-        if (validMIds.contains(mId)) {
-            return;
-        }
-        throw new ValidationException(INVALID_ERROR_CODE, MessageFormat.format(INVALID_ERROR_MESSAGE, MerchantConstant.MID, INVALID_MID_ERROR_MESSAGE));
-    }
-
-
-    private void checkLeadingTrailingAndSingleSpace(MerchantBankAccountRequest merchantBankAccountRequest) {
-        checkForLeadingTrailingAndSingleSpace(merchantBankAccountRequest.getAccountNumber(), MerchantConstant.ACCOUNT_NUMBER);
-        checkForLeadingTrailingAndSingleSpace(merchantBankAccountRequest.getBankName(), MerchantConstant.BANK_NAME);
-        checkForLeadingTrailingAndSingleSpace(merchantBankAccountRequest.getAccountType(), MerchantConstant.ACCOUNT_TYPE);
-        checkForLeadingTrailingAndSingleSpace(merchantBankAccountRequest.getAccountUniqueIdentifier(), ACCOUNT_UNIQUE_IDENTIFIER);
-        checkForLeadingTrailingAndSingleSpace(merchantBankAccountRequest.getAccountHolderName(), MerchantConstant.ACCOUNT_HOLDER_NAME);
-        checkForLeadingTrailingAndSingleSpace(merchantBankAccountRequest.getBranchName(), MerchantConstant.BRANCH_NAME);
-        checkForLeadingTrailingAndSingleSpace(merchantBankAccountRequest.getIfscCode(), MerchantConstant.IFSC_CODE);
-        checkForLeadingTrailingAndSingleSpace(merchantBankAccountRequest.getMId(), MerchantConstant.MID);
-        throwIfErrors();
-    }
-
-
-    private void checkLeadingTrailingAndSingleSpace(MerchantBankAccountUpdateRequest merchantBankAccountUpdateRequest) {
-        checkForLeadingTrailingAndSingleSpace(merchantBankAccountUpdateRequest.getAccountUniqueIdentifier(), ACCOUNT_UNIQUE_IDENTIFIER);
-        checkForLeadingTrailingAndSingleSpace(merchantBankAccountUpdateRequest.getMId(), MerchantConstant.MID);
-        throwIfErrors();
-    }
-
-
-    private void validatePrimaryForInActiveStatus(MerchantBankAccountUpdateRequest merchantBankAccountUpdateRequest) {
-        if (merchantBankDao.fetchPrimaryOrNot(merchantBankAccountUpdateRequest.getMId(), merchantBankAccountUpdateRequest.getAccountUniqueIdentifier())) {
-            errorDtoList.add(ErrorDto.builder().errorCode(INACTIVATE_PRIMARY_ERROR_CODE).errorMessage(INACTIVATE_PRIMARY_ERROR_MESSAGE).build());
-        }
-        throwIfErrors();
-    }
-
-    private void checkLeadingTrailingAndSingleSpace(MerchantBankAccountApprovalRequest merchantBankAccountApprovalRequest) {
-        checkForLeadingTrailingAndSingleSpace(merchantBankAccountApprovalRequest.getMId(), MerchantConstant.MID);
-        checkForLeadingTrailingAndSingleSpace(merchantBankAccountApprovalRequest.getAccountName(), MerchantConstant.ACCOUNT_NAME);
-        checkForLeadingTrailingAndSingleSpace(merchantBankAccountApprovalRequest.getAccountUniqueIdentifier(), ACCOUNT_UNIQUE_IDENTIFIER);
-        checkForLeadingTrailingAndSingleSpace(merchantBankAccountApprovalRequest.getOperationType(), OPERATION_TYPE);
-        checkForLeadingTrailingAndSingleSpace(merchantBankAccountApprovalRequest.getRemarks(), MerchantConstant.REMARK);
-        throwIfErrors();
-    }
-
-
-    private void validateFieldsValue(MerchantBankAccountRequest merchantBankAccountRequest) {
-        validateFieldWithRegex(merchantBankAccountRequest.getAccountHolderName(), MerchantConstant.ALLOWED_ALPHA_REGEX, MerchantConstant.ACCOUNT_HOLDER_NAME, INCORRECT_FORMAT);
-        validateFieldWithRegex(merchantBankAccountRequest.getAccountUniqueIdentifier(), MerchantConstant.ALLOWED_ALPHA_NUMERIC_REGEX, ACCOUNT_UNIQUE_IDENTIFIER, INCORRECT_FORMAT);
-        validateFieldWithRegex(merchantBankAccountRequest.getAccountType(), MerchantConstant.ACCOUNT_TYPE_REGEX, MerchantConstant.ACCOUNT_TYPE, INCORRECT_FORMAT);
-        validateFieldWithRegex(merchantBankAccountRequest.getBankName(), MerchantConstant.ALLOWED_ALPHA_REGEX, MerchantConstant.BANK_NAME, INCORRECT_FORMAT);
-        validateFieldWithRegex(merchantBankAccountRequest.getBranchName(), MerchantConstant.ALLOWED_ALPHA_REGEX, MerchantConstant.BRANCH_NAME, INCORRECT_FORMAT);
-        validateFieldWithRegex(merchantBankAccountRequest.getIfscCode(), MerchantConstant.ALLOWED_ALPHA_NUMERIC_REGEX, MerchantConstant.IFSC_CODE, INCORRECT_FORMAT);
-        validateFixedFieldLength(merchantBankAccountRequest.getMId(), MerchantConstant.MID_LENGTH, MerchantConstant.MID);
-        validateFieldWithRegex(merchantBankAccountRequest.getMId(), MerchantConstant.ALLOWED_DIGIT_REGEX, MerchantConstant.MID, INCORRECT_FORMAT);
-        throwIfErrors();
-    }
-
-  
-    private void validateFieldsValue(MerchantBankAccountUpdateRequest merchantBankAccountUpdateRequest) {
-        validateFieldWithRegex(merchantBankAccountUpdateRequest.getAccountUniqueIdentifier(), MerchantConstant.ALLOWED_ALPHA_NUMERIC_REGEX, ACCOUNT_UNIQUE_IDENTIFIER, INCORRECT_FORMAT);
-        validateFixedFieldLength(merchantBankAccountUpdateRequest.getMId(), MerchantConstant.MID_LENGTH, MerchantConstant.MID);
-        validateFieldWithRegex(merchantBankAccountUpdateRequest.getMId(), MerchantConstant.ALLOWED_DIGIT_REGEX, MerchantConstant.MID, INCORRECT_FORMAT);
-        validateFieldValue(merchantBankAccountUpdateRequest.getStatus(), List.of(INACTIVE.name(), PRIMARY_ACCOUNT_PENDING.name()), STATUS);
-        throwIfErrors();
-    }
-
-  
-    private void validateFieldsValue(MerchantBankAccountApprovalRequest merchantBankAccountApprovalRequest) {
-        validateFieldLength(merchantBankAccountApprovalRequest.getMId(), MerchantConstant.MID_LENGTH, MerchantConstant.MID);
-        validateFieldLength(merchantBankAccountApprovalRequest.getAccountName(), MerchantConstant.ACCOUNT_NAME_LENGTH, MerchantConstant.ACCOUNT_NAME);
-        validateFieldLength(merchantBankAccountApprovalRequest.getAccountUniqueIdentifier(), MerchantConstant.ACCOUNT_UNIQUE_IDENTIFIER_LENGTH, ACCOUNT_UNIQUE_IDENTIFIER);
-        validateFieldLength(merchantBankAccountApprovalRequest.getRemarks(), MerchantConstant.MAX_REMARK_LENGTH, MerchantConstant.REMARKS);
-        validateFieldWithRegex(merchantBankAccountApprovalRequest.getAccountName(), MerchantConstant.ALLOWED_ALPHA_REGEX, MerchantConstant.ACCOUNT_NAME, INCORRECT_FORMAT);
-        validateFieldWithRegex(merchantBankAccountApprovalRequest.getAccountUniqueIdentifier(), MerchantConstant.ALLOWED_ALPHA_NUMERIC_REGEX, ACCOUNT_UNIQUE_IDENTIFIER, INCORRECT_FORMAT);
-        validateFieldWithRegex(merchantBankAccountApprovalRequest.getOperationType(), MerchantConstant.ALLOWED_ALPHA_REGEX, OPERATION_TYPE, INCORRECT_FORMAT);
-        validateFieldWithRegex(merchantBankAccountApprovalRequest.getRemarks(), MerchantConstant.REMARK_REGEX, MerchantConstant.REMARK, INCORRECT_FORMAT);
-        validateFieldWithRegex(merchantBankAccountApprovalRequest.getMId(), MerchantConstant.MID_REGEX, MerchantConstant.MID, INCORRECT_FORMAT);
-        throwIfErrors();
-    }
-
-
-    private void validateRequestValues(MerchantBankAccountApprovalRequest merchantBankAccountApprovalRequest) {
-        validateFieldValue(merchantBankAccountApprovalRequest.getOperationType(), Arrays.stream(OperationType.values()).map(Enum::name).toList(), OPERATION_TYPE);
-        throwIfErrors();
-    }
-
-    private void validateRequestValues(MerchantBankAccountRequest merchantBankAccountRequest) {
-        validateFieldValue(merchantBankAccountRequest.getAccountType(), Arrays.stream(AccountType.values()).map(Enum::name).toList(), MerchantConstant.ACCOUNT_TYPE);
-        validateFieldValue(merchantBankAccountRequest.getAccountClassification(), Arrays.stream(AccountClassification.values()).map(Enum::name).toList(), ACCOUNT_CLASSIFICATION);
-        throwIfErrors();
-    }
-
-
-    private void validatedMandatoryFields(MerchantBankAccountRequest merchantBankAccountRequest) {
-        checkMandatoryField(merchantBankAccountRequest.getBankName(), MerchantConstant.BANK_NAME);
-        checkMandatoryField(merchantBankAccountRequest.getBranchName(), MerchantConstant.BRANCH_NAME);
-        checkMandatoryField(merchantBankAccountRequest.getIfscCode(), MerchantConstant.IFSC_CODE);
-        checkMandatoryField(merchantBankAccountRequest.getAccountType(), MerchantConstant.ACCOUNT_TYPE);
-        checkMandatoryField(merchantBankAccountRequest.getAccountNumber(), MerchantConstant.ACCOUNT_NUMBER);
-        checkMandatoryField(merchantBankAccountRequest.getAccountHolderName(), MerchantConstant.ACCOUNT_HOLDER_NAME);
-        checkMandatoryField(merchantBankAccountRequest.getAccountUniqueIdentifier(), ACCOUNT_UNIQUE_IDENTIFIER);
-        checkMandatoryField(merchantBankAccountRequest.getMId(), MerchantConstant.MID);
-        checkMandatoryField(merchantBankAccountRequest.getAccountClassification(), ACCOUNT_CLASSIFICATION);
-
-        throwIfErrors();
-    }
-
-    private void validatedMandatoryFields(MerchantBankAccountUpdateRequest merchantBankAccountUpdateRequest) {
-        checkMandatoryField(merchantBankAccountUpdateRequest.getAccountUniqueIdentifier(), ACCOUNT_UNIQUE_IDENTIFIER);
-        checkMandatoryField(merchantBankAccountUpdateRequest.getMId(), MerchantConstant.MID);
-        checkMandatoryField(merchantBankAccountUpdateRequest.getStatus(), STATUS);
-        checkMandatoryField(merchantBankAccountUpdateRequest.getAccountClassification(), ACCOUNT_CLASSIFICATION);
-        throwIfErrors();
-    }
-
-    private void validateMandatoryFields(MerchantBankAccountApprovalRequest merchantBankAccountApprovalRequest) {
-        checkMandatoryField(merchantBankAccountApprovalRequest.getAccountName(), MerchantConstant.ACCOUNT_HOLDER_NAME);
-        checkMandatoryField(merchantBankAccountApprovalRequest.getMId(), MerchantConstant.MID);
-        checkMandatoryField(merchantBankAccountApprovalRequest.getAccountUniqueIdentifier(), ACCOUNT_UNIQUE_IDENTIFIER);
-        if (!merchantBankAccountApprovalRequest.isApproved()) {
-            checkMandatoryField(merchantBankAccountApprovalRequest.getRemarks(), MerchantConstant.REMARK);
-        }
-    }
-
-    private void validateBankDetails(MerchantBankAccountRequest merchantBankAccountRequest) {
-        adminServicesClient.validateBankDetails(merchantBankAccountRequest.getBankName(), merchantBankAccountRequest.getBranchName(), merchantBankAccountRequest.getIfscCode());
-    }
-
-    private void validateAccountUniqueIdentifier(MerchantBankAccountRequest merchantBankAccountRequest) {
-        boolean existByAccountUniqueIdentifier = merchantBankDao.isExistByMIdAndAccountUniqueIdentifier(merchantBankAccountRequest.getMId(), merchantBankAccountRequest.getAccountUniqueIdentifier());
-        if (existByAccountUniqueIdentifier) {
-            errorDtoList.add(ErrorDto.builder().errorCode(ALREADY_EXIST_ERROR_CODE).errorMessage(MessageFormat.format(ALREADY_EXIST_ERROR_MESSAGE, ACCOUNT_UNIQUE_IDENTIFIER)).build());
-        }
-
-        boolean existByAccountNumber = merchantBankDao.isExistByAccountNumberAndStatus(merchantBankAccountRequest.getMId(), merchantBankAccountRequest.getAccountNumber(), List.of(ACTIVE, PRIMARY_ACCOUNT_PENDING, CREATION_PENDING));
-        if (existByAccountNumber) {
-            errorDtoList.add(ErrorDto.builder().errorCode(ALREADY_EXIST_ERROR_CODE).errorMessage(MessageFormat.format(ALREADY_EXIST_ERROR_MESSAGE, MerchantConstant.ACCOUNT_NUMBER)).build());
-        }
-        throwIfErrors();
-    }
-
-    private void validateAccountUniqueIdentifier(String mId, String uniqueIdentifier) {
-        boolean existByAccountUniqueIdentifier = merchantBankDao.isExistByMIdAndAccountUniqueIdentifier(mId, uniqueIdentifier);
-        if (!existByAccountUniqueIdentifier) {
-            errorDtoList.add(ErrorDto.builder().errorCode(NOT_FOUND_ERROR_CODE).errorMessage(MessageFormat.format(NOT_FOUND_ERROR_MESSAGE, ACCOUNT_UNIQUE_IDENTIFIER)).build());
-        }
-        throwIfErrors();
-    }
-
-    private void validateAccountUniqueIdentifierAndStatus(String mId, String uniqueIdentifier, AccountStatus accountStatus) {
-        boolean existsByAccountUniqueIdentifierAndStatus = merchantBankDao.isExistByMIdAndAccountUniqueIdentifierAndStatus(mId, uniqueIdentifier, accountStatus);
-        if (!existsByAccountUniqueIdentifierAndStatus) {
-            errorDtoList.add(ErrorDto.builder().errorCode(INVALID_ERROR_CODE).errorMessage(MessageFormat.format(INVALID_ERROR_MESSAGE, "Modification", "Only Active account can be modified")).build());
-        }
-        throwIfErrors();
-    }
-
-
-    public void validateMid(String mId) {
-        logger.debug("Request Validation start for {}", mId);
-        errorDtoList = new ArrayList<>();
-        checkMandatoryField(mId, MerchantConstant.MID);
-        throwIfErrors();
-        checkForLeadingTrailingAndSingleSpace(mId, MerchantConstant.MID);
-        throwIfErrors();
-        validateFixedFieldLength(mId, MerchantConstant.MID_LENGTH, MerchantConstant.MID);
-        throwIfErrors();
-        validateFieldWithRegex(mId, MerchantConstant.MID_REGEX, MerchantConstant.MID, INVALID_FORMAT);
-        throwIfErrors();
-        logger.debug("Request Validation end for {}", mId);
-    }
-
- 
-    private void validateFieldLength(MerchantBankAccountRequest merchantBankAccountRequest) {
-        validateFieldLength(merchantBankAccountRequest.getAccountHolderName(), MerchantConstant.MAX_NAME_LENGTH, MerchantConstant.ACCOUNT_HOLDER_NAME);
-        validateFieldLength(merchantBankAccountRequest.getAccountUniqueIdentifier(), MerchantConstant.MAX_ACC_UNIQUE_ID, ACCOUNT_UNIQUE_IDENTIFIER);
-        validateFieldLength(merchantBankAccountRequest.getBankName(), MerchantConstant.MAX_NAME_LENGTH, MerchantConstant.BANK_NAME);
-        validateFieldLength(merchantBankAccountRequest.getBranchName(), MerchantConstant.MAX_NAME_LENGTH, MerchantConstant.BRANCH_NAME);
-        validateFieldLength(merchantBankAccountRequest.getIfscCode(), MerchantConstant.IFSC_CODE_LENGTH, MerchantConstant.IFSC_CODE);
-        validateFieldLength(merchantBankAccountRequest.getAccountNumber(), MerchantConstant.ACCOUNT_NUMBER_LENGTH, MerchantConstant.ACCOUNT_NUMBER);
-        throwIfErrors();
-    }
-
-
-    private void validateFieldLength(MerchantBankAccountUpdateRequest merchantBankAccountUpdateRequest) {
-        validateFieldLength(merchantBankAccountUpdateRequest.getAccountUniqueIdentifier(), MerchantConstant.MAX_ACC_UNIQUE_ID, ACCOUNT_UNIQUE_IDENTIFIER);
-        throwIfErrors();
-    }
+    @NotBlank(message = "Nature of business name is required")
+    private String natureOfBusinessName;
 }
-package com.epay.merchant.validator;
+------------------------
+package com.epay.admin.portal.master.dto.request;
 
-import static com.epay.merchant.util.ErrorConstants.*;
-import static com.epay.merchant.util.MerchantConstant.*;
+import lombok.Data;
+import lombok.EqualsAndHashCode;
 
-import com.epay.merchant.dao.MerchantInfoDao;
-import com.epay.merchant.dao.MerchantUserDao;
-import com.epay.merchant.dao.OtpManagementDao;
-import com.epay.merchant.dto.ErrorDto;
-import com.epay.merchant.dto.MerchantDetailsResponse;
-import com.epay.merchant.dto.MerchantInfoDto;
-import com.epay.merchant.dto.MerchantUserDto;
-import com.epay.merchant.exception.MerchantException;
-import com.epay.merchant.exception.ValidationException;
-import com.epay.merchant.model.request.*;
-import com.epay.merchant.model.response.UserMenuPermissionResponse;
-import com.epay.merchant.util.EPayIdentityUtil;
-import com.epay.merchant.util.ErrorConstants;
-import com.epay.merchant.util.MerchantConstant;
-import com.epay.merchant.util.enums.MerchantStatus;
-import com.epay.merchant.util.enums.MerchantUserRoles;
-import com.epay.merchant.util.enums.RequestType;
-import com.epay.merchant.util.enums.UserStatus;
-import com.sbi.epay.logging.utility.LoggerFactoryUtility;
-import com.sbi.epay.logging.utility.LoggerUtility;
-import java.text.MessageFormat;
-import java.util.*;
-import lombok.RequiredArgsConstructor;
-import org.apache.commons.lang3.ObjectUtils;
+@Data
+@EqualsAndHashCode(callSuper = true)
+public class NatureOfBusinessSearchRequest extends MasterSearchRequest {
+    private String natureOfBusinessName;
+}
+---------------------
+package com.epay.admin.portal.master.dto.response;
+
+import com.fasterxml.jackson.annotation.JsonInclude;
+import lombok.Builder;
+import lombok.Data;
+
+import java.util.UUID;
+
+@Data
+@Builder
+@JsonInclude(JsonInclude.Include.NON_NULL)
+public class NatureOfBusinessResponse {
+    private UUID id;
+    private String natureOfBusinessName;
+    private String natureOfBusinessCode;
+    private String status;
+    private Long createdAt;
+    private String createdBy;
+    private Long updatedAt;
+    private String updatedBy;
+}
+-----------------------
+package com.epay.admin.portal.master.entity;
+
+import jakarta.persistence.Column;
+import jakarta.persistence.Entity;
+import jakarta.persistence.GeneratedValue;
+import jakarta.persistence.GenerationType;
+import jakarta.persistence.Id;
+import jakarta.persistence.Table;
+import jakarta.persistence.Version;
+import lombok.AllArgsConstructor;
+import lombok.Builder;
+import lombok.Data;
+import lombok.EqualsAndHashCode;
+import lombok.NoArgsConstructor;
+
+import java.util.UUID;
+
+@Entity
+@Table(name = "NATURE_OF_BUSINESS")
+@Data
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
+@EqualsAndHashCode(callSuper = false)
+public class NatureOfBusiness extends MasterStandalone {
+
+    @Id
+    @GeneratedValue(strategy = GenerationType.UUID)
+    private UUID id;
+
+    @Column(name = "NATURE_OF_BUSINESS_NAME", nullable = false, unique = true)
+    private String natureOfBusinessName;
+
+    @Column(name = "NATURE_OF_BUSINESS_CODE", nullable = false, unique = true)
+    private String natureOfBusinessCode;
+
+    @Column(name = "STATUS", nullable = false)
+    private String status;
+
+    @Version
+    private int version;
+}
+-----------------------------
+package com.epay.admin.portal.master.handler;
+
+import com.epay.admin.portal.exceptions.AdminPortalException;
+import com.epay.admin.portal.master.dao.MasterWorkflowDao;
+import com.epay.admin.portal.master.dao.NatureOfBusinessDao;
+import com.epay.admin.portal.master.dto.request.NatureOfBusinessDto;
+import com.epay.admin.portal.master.dto.request.NatureOfBusinessSearchRequest;
+import com.epay.admin.portal.master.dto.response.NatureOfBusinessResponse;
+import com.epay.admin.portal.master.entity.MasterWorkflow;
+import com.epay.admin.portal.master.entity.NatureOfBusiness;
+import com.epay.admin.portal.master.mapper.NatureOfBusinessMapper;
+import com.epay.admin.portal.master.specification.NatureOfBusinessSpecification;
+import com.epay.admin.portal.master.util.ENUM.ActionType;
+import com.epay.admin.portal.master.util.ENUM.MasterStatus;
+import com.epay.admin.portal.master.util.ENUM.MasterType;
+import com.epay.admin.portal.master.util.ENUM.WorkflowStatus;
+import com.epay.admin.portal.master.util.MasterUtil;
+import com.epay.admin.portal.model.response.AdminPortalResponse;
+import com.epay.admin.portal.util.EPayIdentityUtil;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Component;
 
+import java.text.MessageFormat;
+import java.util.UUID;
+
+import static com.epay.admin.portal.util.AdminPortalConstants.SUCCESS_RESPONSE_CODE;
+import static com.epay.admin.portal.util.ErrorConstants.DUPLICATE_ERROR_CODE;
+import static com.epay.admin.portal.util.ErrorConstants.DUPLICATE_ERROR_MESSAGE;
+import static com.epay.admin.portal.util.ErrorConstants.NOT_FOUND_ERROR_CODE;
+import static com.epay.admin.portal.util.ErrorConstants.NOT_FOUND_ERROR_MESSAGE;
+
 @Component
-@RequiredArgsConstructor
-public class MerchantUserValidator extends BaseValidator {
+public class NatureOfBusinessHandler extends AbstractMasterHandler<NatureOfBusinessDto, NatureOfBusiness> {
 
-    private final LoggerUtility logger = LoggerFactoryUtility.getLogger(this.getClass());
+    private final NatureOfBusinessDao natureOfBusinessDao;
+    private final NatureOfBusinessMapper natureOfBusinessMapper;
 
-    private final MerchantUserDao merchantUserDao;
-    private final MerchantInfoDao merchantInfoDao;
-    private final OtpManagementDao otpManagementDao;
-    private final MerchantBankAccountValidator merchantBankAccountValidator;
-    private final OtpValidator otpValidator;
-
-  
-    public void validateMerchantUserRequest(MerchantUserRequest merchantUserRequest, boolean isCreate) {
-        errorDtoList = new ArrayList<>();
-        logger.debug("Merchant validation start for MerchantUserRequest {}", merchantUserRequest);
-        validateMandatoryFields(merchantUserRequest, isCreate);
-        checkForLeadingTrailingAndSingleSpace(merchantUserRequest);
-        validateFieldLength(merchantUserRequest);
-        validateFieldValue(merchantUserRequest);
-        validateIsRolePresent(merchantUserRequest);
-        if (isCreate) {
-            validateDuplicateMerchantUser(merchantUserRequest.getUserName(), merchantUserRequest.getEmail(), merchantUserRequest.getMobilePhone());
-            validateMidAndAccess(merchantUserRequest.getMId());
-        } else {
-            validateDuplicateMerchantUserOnUpdate(merchantUserRequest.getUserName(), merchantUserRequest.getEmail(), merchantUserRequest.getMobilePhone());
-        }
-        validatedAssignedRole(UUID.fromString(merchantUserRequest.getRole()));
-        logger.debug("Merchant User role validation completed for MerchantUserRequest {}", merchantUserRequest);
+    public NatureOfBusinessHandler(NatureOfBusinessDao natureOfBusinessDao,
+                                   MasterWorkflowDao masterWorkflowDao,
+                                   ObjectMapper objectMapper,
+                                   NatureOfBusinessMapper natureOfBusinessMapper) {
+        super(masterWorkflowDao, objectMapper);
+        this.natureOfBusinessDao = natureOfBusinessDao;
+        this.natureOfBusinessMapper = natureOfBusinessMapper;
     }
 
-   
-    public void validateMerchantUserProfile(MerchantUserRequest merchantUserRequest) {
-        errorDtoList = new ArrayList<>();
-        logger.debug("Merchant User Profile validation start for MerchantUserRequest {}", merchantUserRequest);
-        String userName = EPayIdentityUtil.getUserPrincipal().getAuthenticationId();
-        validateUserName(merchantUserRequest.getUserName());
-        if (userName.equalsIgnoreCase(merchantUserRequest.getUserName())) {
-            validateFieldLength(merchantUserRequest);
-            validateFieldValue(merchantUserRequest);
-            validatedRequestId(merchantUserRequest, userName);
-            validateDuplicateMerchantUserOnUpdate(merchantUserRequest.getUserName(), merchantUserRequest.getEmail(), merchantUserRequest.getMobilePhone());
-        } else {
-            errorDtoList.add(ErrorDto.builder().errorCode(INVALID_ERROR_CODE).errorMessage(MessageFormat.format(INVALID_ERROR_MESSAGE, "Merchant User", "Profile Request not belongs to logged in User")).build());
-            throwIfErrors();
-        }
-        logger.debug("Merchant User assigned MIDs validation completed for MerchantUserRequest {}", merchantUserRequest);
-    }
+    @Override public MasterType getMasterType() { return MasterType.NATURE_OF_BUSINESS; }
+    @Override public Class<NatureOfBusinessDto> getDtoClass() { return NatureOfBusinessDto.class; }
 
-    public void validatePostMapping(String userName, List<String> mIds) {
-        errorDtoList = new ArrayList<>();
-        validateMandatoryField(userName, mIds);
-        checkLeadingTrailingAndSingleSpace(userName, mIds, MID);
-        validateFieldsLength(userName, mIds);
-        validateFieldsValue(userName,mIds);
-        validateDuplicateItem(mIds);
-    }
-
-
-    public void validateGetMappingRequest(String userName) {
-        errorDtoList = new ArrayList<>();
-        validateMandatoryField(userName);
-        checkLeadingTrailingAndSingleSpace(userName);
-        validateFieldsValue(userName);
-    }
-
-
-    public void validateMIdMapping(String userName, MerchantUserDto merchantUser, List<String> mIds) {
-        validatedMappingRequest(userName, merchantUser);
-        validatedWithParentMIdsAccess(mIds, merchantUser);
-    }
-
-
-    public void validateAssignedMenuRequest(String userName, List<String> menus) {
-        errorDtoList = new ArrayList<>();
-        checkLeadingTrailingAndSingleSpace(userName, menus, MENU);
-        validateFieldsValue(userName);
-        validateUserMenus(menus);
-        validateRole(userName);
-    }
-
-    protected void validateUserMenus(List<String> menuList) {
-        validateDuplicateValue(menuList, MENU_LIST, DUPLICATE_MENU_REASON);
-        throwIfErrors();
-    }
-
-
-    public void validateMenuPostMapping(String userName, MerchantUserDto merchantUser, List<String> menus) {
-        validatedMappingRequest(userName, merchantUser);
-        validatedWithParentMenuAccess(menus, merchantUser);
-    }
-
-    public void validatedMappingRequest(String userName, MerchantUserDto merchantUser) {
-        String loggedInUserName = EPayIdentityUtil.getUserPrincipal().getUsername();
-        if (!loggedInUserName.equalsIgnoreCase(userName) || ObjectUtils.isNotEmpty(merchantUser.getParentUserId())) {
-            MerchantUserDto loggedInUser = merchantUserDao.getByUserName(loggedInUserName, UserStatus.ACTIVE);
-            // Validated if LoggedIn user is the parent of requested User Or Not
-            if (!loggedInUser.getId().equals(merchantUser.getParentUserId())) {
-                throw new ValidationException(INVALID_ERROR_CODE, MessageFormat.format(INVALID_ERROR_MESSAGE, "Mapping Request", "Logged In User is not a direct parent of request user"));
-            }
+    @Override
+    public void validateCreate(NatureOfBusinessDto dto) {
+        log.info("Validating nature of business create for natureOfBusinessName={}", dto.getNatureOfBusinessName());
+        if (natureOfBusinessDao.existsByNatureOfBusinessName(dto.getNatureOfBusinessName())) {
+            throw new AdminPortalException(DUPLICATE_ERROR_CODE, MessageFormat.format(DUPLICATE_ERROR_MESSAGE, "Nature of business name", dto.getNatureOfBusinessName()));
         }
     }
 
-  
-    public void validatedWithParentMIdsAccess(List<String> mIds, MerchantUserDto merchantUser) {
-        String username = EPayIdentityUtil.getUserPrincipal().getUsername();
-        MerchantUserDto loggedInUser = merchantUserDao.getByUserName(username, UserStatus.ACTIVE);
-        List<String> parentMIdsList = new ArrayList<>();
-        if (ObjectUtils.isNotEmpty(merchantUser.getParentUserId()) && loggedInUser.getId().equals(merchantUser.getParentUserId())) {
-            // Get Parent Assigned MIDs List
-            List<MerchantInfoDto> parentAssignedMIds = merchantInfoDao.getAllAccessMerchantInfoForMerchantUser(merchantUser.getParentUserId());
-            parentMIdsList = parentAssignedMIds.stream().map(MerchantInfoDto::getMId).toList();
-        }
-        if (!new HashSet<>(parentMIdsList).containsAll(mIds)) {
-            throw new ValidationException(INVALID_ERROR_CODE, MessageFormat.format(INVALID_ERROR_MESSAGE, "Requested AssignedMIds", "Requested User is not having the access of given MId list"));
-        }
+    @Override
+    public MasterWorkflow createMaster(NatureOfBusinessDto dto) {
+        log.info("Creating pending nature of business for natureOfBusinessName={}", dto.getNatureOfBusinessName());
+        String makerId = EPayIdentityUtil.getUserPrincipal().getUsername();
+
+        NatureOfBusiness entity = natureOfBusinessMapper.toEntity(dto);
+        entity.setNatureOfBusinessCode(
+                MasterUtil.generateMasterCode(dto.getNatureOfBusinessName(), MasterType.NATURE_OF_BUSINESS));
+        entity.setStatus(MasterStatus.APPROVAL_PENDING.getValue());
+        entity.setCreatedBy(makerId);
+
+        NatureOfBusiness saved = natureOfBusinessDao.save(entity);
+
+        MasterWorkflow workflow = MasterWorkflow.builder()
+                .masterType(MasterType.NATURE_OF_BUSINESS)
+                .masterCode(saved.getNatureOfBusinessCode())
+                .recordId(saved.getId())
+                .newValue(serializeEntity(saved, "nature of business create payload"))
+                .status(WorkflowStatus.PENDING)
+                .actionType(ActionType.CREATE.name())
+                .makerId(makerId)
+                .build();
+
+        MasterWorkflow savedWorkflow = masterWorkflowDao.save(workflow);
+        log.info("Nature of business workflow created workflowId={}", savedWorkflow.getId());
+        return savedWorkflow;
     }
 
-    public void validatedWithParentMenuAccess(List<String> menus, MerchantUserDto merchantUser) {
-        String username = EPayIdentityUtil.getUserPrincipal().getUsername();
-        MerchantUserDto loggedInUser = merchantUserDao.getByUserName(username, UserStatus.ACTIVE);
-        List<String> parentMenuList = new ArrayList<>();
-        if (ObjectUtils.isNotEmpty(merchantUser.getParentUserId()) && loggedInUser.getId().equals(merchantUser.getParentUserId())) {
-            // Get Parent Assigned MIDs List
-            List<UserMenuPermissionResponse> parentAssignedMenus = merchantUserDao.getUserMenuPermission(merchantUser.getParentUserId());
-            parentMenuList = parentAssignedMenus.stream().map(UserMenuPermissionResponse::getMenuCode).toList();
-        }
-        if (!new HashSet<>(parentMenuList).containsAll(menus)) {
-            throw new ValidationException(INVALID_ERROR_CODE, MessageFormat.format(INVALID_ERROR_MESSAGE, "Requested Assgined-Menus", "Requested User is not having the access of given Menus list"));
-        }
+    @Override
+    public AdminPortalResponse<?> search(JsonNode request, Pageable pageable) {
+        log.info("Searching nature of business records pageable={}", pageable);
+        NatureOfBusinessSearchRequest req =
+                objectMapper.convertValue(request, NatureOfBusinessSearchRequest.class);
+        Page<NatureOfBusiness> page =
+                natureOfBusinessDao.findAll(NatureOfBusinessSpecification.build(req), pageable);
+        return AdminPortalResponse.<NatureOfBusinessResponse>builder()
+                .status(SUCCESS_RESPONSE_CODE)
+                .data(page.getContent().stream().map(natureOfBusinessMapper::toResponse).toList())
+                .count((long) page.getNumberOfElements())
+                .total(page.getTotalElements())
+                .build();
     }
 
-    public void validateUpdateUserStatus(MerchantUserStatusRequest merchantUserStatusRequest) {
-        errorDtoList = new ArrayList<>();
-        validateMandatoryField(merchantUserStatusRequest);
-        checkForLeadingTrailingAndSingleSpace(merchantUserStatusRequest);
-        validateRequestValues(merchantUserStatusRequest);
-        validateFieldValue(merchantUserStatusRequest);
-        validateUser(merchantUserStatusRequest.getUserName());
+    @Override
+    public NatureOfBusiness findEntityById(UUID id) {
+        return natureOfBusinessDao.findById(id)
+                .orElseThrow(() -> new AdminPortalException(NOT_FOUND_ERROR_CODE,
+                        MessageFormat.format(NOT_FOUND_ERROR_MESSAGE, "Nature of business with id=" + id)));
     }
 
-    private void validateUserName(String userName) {
-        checkMandatoryField(userName, USER_NAME);
-        throwIfErrors();
-        checkForLeadingTrailingAndSingleSpace(userName, USER_NAME);
-        throwIfErrors();
-        validateFieldLength(userName, MAX_USER_NAME_LENGTH, USER_NAME);
-        throwIfErrors();
-        validateFieldWithRegex(userName, USER_NAME_REGEX, USER_NAME, INCORRECT_FORMAT);
-        throwIfErrors();
+    @Override public NatureOfBusiness saveEntity(NatureOfBusiness e) { return natureOfBusinessDao.save(e); }
+    @Override public String getEntityStatus(NatureOfBusiness e) { return e.getStatus(); }
+    @Override public void setEntityStatus(NatureOfBusiness e, String s) { e.setStatus(s); }
+    @Override public String getEntityMasterCode(NatureOfBusiness e) { return e.getNatureOfBusinessCode(); }
+}
+-------------------------------------
+package com.epay.admin.portal.master.mapper;
+
+import com.epay.admin.portal.master.dto.request.NatureOfBusinessDto;
+import com.epay.admin.portal.master.dto.response.NatureOfBusinessResponse;
+import com.epay.admin.portal.master.entity.NatureOfBusiness;
+import org.mapstruct.Mapper;
+import org.mapstruct.Mapping;
+import org.mapstruct.ReportingPolicy;
+
+@Mapper(componentModel = "spring", unmappedTargetPolicy = ReportingPolicy.IGNORE)
+public interface NatureOfBusinessMapper {
+
+    @Mapping(target = "natureOfBusinessName", expression = "java(dto.getNatureOfBusinessName() == null ? null : dto.getNatureOfBusinessName().trim())")
+    NatureOfBusiness toEntity(NatureOfBusinessDto dto);
+
+    NatureOfBusinessResponse toResponse(NatureOfBusiness entity);
+}
+----------------------------
+package com.epay.admin.portal.master.repository;
+
+import com.epay.admin.portal.master.entity.NatureOfBusiness;
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
+import org.springframework.stereotype.Repository;
+
+import java.util.UUID;
+
+@Repository
+public interface NatureOfBusinessRepository
+        extends JpaRepository<NatureOfBusiness, UUID>, JpaSpecificationExecutor<NatureOfBusiness> {
+
+    boolean existsByNatureOfBusinessNameIgnoreCase(String natureOfBusinessName);
+}
+-------------------------
+package com.epay.admin.portal.master.specification;
+
+import com.epay.admin.portal.master.dto.request.NatureOfBusinessSearchRequest;
+import com.epay.admin.portal.master.entity.NatureOfBusiness;
+import org.apache.commons.lang3.StringUtils;
+import org.springframework.data.jpa.domain.Specification;
+
+public class NatureOfBusinessSpecification {
+
+    private NatureOfBusinessSpecification() {}
+
+    public static Specification<NatureOfBusiness> build(NatureOfBusinessSearchRequest req) {
+        if (req == null) return Specification.where(null);
+        return Specification
+                .where(hasNatureOfBusinessName(req.getNatureOfBusinessName()))
+                .and(hasStatus(req.getStatus()))
+                .and(hasUpdatedAtBetween(req.getFromDate(), req.getToDate()));
     }
 
-    private void validateRequestValues(MerchantUserStatusRequest merchantUserStatusRequest) {
-        validateFieldValue(merchantUserStatusRequest.getUserStatus(), Arrays.stream(UserStatus.values()).map(Enum::name).toList(), USER_SATATUS);
-        throwIfErrors();
-    }
-    public void validateUserSearchRequest(MerchantUserSearchRequest merchantUserSearchRequest) {
-        errorDtoList = new ArrayList<>();
-        checkMandatoryField(merchantUserSearchRequest.getMId(), MID);
-        throwIfErrors();
-        checkForLeadingTrailingAndSingleSpace(merchantUserSearchRequest);
-        validateFieldValues(merchantUserSearchRequest);
-        merchantBankAccountValidator.validateMId(merchantUserSearchRequest.getMId());
+    private static Specification<NatureOfBusiness> hasNatureOfBusinessName(String name) {
+        return (root, query, cb) -> StringUtils.isBlank(name) ? cb.conjunction()
+                : cb.like(cb.lower(root.get("natureOfBusinessName")), "%" + name.toLowerCase() + "%");
     }
 
-    public void validateUnblockUserRequest(UnblockUserRequest unblockUserRequest) {
-        logger.debug("validation started for {}", unblockUserRequest);
-        errorDtoList = new ArrayList<>();
-        validateMandatoryFields(unblockUserRequest);
-        validateLeadingAndTrailingSpaces(unblockUserRequest);
-        validateFieldsLength(unblockUserRequest);
-        validateFieldsValue(unblockUserRequest);
+    private static Specification<NatureOfBusiness> hasStatus(String status) {
+        return (root, query, cb) -> StringUtils.isBlank(status) ? cb.conjunction()
+                : cb.equal(cb.lower(root.get("status")), status.toLowerCase());
     }
 
-
-    private void validateFieldsValue(UnblockUserRequest unblockUserRequest) {
-        validateFieldWithRegex(unblockUserRequest.getUserName(), MerchantConstant.USER_NAME_REGEX, MerchantConstant.USER_NAME, INCORRECT_FORMAT);
-        validateFieldWithRegex(unblockUserRequest.getRequestId(), MerchantConstant.UUID_FORMAT_REGEX, MerchantConstant.REQUEST_ID, INCORRECT_FORMAT);
-        throwIfErrors();
-    }
-
-    void validateFieldsLength(UnblockUserRequest unblockUserRequest) {
-        validateFieldLength(unblockUserRequest.getUserName(), MerchantConstant.MAX_USER_NAME_LENGTH, MerchantConstant.USER_NAME);
-        validateFixedFieldLength(unblockUserRequest.getRequestId(), MerchantConstant.UUID_LENGTH, MerchantConstant.REQUEST_ID);
-        throwIfErrors();
-    }
-
-    void validateMandatoryFields(UnblockUserRequest unblockUserRequest) {
-        checkMandatoryField(unblockUserRequest.getRequestId(), REQUEST_ID);
-        checkMandatoryField(unblockUserRequest.getUserName(), USER_NAME);
-        checkMandatoryField(unblockUserRequest.getEmailOtp(), EMAIL_OTP);
-        checkMandatoryField(unblockUserRequest.getSmsOtp(), SMS_OTP);
-        throwIfErrors();
-    }
-
-    void validateMandatoryField(MerchantUserStatusRequest merchantUserStatusRequest) {
-        checkMandatoryField(merchantUserStatusRequest.getUserName(), USER_NAME);
-        throwIfErrors();
-        validateFieldLength(merchantUserStatusRequest.getRemark(), MAX_REMARK_LENGTH, REMARK);
-        throwIfErrors();
-    }
-
-    void validateMandatoryField(String userName, List<String> mIds) {
-        checkMandatoryField(userName, USER_NAME);
-        checkMandatoryCollection(mIds, LIST_OF_MIDS);
-        mIds.forEach(mid -> checkMandatoryField(mid, MIDS));
-        throwIfErrors();
-    }
-
-    void validateMandatoryField(String userName) {
-        checkMandatoryField(userName, USER_NAME);
-        throwIfErrors();
-    }
-
-    void validateUser(String userName) {
-        String username = EPayIdentityUtil.getUserPrincipal().getUsername();
-        MerchantUserDto loggedInUser = merchantUserDao.getByUserName(username, UserStatus.ACTIVE);
-        if (!merchantUserDao.isMerchantUserExistForGivenParent(userName, loggedInUser.getId())) {
-            errorDtoList.add(ErrorDto.builder().errorCode(INVALID_ERROR_CODE)
-                    .errorMessage(MessageFormat.format(INVALID_ERROR_MESSAGE, USER_NAME, "Invalid User or LoggedIn User is not parent of Requested User")).build());
-            throwIfErrors();
-        }
-    }
- 
-    void validateMandatoryFields(MerchantUserRequest user, boolean isCreate) {
-        if(isCreate) {
-            checkMandatoryField(user.getMId(), MID);
-            checkMandatoryField(user.getRole(), ROLE);
-        }
-        checkMandatoryField(user.getRequestId(), REQUEST_ID);
-        checkMandatoryField(user.getUserName(), USER_NAME);
-        checkMandatoryField(user.getFirstName(), FIRST_NAME);
-        checkMandatoryField(user.getEmail(), EMAIL);
-        checkMandatoryField(user.getMobilePhone(), MOBILE_PHONE);
-        throwIfErrors();
-    }
-
-
-    private void checkLeadingTrailingAndSingleSpace(String userName, List<String> inputs, String fieldName) {
-        checkForLeadingTrailingAndSingleSpace(userName, USER_NAME);
-        inputs.forEach(input -> checkForLeadingTrailingAndSingleSpace(input, fieldName));
-        throwIfErrors();
-    }
-
-    private void validateLeadingAndTrailingSpaces(UnblockUserRequest unblockUserRequest) {
-        checkForLeadingTrailingAndSingleSpace(unblockUserRequest.getUserName(), USER_NAME);
-        checkForLeadingTrailingAndSingleSpace(unblockUserRequest.getRequestId(), REQUEST_ID);
-        checkForLeadingTrailingAndSingleSpace(unblockUserRequest.getEmailOtp(), EMAIL_OTP);
-        checkForLeadingTrailingAndSingleSpace(unblockUserRequest.getSmsOtp(), SMS_OTP);
-        throwIfErrors();
-    }
-
-  
-    private void checkLeadingTrailingAndSingleSpace(String userName) {
-        checkForLeadingTrailingAndSingleSpace(userName, USER_NAME);
-        throwIfErrors();
-    }
-
- 
-    private void validateFieldsValue(String userName) {
-        validateFieldLength(userName, MAX_USER_NAME_LENGTH, USER_NAME);
-        validateFieldWithRegex(userName, USER_NAME_REGEX, USER_NAME, INCORRECT_FORMAT);
-        throwIfErrors();
-    }
-
-
-    private void validateFieldsValue(String userName , List<String> mids) {
-        validateFieldWithRegex(userName, USER_NAME_REGEX, USER_NAME, INCORRECT_FORMAT);
-        mids.forEach(mid -> validateFieldWithRegex(mid,MID_REGEX,MID,INCORRECT_FORMAT));
-        throwIfErrors();
-    }
-
-    void validateFieldsLength(String userName, List<String> mIds) {
-        validateFieldLength(userName, MAX_USER_NAME_LENGTH,USER_NAME);
-        mIds.forEach(mid -> validateFieldLength(mid, MID_LENGTH, MID));
-        throwIfErrors();
-    }
-
-  
-    void validateIsRolePresent(MerchantUserRequest merchantUserRequest) {
-        errorDtoList = new ArrayList<>();
-        checkMandatoryField(merchantUserRequest.getRole(), "User Role");
-        throwIfErrors();
-    }
-
-  
-    void validateFieldLength(MerchantUserRequest merchantUserRequest) {
-        validateFixedFieldLength(merchantUserRequest.getMId(), MID_LENGTH, MID);
-        validateFieldMinLength(merchantUserRequest.getUserName(), MIN_USER_NAME_LENGTH, USER_NAME);
-        validateFieldLength(merchantUserRequest.getUserName(), MAX_USER_NAME_LENGTH, USER_NAME);
-        validateFieldLength(merchantUserRequest.getFirstName(), MAX_NAME_LENGTH, FIRST_NAME);
-        validateFieldLength(merchantUserRequest.getEmail(), MAX_EMAIL_LENGTH, EMAIL);
-        validateFieldLength(merchantUserRequest.getMobilePhone(), MOBILE_NUMBER_LENGTH, MOBILE_PHONE);
-        validateFixedFieldLength(merchantUserRequest.getRequestId(), UUID_LENGTH, REQUEST_ID);
-        validateFixedFieldLength(merchantUserRequest.getRole(), UUID_LENGTH, ROLE);
-        throwIfErrors();
-    }
-    
-    void validateFieldValue(MerchantUserRequest merchantUserRequest) {
-        validateFieldWithRegex(merchantUserRequest.getMId(), MID_REGEX, MID, INCORRECT_FORMAT);
-        validateFieldWithRegex(merchantUserRequest.getUserName(), USER_NAME_REGEX, USER_NAME, INCORRECT_FORMAT);
-        validateFieldWithRegex(merchantUserRequest.getFirstName(), NAME_REGEX, FIRST_NAME, INCORRECT_FORMAT);
-        validateFieldWithRegex(merchantUserRequest.getEmail(), EMAIL_REGEX, EMAIL,INCORRECT_FORMAT);
-        validateFieldWithRegex(merchantUserRequest.getMobilePhone(), PHONE_REGEX, MOBILE_PHONE,INCORRECT_FORMAT);
-        validateFieldWithRegex(merchantUserRequest.getRequestId(), UUID_FORMAT_REGEX, REQUEST_ID, INCORRECT_FORMAT);
-        validateFieldWithRegex(merchantUserRequest.getRole(), UUID_FORMAT_REGEX, ROLE, INCORRECT_FORMAT);
-        throwIfErrors();
-    }
- 
-    void validateDuplicateMerchantUser(String userName, String email, String mobilePhone) {
-        boolean isUserExist = merchantUserDao.existsByUserNameOrEmailOrMobilePhoneAndStatus(userName, email, mobilePhone, List.of(UserStatus.values()));
-        if (isUserExist) {
-            errorDtoList.add(ErrorDto.builder().errorCode(USER_ALREADY_EXIST_ERROR_CODE).errorMessage(MessageFormat.format(USER_ALREADY_EXIST_ERROR_MESSAGE_SAVE, userName, mobilePhone, email)).build());
-            throwIfErrors();
-        }
-    }
-
- 
-    void validateDuplicateMerchantUserOnUpdate(String userName, String email, String mobilePhone) {
-        List<String> dbUserName = merchantUserDao.getUserNameByEmailOrMobilePhone(email, mobilePhone);
-        boolean found = dbUserName.stream().allMatch(u -> u.equalsIgnoreCase(userName));
-        if (!found) {
-            errorDtoList.add(ErrorDto.builder().errorCode(USER_ALREADY_EXIST_ERROR_CODE_UPDATE).errorMessage(MessageFormat.format(USER_ALREADY_EXIST_ERROR_MESSAGE_UPDATE, mobilePhone, email)).build());
-            throwIfErrors();
-        }
-    }
- 
-    void validatedAssignedRole(UUID role) {
-        MerchantUserRoles loggedInUserRole = MerchantUserRoles.getRole(EPayIdentityUtil.getUserPrincipal().getUserRole().getFirst());
-        MerchantUserRoles userRoleName = MerchantUserRoles.getRole(merchantUserDao.getUserRoleName(role));
-        if(!MerchantUserRoles.PARENT_ROLES.get(loggedInUserRole).contains(userRoleName)){
-            errorDtoList.add(ErrorDto.builder().errorCode(INVALID_ERROR_CODE).errorMessage(MessageFormat.format(INVALID_ERROR_MESSAGE, ROLE, "can not create " + userRoleName)).build());
-        }
-        throwIfErrors();
-    }
-
-    void validatedRequestId(MerchantUserRequest merchantUserRequest, String userName) {
-        errorDtoList = new ArrayList<>();
-        checkMandatoryField(merchantUserRequest.getRequestId(), "RequestId");
-        throwIfErrors();
-        otpManagementDao.validateRequestIdByUserNameAndRequestType(merchantUserRequest.getRequestId(), userName, RequestType.getRequestType(merchantUserRequest.getRequestType()));
-        otpValidator.validateRequestId(UUID.fromString(merchantUserRequest.getRequestId()));
-    }
-
-  
-    private void checkForLeadingTrailingAndSingleSpace(MerchantUserRequest merchantUserRequest) {
-        checkForLeadingTrailingAndSingleSpace(merchantUserRequest.getMId(), MID);
-        checkForLeadingTrailingAndSingleSpace(merchantUserRequest.getRequestId(), REQUEST_ID);
-        checkForLeadingTrailingAndSingleSpace(merchantUserRequest.getUserName(), USER_NAME);
-        checkForLeadingTrailingAndSingleSpace(merchantUserRequest.getFirstName(), FIRST_NAME);
-        checkForLeadingTrailingAndSingleSpace(merchantUserRequest.getMobilePhone(), MOBILE_PHONE);
-        checkForLeadingTrailingAndSingleSpace(merchantUserRequest.getEmail(), EMAIL);
-        checkForLeadingTrailingAndSingleSpace(merchantUserRequest.getRole(), ROLE);
-        throwIfErrors();
-    }
-
-
-    private void checkForLeadingTrailingAndSingleSpace(MerchantUserStatusRequest merchantUserStatusRequest) {
-        checkForLeadingTrailingAndSingleSpace(merchantUserStatusRequest.getUserName(), USER_NAME);
-        throwIfErrors();
-        checkForLeadingTrailingAndSingleSpace(merchantUserStatusRequest.getUserStatus(), USER_SATATUS);
-        throwIfErrors();
-        checkForLeadingTrailingAndSingleSpace(merchantUserStatusRequest.getRemark(), REMARK);
-        throwIfErrors();
-    }
-
-    private void checkForLeadingTrailingAndSingleSpace(MerchantUserSearchRequest merchantUserSearchRequest) {
-        checkForLeadingTrailingAndSingleSpace(merchantUserSearchRequest.getUserName(), USER_NAME);
-        checkForLeadingTrailingAndSingleSpace(merchantUserSearchRequest.getFirstName(), FIRST_NAME);
-        checkForLeadingTrailingAndSingleSpace(merchantUserSearchRequest.getMobilePhone(), MOBILE_PHONE);
-        checkForLeadingTrailingAndSingleSpace(merchantUserSearchRequest.getStatus(), STATUS);
-        throwIfErrors();
-    }
-
-
-    private void validateFieldValues(MerchantUserSearchRequest merchantUserSearchRequest) {
-        validateFieldValue(merchantUserSearchRequest.getStatus(), Arrays.stream(MerchantStatus.values()).map(Enum::name).toList(), STATUS);
-        throwIfErrors();
-        validateFieldLength(merchantUserSearchRequest.getUserName(), MAX_USER_NAME_LENGTH, USER_NAME);
-        validateFieldLength(merchantUserSearchRequest.getFirstName(), MAX_NAME_LENGTH, FIRST_NAME);
-        validateFieldLength(merchantUserSearchRequest.getMobilePhone(), MOBILE_NUMBER_LENGTH, MOBILE_PHONE);
-        throwIfErrors();
-        validateFieldWithRegex(merchantUserSearchRequest.getUserName(), USER_NAME_REGEX, USER_NAME, INVALID_FORMAT);
-        validateFieldWithRegex(merchantUserSearchRequest.getFirstName(), NAME_REGEX, FIRST_NAME, INVALID_FORMAT);
-        validateFieldWithRegex(merchantUserSearchRequest.getMobilePhone(), ALLOWED_DIGIT_REGEX, MOBILE_PHONE, INVALID_FORMAT);
-        throwIfErrors();
-    }
-
-    public void validateMidAndAccess(String mId) {
-        errorDtoList = new ArrayList<>();
-        validateMid(mId);
-        merchantBankAccountValidator.validateMId(mId);
-    }
-
- 
-    public void validateMid(String mId) {
-        logger.debug("Request Validation start for {}", mId);
-        errorDtoList = new ArrayList<>();
-        checkMandatoryField(mId, MID);
-        throwIfErrors();
-        checkForLeadingTrailingAndSingleSpace(mId, MID);
-        throwIfErrors();
-        validateFixedFieldLength(mId, MID_LENGTH, MID);
-        throwIfErrors();
-        validateFieldWithRegex(mId, ALLOWED_DIGIT_REGEX, MID, INVALID_FORMAT);
-        throwIfErrors();
-        validateConsentForMId(mId);
-        logger.debug("Request Validation end for {}", mId);
-    }
-
-
-    public void validateUpdateAlertRequest(String mId) {
-        validateMid(mId);
-        validateActiveMId(mId);
-        logger.debug("Update Alert Request Validation end for {}", mId);
-    }
-
-
-    public void validateActiveMId(String mId) {
-        boolean existsByMIdAndStatus = merchantInfoDao.isExistsByMIdAndStatus(mId, MerchantStatus.ACTIVE.name());
-        if (!existsByMIdAndStatus) {
-            addError(ErrorConstants.NOT_FOUND_ERROR_CODE, MessageFormat.format(ErrorConstants.NOT_FOUND_ERROR_MESSAGE, VALID_MID));
-        }
-        throwIfErrors();
-        validateConsentForMId(mId);
-    }
-
-    public void validateConsentForMId(String mId){
-        logger.info("check consent for Mid :{}",mId);
-        boolean consentExist = merchantUserDao.isConsentAvail(mId);
-        if (!consentExist) {
-            addError(ErrorConstants.NOT_FOUND_ERROR_CODE, MessageFormat.format(ErrorConstants.NOT_FOUND_ERROR_MESSAGE, "consent"));
-        }
-        throwIfErrors();
-    }
-
-    void validateFieldValue(MerchantUserStatusRequest merchantUserStatusRequest) {
-        validateFieldLength(merchantUserStatusRequest.getUserName(), MAX_USER_NAME_LENGTH, USER_NAME);
-        validateFieldLength(merchantUserStatusRequest.getUserStatus(), USER_STATUS_LENGTH, USER_SATATUS);
-        validateFieldLength(merchantUserStatusRequest.getRemark(), MAX_REMARK_LENGTH, REMARK);
-        throwIfErrors();
-        validateFieldWithRegex(merchantUserStatusRequest.getUserStatus(), ALLOWED_ONLY_ALPHA_REGEX,USER_SATATUS, INVALID_FORMAT);
-        validateFieldWithRegex(merchantUserStatusRequest.getUserName(), USER_NAME_REGEX,USER_NAME, INVALID_FORMAT);
-        validateFieldWithRegex(merchantUserStatusRequest.getRemark(), REMARK_REGEX,REMARK, INVALID_FORMAT);
-        throwIfErrors();
-    }
-
-    public void validateDuplicateItem(List<String> mIds) {
-        if( mIds.size() != mIds.stream().distinct().count()) {
-            errorDtoList.add(ErrorDto.builder().errorCode(INVALID_ERROR_CODE).errorMessage(MessageFormat.format(INVALID_ERROR_MESSAGE, MID, DUPLICATE_MID_FOUND)).build());
-        }
-        throwIfErrors();
-    }
-
-    public Pageable validateAndSanitizePageable(Pageable pageable) {
-        logger.debug("Request Validation start for pageable");
-        errorDtoList = new ArrayList<>();
-        Pageable updatedPage = validateAndSanitizePageable(pageable, PAGE_SIZE_LENGTH, "createdAt",GET_ALL_USER_SORT_LIST);
-        throwIfErrors();
-        return updatedPage;
-    }
-
-    private void validateRole(String userName) {
-        MerchantUserDto merchantUserDto = merchantUserDao.getByUserName(userName, UserStatus.ACTIVE);
-        if(ObjectUtils.isEmpty(merchantUserDto)) {
-            throw new MerchantException(NOT_FOUND_ERROR_CODE, MessageFormat.format(NOT_FOUND_ERROR_MESSAGE, "User"));
-        }
-        if(ADMIN.equalsIgnoreCase(merchantUserDao.getRoleNameByRoleId(merchantUserDto.getRole()))) {
-            throw new MerchantException(NOT_ALLOWED_ERROR_CODE, NOT_ALLOWED_ERROR_MESSAGE);
-        }
-    }
-
-    public void validateConsentRequest(ConsentWriteRequest consentWriteRequest){
-        errorDtoList = new ArrayList<>();
-        logger.debug("Validation start for requestType {}",consentWriteRequest.getRequestType() );
-        RequestType requestType=RequestType.getRequestType(consentWriteRequest.getRequestType());
-        checkMandatoryField(consentWriteRequest.getRequestType(),REQUEST_TYPE);
-        checkMandatoryField(consentWriteRequest.getRequestId(),REQUEST_ID);
-        if(RequestType.PROFILE_CONTACT_EDIT.equals(requestType)){
-            checkMandatoryField(consentWriteRequest.getNewEmail(),EMAIL);
-            checkMandatoryField(consentWriteRequest.getNewMobileNumber(),MOBILE_PHONE);
-            checkMandatoryField(consentWriteRequest.getMId(),MID);
-        }
-        throwIfErrors();
-        checkForLeadingTrailingAndSingleSpace(consentWriteRequest.getRequestId(),REQUEST_ID);
-        checkForLeadingTrailingAndSingleSpace(consentWriteRequest.getRequestType(),REQUEST_TYPE);
-        checkForLeadingTrailingAndSingleSpace(consentWriteRequest.getNewEmail(),EMAIL);
-        checkForLeadingTrailingAndSingleSpace(consentWriteRequest.getNewMobileNumber(),MOBILE_PHONE);
-        throwIfErrors();
-        validateFields(consentWriteRequest);
-
-
-    }
-
-    private void validateFields(ConsentWriteRequest consentWriteRequest) {
-        validateFixedFieldLength(consentWriteRequest.getRequestId(), UUID_LENGTH, REQUEST_ID);
-        validateFixedFieldLength(consentWriteRequest.getNewMobileNumber(), MOBILE_NUMBER_LENGTH, MOBILE_PHONE);
-        validateFieldLength(consentWriteRequest.getNewEmail(), MAX_EMAIL_LENGTH, EMAIL);
-        throwIfErrors();
-        validateFieldWithRegex(consentWriteRequest.getNewEmail(), EMAIL_REGEX, EMAIL,INCORRECT_FORMAT);
-        throwIfErrors();
-    }
-
-    public void validateContactDetails(ConsentWriteRequest request, MerchantDetailsResponse detail) {
-        if (isSameMobileNumber(request, detail) && isSameEmailId(request, detail)) {
-            throw new  MerchantException(INVALID_ERROR_CODE,MessageFormat.format(INVALID_ERROR_MESSAGE,"mobileNumber/email","Mobile number or email should be different from existing.") );
-        }
-    }
-
-    public String validateAndGetFields(ConsentWriteRequest request, MerchantDetailsResponse detail) {
-        StringJoiner sj = new StringJoiner(",");
-        if (!isSameMobileNumber(request, detail)) {
-            sj.add(MOBILE_NUMBER);
-        }
-        if (!isSameEmailId(request, detail)) {
-            sj.add(EMAIL_ID);
-        }
-        return sj.toString();
-    }
-
-    private boolean isSameMobileNumber(ConsentWriteRequest consentRequest, MerchantDetailsResponse merchantDetail) {
-        return consentRequest.getNewMobileNumber().equals(merchantDetail.getMobilePhone());
-    }
-
-    private boolean isSameEmailId(ConsentWriteRequest consentRequest, MerchantDetailsResponse merchantDetail) {
-        return consentRequest.getNewEmail().equalsIgnoreCase(merchantDetail.getEmail());
+    private static Specification<NatureOfBusiness> hasUpdatedAtBetween(Long from, Long to) {
+        return (root, query, cb) -> {
+            if (from == null && to == null) return cb.conjunction();
+            if (from != null && to != null) return cb.between(root.get("updatedAt"), from, to);
+            if (from != null) return cb.greaterThanOrEqualTo(root.get("updatedAt"), from);
+            return cb.lessThanOrEqualTo(root.get("updatedAt"), to);
+        };
     }
 }
+---------------------------------
+--liquibase formatted sql
+--changeset saurabh:1778000002
+
+CREATE TABLE NATURE_OF_BUSINESS (
+      ID RAW(16) DEFAULT SYS_GUID() PRIMARY KEY NOT NULL,
+      NATURE_OF_BUSINESS_NAME VARCHAR2(255 CHAR) NOT NULL,
+      NATURE_OF_BUSINESS_CODE VARCHAR2(100 CHAR) NOT NULL,
+      STATUS VARCHAR2(50 CHAR) NOT NULL,
+      VERSION NUMBER(10) DEFAULT 0 NOT NULL,
+      CREATED_BY VARCHAR2(100 CHAR) NOT NULL,
+      CREATED_AT NUMBER NOT NULL,
+      UPDATED_BY VARCHAR2(100 CHAR) NOT NULL,
+      UPDATED_AT NUMBER NOT NULL,
+      CONSTRAINT UK_NATURE_OF_BUSINESS_NAME UNIQUE (NATURE_OF_BUSINESS_NAME),
+      CONSTRAINT UK_NATURE_OF_BUSINESS_CODE UNIQUE (NATURE_OF_BUSINESS_CODE)
+    );
+
+CREATE INDEX IDX_NATURE_OF_BUSINESS_STATUS ON NATURE_OF_BUSINESS (STATUS);
+--------------------------------
+--liquibase formatted sql
+--changeset saurabh:1778000003
+
+INSERT INTO MASTER_TABLE (MASTER_TYPE,NAME,IS_BULK_ALLOWED,IS_MAKER_CHECKER_ENABLED,IS_HEADER_PRESENT,FILE_EXTENSION,FILE_FORMAT_CONFIG,FILE_CHECK_SUM,STATUS,DESCRIPTION,CREATED_BY,CREATED_AT
+) VALUES ('NATURE_OF_BUSINESS','Nature Of Business',1,1,1,'csv',
+          TO_CLOB(q'~{
+      "delimiter": ",",
+      "charset": "UTF-8",
+      "columns": [
+        {
+          "fieldName": "natureOfBusinessName",
+          "headerName": "NatureOfBusinessName",
+          "required": true
+        },
+        {
+          "fieldName": "status",
+          "headerName": "Status",
+          "required": false,
+          "defaultValue": "ACTIVE"
+        }
+      ]
+    }~'),NULL,'ACTIVE','Bulk upload configuration for Nature Of Business master. Expected CSV header: NatureOfBusinessName,Status','SYSTEM',1778000003
+);
