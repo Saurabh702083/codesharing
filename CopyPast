@@ -12,10 +12,12 @@ public enum MasterType {
     // Standalone masters
     CONSTITUTION,
     NATURE_OF_BUSINESS,
+    STATE,
     COUNTRY,
 
     // Child/Dependent masters
-    COUNTRY_CURRENCY;
+    COUNTRY_CURRENCY,
+    CITY_AREA_PINCODE;
 
     public static MasterType getMasterType(String masterType) {
         return Arrays.stream(values())
@@ -24,64 +26,25 @@ public enum MasterType {
                 .orElseThrow(() -> new AdminPortalException(ErrorConstants.INVALID_ENUM_ERROR_CODE, MessageFormat.format(INVALID_ENUM_ERROR_MESSAGE, "masterType")));
     }
 }
-
-
-----------------
-package com.epay.admin.portal.master.dao;
-
-import com.epay.admin.portal.master.entity.NatureOfBusiness;
-import com.epay.admin.portal.master.repository.NatureOfBusinessRepository;
-import com.sbi.epay.logging.utility.LoggerFactoryUtility;
-import com.sbi.epay.logging.utility.LoggerUtility;
-import lombok.RequiredArgsConstructor;
-import org.springframework.data.domain.Page;
-import org.springframework.data.domain.Pageable;
-import org.springframework.data.jpa.domain.Specification;
-import org.springframework.stereotype.Component;
-
-import java.util.Optional;
-import java.util.UUID;
-
-@Component
-@RequiredArgsConstructor
-public class NatureOfBusinessDao {
-
-    private final NatureOfBusinessRepository natureOfBusinessRepository;
-    private final LoggerUtility log = LoggerFactoryUtility.getLogger(this.getClass());
-
-    public boolean existsByNatureOfBusinessName(String natureOfBusinessName) {
-        log.debug("DAO: Checking existence for natureOfBusinessName={}", natureOfBusinessName);
-        return natureOfBusinessRepository.existsByNatureOfBusinessNameIgnoreCase(natureOfBusinessName);
-    }
-
-    public Optional<NatureOfBusiness> findById(UUID id) {
-        log.debug("DAO: Fetching nature of business for id={}", id);
-        return natureOfBusinessRepository.findById(id);
-    }
-
-    public NatureOfBusiness save(NatureOfBusiness natureOfBusiness) {
-        log.debug("DAO: Saving nature of business for natureOfBusinessName={}", natureOfBusiness.getNatureOfBusinessName());
-        return natureOfBusinessRepository.save(natureOfBusiness);
-    }
-
-    public Page<NatureOfBusiness> findAll(Specification<NatureOfBusiness> spec, Pageable pageable) {
-        log.debug("DAO: Fetching nature of business records with pageable={}", pageable);
-        return natureOfBusinessRepository.findAll(spec, pageable);
-    }
-}
-------------------
+-------------------------------
 package com.epay.admin.portal.master.dto.request;
 
 import jakarta.validation.constraints.NotBlank;
 import lombok.Data;
 
 @Data
-public class NatureOfBusinessDto {
+public class CityAreaPincodeDto {
 
-    @NotBlank(message = "Nature of business name is required")
-    private String natureOfBusinessName;
+    @NotBlank(message = "City/area name is required")
+    private String cityAreaName;
+
+    @NotBlank(message = "State name is required")
+    private String stateName;
+
+    @NotBlank(message = "Pin code is required")
+    private String pinCode;
 }
-------------------------
+------------------------------
 package com.epay.admin.portal.master.dto.request;
 
 import lombok.Data;
@@ -89,10 +52,35 @@ import lombok.EqualsAndHashCode;
 
 @Data
 @EqualsAndHashCode(callSuper = true)
-public class NatureOfBusinessSearchRequest extends MasterSearchRequest {
-    private String natureOfBusinessName;
+public class CityAreaPinCodeSearchRequest extends MasterSearchRequest {
+    private String cityAreaName;
+    private String stateName;
+    private String pinCode;
 }
----------------------
+----------------------------------
+package com.epay.admin.portal.master.dto.request;
+
+import jakarta.validation.constraints.NotBlank;
+import lombok.Data;
+
+@Data
+public class StateDto {
+
+    @NotBlank(message = "State name is required")
+    private String stateName;
+}
+-----------------------------------
+package com.epay.admin.portal.master.dto.request;
+
+import lombok.Data;
+import lombok.EqualsAndHashCode;
+
+@Data
+@EqualsAndHashCode(callSuper = true)
+public class StateSearchRequest extends MasterSearchRequest {
+    private String stateName;
+}
+----------------------------
 package com.epay.admin.portal.master.dto.response;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
@@ -104,17 +92,94 @@ import java.util.UUID;
 @Data
 @Builder
 @JsonInclude(JsonInclude.Include.NON_NULL)
-public class NatureOfBusinessResponse {
+public class CityAreaPincodeResponse {
     private UUID id;
-    private String natureOfBusinessName;
-    private String natureOfBusinessCode;
+    private UUID stateId;
+    private String stateName;
+    private String cityAreaName;
+    private String pinCode;
     private String status;
     private Long createdAt;
     private String createdBy;
     private Long updatedAt;
     private String updatedBy;
 }
------------------------
+------------------------------------
+package com.epay.admin.portal.master.dto.response;
+
+import com.fasterxml.jackson.annotation.JsonInclude;
+import lombok.Builder;
+import lombok.Data;
+
+import java.util.UUID;
+
+@Data
+@Builder
+@JsonInclude(JsonInclude.Include.NON_NULL)
+public class StateResponse {
+    private UUID id;
+    private String stateName;
+    private String stateCode;
+    private String status;
+    private Long createdAt;
+    private String createdBy;
+    private Long updatedAt;
+    private String updatedBy;
+}
+---------------------------------
+package com.epay.admin.portal.master.entity;
+
+import jakarta.persistence.Column;
+import jakarta.persistence.Entity;
+import jakarta.persistence.GeneratedValue;
+import jakarta.persistence.GenerationType;
+import jakarta.persistence.Id;
+import jakarta.persistence.Table;
+import jakarta.persistence.UniqueConstraint;
+import jakarta.persistence.Version;
+import lombok.AllArgsConstructor;
+import lombok.Builder;
+import lombok.Data;
+import lombok.EqualsAndHashCode;
+import lombok.NoArgsConstructor;
+
+import java.util.UUID;
+
+@Entity
+@Table(
+        name = "CITY_AREA_PINCODE",
+        uniqueConstraints = @UniqueConstraint(
+                name = "UQ_CITY_AREA_PINCODE",
+                columnNames = {"STATE_ID", "CITY_AREA_NAME", "PIN_CODE"}
+        )
+)
+@Data
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
+@EqualsAndHashCode(callSuper = false)
+public class CityAreaPincode extends MasterDependent {
+
+    @Id
+    @GeneratedValue(strategy = GenerationType.UUID)
+    private UUID id;
+
+    @Column(name = "STATE_ID", nullable = false)
+    private UUID stateId;
+
+    @Column(name = "CITY_AREA_NAME", nullable = false)
+    private String cityAreaName;
+
+    @Column(name = "PIN_CODE", nullable = false, length = 20)
+    private String pinCode;
+
+    @Column(name = "STATUS", nullable = false)
+    private String status;
+
+    @Version
+    private int version;
+}
+------------------------------------
 package com.epay.admin.portal.master.entity;
 
 import jakarta.persistence.Column;
@@ -133,23 +198,23 @@ import lombok.NoArgsConstructor;
 import java.util.UUID;
 
 @Entity
-@Table(name = "NATURE_OF_BUSINESS")
+@Table(name = "STATE")
 @Data
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
 @EqualsAndHashCode(callSuper = false)
-public class NatureOfBusiness extends MasterStandalone {
+public class State extends MasterStandalone {
 
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)
     private UUID id;
 
-    @Column(name = "NATURE_OF_BUSINESS_NAME", nullable = false, unique = true)
-    private String natureOfBusinessName;
+    @Column(name = "STATE_NAME", nullable = false, unique = true)
+    private String stateName;
 
-    @Column(name = "NATURE_OF_BUSINESS_CODE", nullable = false, unique = true)
-    private String natureOfBusinessCode;
+    @Column(name = "STATE_CODE", nullable = false, unique = true)
+    private String stateCode;
 
     @Column(name = "STATUS", nullable = false)
     private String status;
@@ -157,19 +222,210 @@ public class NatureOfBusiness extends MasterStandalone {
     @Version
     private int version;
 }
------------------------------
+-----------------------------------
 package com.epay.admin.portal.master.handler;
 
 import com.epay.admin.portal.exceptions.AdminPortalException;
+import com.epay.admin.portal.master.dao.CityAreaPincodeDao;
 import com.epay.admin.portal.master.dao.MasterWorkflowDao;
-import com.epay.admin.portal.master.dao.NatureOfBusinessDao;
-import com.epay.admin.portal.master.dto.request.NatureOfBusinessDto;
-import com.epay.admin.portal.master.dto.request.NatureOfBusinessSearchRequest;
-import com.epay.admin.portal.master.dto.response.NatureOfBusinessResponse;
+import com.epay.admin.portal.master.dao.StateDao;
+import com.epay.admin.portal.master.dto.request.CityAreaPinCodeSearchRequest;
+import com.epay.admin.portal.master.dto.request.CityAreaPincodeDto;
+import com.epay.admin.portal.master.dto.response.CityAreaPincodeResponse;
+import com.epay.admin.portal.master.entity.CityAreaPincode;
 import com.epay.admin.portal.master.entity.MasterWorkflow;
-import com.epay.admin.portal.master.entity.NatureOfBusiness;
-import com.epay.admin.portal.master.mapper.NatureOfBusinessMapper;
-import com.epay.admin.portal.master.specification.NatureOfBusinessSpecification;
+import com.epay.admin.portal.master.entity.State;
+import com.epay.admin.portal.master.mapper.CityAreaPincodeMapper;
+import com.epay.admin.portal.master.specification.CityAreaPincodeSpecification;
+import com.epay.admin.portal.master.util.ENUM.ActionType;
+import com.epay.admin.portal.master.util.ENUM.MasterStatus;
+import com.epay.admin.portal.master.util.ENUM.MasterType;
+import com.epay.admin.portal.master.util.ENUM.WorkflowStatus;
+import com.epay.admin.portal.model.response.AdminPortalResponse;
+import com.epay.admin.portal.util.EPayIdentityUtil;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+import org.springframework.stereotype.Component;
+
+import java.text.MessageFormat;
+import java.util.UUID;
+
+import static com.epay.admin.portal.util.AdminPortalConstants.SUCCESS_RESPONSE_CODE;
+import static com.epay.admin.portal.util.ErrorConstants.DUPLICATE_ERROR_CODE;
+import static com.epay.admin.portal.util.ErrorConstants.DUPLICATE_ERROR_MESSAGE;
+import static com.epay.admin.portal.util.ErrorConstants.INVALID_STATUS_ERROR_CODE;
+import static com.epay.admin.portal.util.ErrorConstants.NOT_FOUND_ERROR_CODE;
+import static com.epay.admin.portal.util.ErrorConstants.NOT_FOUND_ERROR_MESSAGE;
+
+@Component
+public class CityAreaPincodeHandler
+        extends AbstractChildMasterHandler<CityAreaPincodeDto, CityAreaPincode> {
+
+    private final CityAreaPincodeDao cityAreaPincodeDao;
+    private final StateDao stateDao;
+    private final CityAreaPincodeMapper cityAreaPincodeMapper;
+
+    public CityAreaPincodeHandler(
+            CityAreaPincodeDao cityAreaPincodeDao,
+            StateDao stateDao,
+            MasterWorkflowDao masterWorkflowDao,
+            ObjectMapper objectMapper,
+            CityAreaPincodeMapper cityAreaPincodeMapper) {
+        super(masterWorkflowDao, objectMapper);
+        this.cityAreaPincodeDao = cityAreaPincodeDao;
+        this.stateDao = stateDao;
+        this.cityAreaPincodeMapper = cityAreaPincodeMapper;
+    }
+
+    @Override
+    public MasterType getMasterType() {
+        return MasterType.CITY_AREA_PINCODE;
+    }
+
+    @Override
+    protected MasterType getParentMasterType() {
+        return MasterType.STATE;
+    }
+
+    @Override
+    public Class<CityAreaPincodeDto> getDtoClass() {
+        return CityAreaPincodeDto.class;
+    }
+
+    @Override
+    protected void validateAndResolveParent(CityAreaPincodeDto dto) {
+        log.info("Resolving parent State for stateName={}", dto.getStateName());
+        State state = getStateByName(dto.getStateName());
+        if (!MasterStatus.ACTIVE.matches(state.getStatus())) {
+            throw new AdminPortalException(
+                    INVALID_STATUS_ERROR_CODE,
+                    MessageFormat.format(
+                            "Parent State must be ACTIVE to add a city/area pin code. "
+                                    + "stateName={0} currentStatus={1}",
+                            dto.getStateName(),
+                            state.getStatus()));
+        }
+    }
+
+    @Override
+    protected void validateChildCreate(CityAreaPincodeDto dto) {
+        log.info(
+                "Validating city/area pin code for stateName={} cityAreaName={} pinCode={}",
+                dto.getStateName(),
+                dto.getCityAreaName(),
+                dto.getPinCode());
+        State state = getStateByName(dto.getStateName());
+        boolean duplicate = cityAreaPincodeDao.existsByStateIdAndCityAreaNameAndPinCode(
+                state.getId(),
+                dto.getCityAreaName(),
+                dto.getPinCode());
+        if (duplicate) {
+            throw new AdminPortalException(
+                    DUPLICATE_ERROR_CODE,
+                    MessageFormat.format(
+                            DUPLICATE_ERROR_MESSAGE,
+                            "City/area and pin code",
+                            dto.getCityAreaName() + ", " + dto.getPinCode()
+                                    + " already mapped to stateName=" + dto.getStateName()));
+        }
+    }
+
+    @Override
+    public MasterWorkflow createMaster(CityAreaPincodeDto dto) {
+        log.info(
+                "Creating pending city/area pin code for stateName={} cityAreaName={} pinCode={}",
+                dto.getStateName(),
+                dto.getCityAreaName(),
+                dto.getPinCode());
+        String makerId = EPayIdentityUtil.getUserPrincipal().getUsername();
+        State state = getStateByName(dto.getStateName());
+
+        CityAreaPincode entity = cityAreaPincodeMapper.toEntity(dto, state.getId());
+        entity.setStatus(MasterStatus.APPROVAL_PENDING.getValue());
+        entity.setCreatedBy(makerId);
+
+        CityAreaPincode saved = cityAreaPincodeDao.save(entity);
+        MasterWorkflow workflow = MasterWorkflow.builder()
+                .masterType(MasterType.CITY_AREA_PINCODE)
+                .masterCode(saved.getPinCode())
+                .recordId(saved.getId())
+                .newValue(serializeEntity(saved, "city-area-pincode create payload"))
+                .status(WorkflowStatus.PENDING)
+                .actionType(ActionType.CREATE.name())
+                .makerId(makerId)
+                .build();
+
+        MasterWorkflow savedWorkflow = masterWorkflowDao.save(workflow);
+        log.info("CityAreaPincode workflow created workflowId={}", savedWorkflow.getId());
+        return savedWorkflow;
+    }
+
+    @Override
+    public AdminPortalResponse<?> search(JsonNode request, Pageable pageable) {
+        log.info("Searching city/area pin code records pageable={}", pageable);
+        CityAreaPinCodeSearchRequest searchRequest =
+                objectMapper.convertValue(request, CityAreaPinCodeSearchRequest.class);
+        Page<CityAreaPincode> page = cityAreaPincodeDao.findAll(
+                CityAreaPincodeSpecification.build(searchRequest),
+                pageable);
+        return AdminPortalResponse.<CityAreaPincodeResponse>builder()
+                .status(SUCCESS_RESPONSE_CODE)
+                .data(page.getContent().stream().map(this::toResponse).toList())
+                .count((long) page.getNumberOfElements())
+                .total(page.getTotalElements())
+                .build();
+    }
+
+    @Override
+    public CityAreaPincode findEntityById(UUID id) {
+        return cityAreaPincodeDao.findById(id).orElseThrow(() -> new AdminPortalException(NOT_FOUND_ERROR_CODE, MessageFormat.format(NOT_FOUND_ERROR_MESSAGE, "CityAreaPincode with id=" + id)));
+    }
+
+    @Override
+    public CityAreaPincode saveEntity(CityAreaPincode entity) {
+        return cityAreaPincodeDao.save(entity);
+    }
+
+    @Override
+    public String getEntityStatus(CityAreaPincode entity) {
+        return entity.getStatus();
+    }
+
+    @Override
+    public void setEntityStatus(CityAreaPincode entity, String status) {
+        entity.setStatus(status);
+    }
+
+    @Override
+    public String getEntityMasterCode(CityAreaPincode entity) {
+        return entity.getPinCode();
+    }
+
+    private State getStateByName(String stateName) {
+        return stateDao.findByStateName(stateName).orElseThrow(() -> new AdminPortalException(NOT_FOUND_ERROR_CODE, MessageFormat.format(NOT_FOUND_ERROR_MESSAGE, "State with stateName=" + stateName)));
+    }
+
+    private CityAreaPincodeResponse toResponse(CityAreaPincode cityAreaPincode) {
+        State state = stateDao.findById(cityAreaPincode.getStateId()).orElse(null);
+        return cityAreaPincodeMapper.toResponse(cityAreaPincode, state);
+    }
+}
+------------------------------------------
+package com.epay.admin.portal.master.handler;
+
+import com.epay.admin.portal.exceptions.AdminPortalException;
+import com.epay.admin.portal.master.dao.CityAreaPincodeDao;
+import com.epay.admin.portal.master.dao.MasterWorkflowDao;
+import com.epay.admin.portal.master.dao.StateDao;
+import com.epay.admin.portal.master.dto.request.StateDto;
+import com.epay.admin.portal.master.dto.request.StateSearchRequest;
+import com.epay.admin.portal.master.dto.response.StateResponse;
+import com.epay.admin.portal.master.entity.MasterWorkflow;
+import com.epay.admin.portal.master.entity.State;
+import com.epay.admin.portal.master.mapper.StateMapper;
+import com.epay.admin.portal.master.specification.StateSpecification;
 import com.epay.admin.portal.master.util.ENUM.ActionType;
 import com.epay.admin.portal.master.util.ENUM.MasterStatus;
 import com.epay.admin.portal.master.util.ENUM.MasterType;
@@ -193,108 +449,182 @@ import static com.epay.admin.portal.util.ErrorConstants.NOT_FOUND_ERROR_CODE;
 import static com.epay.admin.portal.util.ErrorConstants.NOT_FOUND_ERROR_MESSAGE;
 
 @Component
-public class NatureOfBusinessHandler extends AbstractMasterHandler<NatureOfBusinessDto, NatureOfBusiness> {
+public class StateHandler extends AbstractMasterHandler<StateDto, State> {
 
-    private final NatureOfBusinessDao natureOfBusinessDao;
-    private final NatureOfBusinessMapper natureOfBusinessMapper;
+    private final StateDao stateDao;
+    private final CityAreaPincodeDao cityAreaPincodeDao;
+    private final StateMapper stateMapper;
 
-    public NatureOfBusinessHandler(NatureOfBusinessDao natureOfBusinessDao,
-                                   MasterWorkflowDao masterWorkflowDao,
-                                   ObjectMapper objectMapper,
-                                   NatureOfBusinessMapper natureOfBusinessMapper) {
+    public StateHandler(StateDao stateDao,
+                        CityAreaPincodeDao cityAreaPincodeDao,
+                        MasterWorkflowDao masterWorkflowDao,
+                        ObjectMapper objectMapper,
+                        StateMapper stateMapper) {
         super(masterWorkflowDao, objectMapper);
-        this.natureOfBusinessDao = natureOfBusinessDao;
-        this.natureOfBusinessMapper = natureOfBusinessMapper;
+        this.stateDao = stateDao;
+        this.cityAreaPincodeDao = cityAreaPincodeDao;
+        this.stateMapper = stateMapper;
     }
 
-    @Override public MasterType getMasterType() { return MasterType.NATURE_OF_BUSINESS; }
-    @Override public Class<NatureOfBusinessDto> getDtoClass() { return NatureOfBusinessDto.class; }
+    @Override
+    public MasterType getMasterType() {
+        return MasterType.STATE;
+    }
 
     @Override
-    public void validateCreate(NatureOfBusinessDto dto) {
-        log.info("Validating nature of business create for natureOfBusinessName={}", dto.getNatureOfBusinessName());
-        if (natureOfBusinessDao.existsByNatureOfBusinessName(dto.getNatureOfBusinessName())) {
-            throw new AdminPortalException(DUPLICATE_ERROR_CODE, MessageFormat.format(DUPLICATE_ERROR_MESSAGE, "Nature of business name", dto.getNatureOfBusinessName()));
+    public Class<StateDto> getDtoClass() {
+        return StateDto.class;
+    }
+
+    @Override
+    public void validateCreate(StateDto dto) {
+        log.info("Validating state create for stateName={}", dto.getStateName());
+        if (stateDao.existsByStateName(dto.getStateName())) {
+            throw new AdminPortalException(
+                    DUPLICATE_ERROR_CODE,
+                    MessageFormat.format(DUPLICATE_ERROR_MESSAGE, "State name", dto.getStateName()));
         }
     }
 
     @Override
-    public MasterWorkflow createMaster(NatureOfBusinessDto dto) {
-        log.info("Creating pending nature of business for natureOfBusinessName={}", dto.getNatureOfBusinessName());
+    public MasterWorkflow createMaster(StateDto dto) {
+        log.info("Creating pending state for stateName={}", dto.getStateName());
         String makerId = EPayIdentityUtil.getUserPrincipal().getUsername();
 
-        NatureOfBusiness entity = natureOfBusinessMapper.toEntity(dto);
-        entity.setNatureOfBusinessCode(
-                MasterUtil.generateMasterCode(dto.getNatureOfBusinessName(), MasterType.NATURE_OF_BUSINESS));
+        State entity = stateMapper.toEntity(dto);
+        entity.setStateCode(MasterUtil.generateMasterCode(dto.getStateName(), MasterType.STATE));
         entity.setStatus(MasterStatus.APPROVAL_PENDING.getValue());
         entity.setCreatedBy(makerId);
 
-        NatureOfBusiness saved = natureOfBusinessDao.save(entity);
+        State saved = stateDao.save(entity);
 
         MasterWorkflow workflow = MasterWorkflow.builder()
-                .masterType(MasterType.NATURE_OF_BUSINESS)
-                .masterCode(saved.getNatureOfBusinessCode())
+                .masterType(MasterType.STATE)
+                .masterCode(saved.getStateCode())
                 .recordId(saved.getId())
-                .newValue(serializeEntity(saved, "nature of business create payload"))
+                .newValue(serializeEntity(saved, "state create payload"))
                 .status(WorkflowStatus.PENDING)
                 .actionType(ActionType.CREATE.name())
                 .makerId(makerId)
                 .build();
 
         MasterWorkflow savedWorkflow = masterWorkflowDao.save(workflow);
-        log.info("Nature of business workflow created workflowId={}", savedWorkflow.getId());
+        log.info("State workflow created workflowId={}", savedWorkflow.getId());
         return savedWorkflow;
     }
 
     @Override
     public AdminPortalResponse<?> search(JsonNode request, Pageable pageable) {
-        log.info("Searching nature of business records pageable={}", pageable);
-        NatureOfBusinessSearchRequest req =
-                objectMapper.convertValue(request, NatureOfBusinessSearchRequest.class);
-        Page<NatureOfBusiness> page =
-                natureOfBusinessDao.findAll(NatureOfBusinessSpecification.build(req), pageable);
-        return AdminPortalResponse.<NatureOfBusinessResponse>builder()
+        log.info("Searching state records pageable={}", pageable);
+        StateSearchRequest searchRequest = objectMapper.convertValue(request, StateSearchRequest.class);
+        Page<State> page = stateDao.findAll(StateSpecification.build(searchRequest), pageable);
+        return AdminPortalResponse.<StateResponse>builder()
                 .status(SUCCESS_RESPONSE_CODE)
-                .data(page.getContent().stream().map(natureOfBusinessMapper::toResponse).toList())
+                .data(page.getContent().stream().map(stateMapper::toResponse).toList())
                 .count((long) page.getNumberOfElements())
                 .total(page.getTotalElements())
                 .build();
     }
 
     @Override
-    public NatureOfBusiness findEntityById(UUID id) {
-        return natureOfBusinessDao.findById(id)
-                .orElseThrow(() -> new AdminPortalException(NOT_FOUND_ERROR_CODE,
-                        MessageFormat.format(NOT_FOUND_ERROR_MESSAGE, "Nature of business with id=" + id)));
+    public State findEntityById(UUID id) {
+        return stateDao.findById(id)
+                .orElseThrow(() -> new AdminPortalException(
+                        NOT_FOUND_ERROR_CODE,
+                        MessageFormat.format(NOT_FOUND_ERROR_MESSAGE, "State with id=" + id)));
     }
 
-    @Override public NatureOfBusiness saveEntity(NatureOfBusiness e) { return natureOfBusinessDao.save(e); }
-    @Override public String getEntityStatus(NatureOfBusiness e) { return e.getStatus(); }
-    @Override public void setEntityStatus(NatureOfBusiness e, String s) { e.setStatus(s); }
-    @Override public String getEntityMasterCode(NatureOfBusiness e) { return e.getNatureOfBusinessCode(); }
+    @Override
+    public boolean hasActiveChildren(UUID stateId) {
+        boolean hasActiveChildren = cityAreaPincodeDao.existsByStateIdAndStatus(
+                stateId,
+                MasterStatus.ACTIVE.getValue());
+        boolean hasPendingChildren = cityAreaPincodeDao.existsByStateIdAndStatus(
+                stateId,
+                MasterStatus.APPROVAL_PENDING.getValue());
+        log.info(
+                "State id={} hasActiveCityAreaPincodes={} hasPendingCityAreaPincodes={}",
+                stateId,
+                hasActiveChildren,
+                hasPendingChildren);
+        return hasActiveChildren || hasPendingChildren;
+    }
+
+    @Override
+    public State saveEntity(State state) {
+        return stateDao.save(state);
+    }
+
+    @Override
+    public String getEntityStatus(State state) {
+        return state.getStatus();
+    }
+
+    @Override
+    public void setEntityStatus(State state, String status) {
+        state.setStatus(status);
+    }
+
+    @Override
+    public String getEntityMasterCode(State state) {
+        return state.getStateCode();
+    }
 }
--------------------------------------
+-----------------------------------------------
 package com.epay.admin.portal.master.mapper;
 
-import com.epay.admin.portal.master.dto.request.NatureOfBusinessDto;
-import com.epay.admin.portal.master.dto.response.NatureOfBusinessResponse;
-import com.epay.admin.portal.master.entity.NatureOfBusiness;
+import com.epay.admin.portal.master.dto.request.CityAreaPincodeDto;
+import com.epay.admin.portal.master.dto.response.CityAreaPincodeResponse;
+import com.epay.admin.portal.master.entity.CityAreaPincode;
+import com.epay.admin.portal.master.entity.State;
+import org.mapstruct.Mapper;
+import org.mapstruct.Mapping;
+import org.mapstruct.ReportingPolicy;
+
+import java.util.UUID;
+
+@Mapper(componentModel = "spring", unmappedTargetPolicy = ReportingPolicy.IGNORE)
+public interface CityAreaPincodeMapper {
+
+    @Mapping(target = "stateId", source = "stateId")
+    @Mapping(target = "cityAreaName", expression = "java(dto.getCityAreaName() == null ? null : dto.getCityAreaName().trim())")
+    @Mapping(target = "pinCode", expression = "java(dto.getPinCode() == null ? null : dto.getPinCode().trim())")
+    CityAreaPincode toEntity(CityAreaPincodeDto dto, UUID stateId);
+
+    @Mapping(target = "id", source = "entity.id")
+    @Mapping(target = "stateId", source = "entity.stateId")
+    @Mapping(target = "stateName", source = "state.stateName")
+    @Mapping(target = "cityAreaName", source = "entity.cityAreaName")
+    @Mapping(target = "pinCode", source = "entity.pinCode")
+    @Mapping(target = "status", source = "entity.status")
+    @Mapping(target = "createdAt", source = "entity.createdAt")
+    @Mapping(target = "createdBy", source = "entity.createdBy")
+    @Mapping(target = "updatedAt", source = "entity.updatedAt")
+    @Mapping(target = "updatedBy", source = "entity.updatedBy")
+    CityAreaPincodeResponse toResponse(CityAreaPincode entity, State state);
+}
+-----------------------------------------
+package com.epay.admin.portal.master.mapper;
+
+import com.epay.admin.portal.master.dto.request.StateDto;
+import com.epay.admin.portal.master.dto.response.StateResponse;
+import com.epay.admin.portal.master.entity.State;
 import org.mapstruct.Mapper;
 import org.mapstruct.Mapping;
 import org.mapstruct.ReportingPolicy;
 
 @Mapper(componentModel = "spring", unmappedTargetPolicy = ReportingPolicy.IGNORE)
-public interface NatureOfBusinessMapper {
+public interface StateMapper {
 
-    @Mapping(target = "natureOfBusinessName", expression = "java(dto.getNatureOfBusinessName() == null ? null : dto.getNatureOfBusinessName().trim())")
-    NatureOfBusiness toEntity(NatureOfBusinessDto dto);
+    @Mapping(target = "stateName", expression = "java(dto.getStateName() == null ? null : dto.getStateName().trim())")
+    State toEntity(StateDto dto);
 
-    NatureOfBusinessResponse toResponse(NatureOfBusiness entity);
+    StateResponse toResponse(State entity);
 }
-----------------------------
+--------------------------------------
 package com.epay.admin.portal.master.repository;
 
-import com.epay.admin.portal.master.entity.NatureOfBusiness;
+import com.epay.admin.portal.master.entity.CityAreaPincode;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
 import org.springframework.stereotype.Repository;
@@ -302,82 +632,382 @@ import org.springframework.stereotype.Repository;
 import java.util.UUID;
 
 @Repository
-public interface NatureOfBusinessRepository
-        extends JpaRepository<NatureOfBusiness, UUID>, JpaSpecificationExecutor<NatureOfBusiness> {
+public interface CityAreaPincodeRepository
+        extends JpaRepository<CityAreaPincode, UUID>, JpaSpecificationExecutor<CityAreaPincode> {
 
-    boolean existsByNatureOfBusinessNameIgnoreCase(String natureOfBusinessName);
+    boolean existsByStateIdAndCityAreaNameIgnoreCaseAndPinCodeIgnoreCase(
+            UUID stateId,
+            String cityAreaName,
+            String pinCode);
+
+    boolean existsByStateIdAndStatus(UUID stateId, String status);
 }
--------------------------
+---------------------------------
+package com.epay.admin.portal.master.repository;
+
+import com.epay.admin.portal.master.entity.State;
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
+import org.springframework.stereotype.Repository;
+
+import java.util.Optional;
+import java.util.UUID;
+
+@Repository
+public interface StateRepository extends JpaRepository<State, UUID>, JpaSpecificationExecutor<State> {
+
+    boolean existsByStateNameIgnoreCase(String stateName);
+
+    Optional<State> findByStateNameIgnoreCase(String stateName);
+}
+-----------------------------------
 package com.epay.admin.portal.master.specification;
 
-import com.epay.admin.portal.master.dto.request.NatureOfBusinessSearchRequest;
-import com.epay.admin.portal.master.entity.NatureOfBusiness;
+import com.epay.admin.portal.master.dto.request.CityAreaPinCodeSearchRequest;
+import com.epay.admin.portal.master.entity.CityAreaPincode;
+import com.epay.admin.portal.master.entity.State;
+import jakarta.persistence.criteria.Subquery;
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.data.jpa.domain.Specification;
 
-public class NatureOfBusinessSpecification {
+import java.util.UUID;
 
-    private NatureOfBusinessSpecification() {}
+public final class CityAreaPincodeSpecification {
 
-    public static Specification<NatureOfBusiness> build(NatureOfBusinessSearchRequest req) {
-        if (req == null) return Specification.where(null);
-        return Specification
-                .where(hasNatureOfBusinessName(req.getNatureOfBusinessName()))
-                .and(hasStatus(req.getStatus()))
-                .and(hasUpdatedAtBetween(req.getFromDate(), req.getToDate()));
+    private CityAreaPincodeSpecification() {
     }
 
-    private static Specification<NatureOfBusiness> hasNatureOfBusinessName(String name) {
-        return (root, query, cb) -> StringUtils.isBlank(name) ? cb.conjunction()
-                : cb.like(cb.lower(root.get("natureOfBusinessName")), "%" + name.toLowerCase() + "%");
+    public static Specification<CityAreaPincode> build(CityAreaPinCodeSearchRequest request) {
+        if (request == null) {
+            return Specification.where(null);
+        }
+        return Specification.where(hasCityAreaName(request.getCityAreaName()))
+                .and(hasStateName(request.getStateName()))
+                .and(hasPinCode(request.getPinCode()))
+                .and(hasStatus(request.getStatus()))
+                .and(hasUpdatedAtBetween(request.getFromDate(), request.getToDate()));
     }
 
-    private static Specification<NatureOfBusiness> hasStatus(String status) {
-        return (root, query, cb) -> StringUtils.isBlank(status) ? cb.conjunction()
-                : cb.equal(cb.lower(root.get("status")), status.toLowerCase());
+    private static Specification<CityAreaPincode> hasCityAreaName(String cityAreaName) {
+        return (root, query, criteriaBuilder) -> StringUtils.isBlank(cityAreaName)
+                ? criteriaBuilder.conjunction()
+                : criteriaBuilder.like(
+                        criteriaBuilder.lower(root.get("cityAreaName")),
+                        "%" + cityAreaName.toLowerCase() + "%");
     }
 
-    private static Specification<NatureOfBusiness> hasUpdatedAtBetween(Long from, Long to) {
-        return (root, query, cb) -> {
-            if (from == null && to == null) return cb.conjunction();
-            if (from != null && to != null) return cb.between(root.get("updatedAt"), from, to);
-            if (from != null) return cb.greaterThanOrEqualTo(root.get("updatedAt"), from);
-            return cb.lessThanOrEqualTo(root.get("updatedAt"), to);
+    private static Specification<CityAreaPincode> hasStateName(String stateName) {
+        return (root, query, criteriaBuilder) -> {
+            if (StringUtils.isBlank(stateName)) {
+                return criteriaBuilder.conjunction();
+            }
+            Subquery<UUID> subquery = query.subquery(UUID.class);
+            var state = subquery.from(State.class);
+            subquery.select(state.get("id"))
+                    .where(criteriaBuilder.like(
+                            criteriaBuilder.lower(state.get("stateName")),
+                            "%" + stateName.toLowerCase() + "%"));
+            return root.get("stateId").in(subquery);
+        };
+    }
+
+    private static Specification<CityAreaPincode> hasPinCode(String pinCode) {
+        return (root, query, criteriaBuilder) -> StringUtils.isBlank(pinCode)
+                ? criteriaBuilder.conjunction()
+                : criteriaBuilder.like(
+                        criteriaBuilder.lower(root.get("pinCode")),
+                        "%" + pinCode.toLowerCase() + "%");
+    }
+
+    private static Specification<CityAreaPincode> hasStatus(String status) {
+        return (root, query, criteriaBuilder) -> StringUtils.isBlank(status)
+                ? criteriaBuilder.conjunction()
+                : criteriaBuilder.equal(
+                        criteriaBuilder.lower(root.get("status")),
+                        status.toLowerCase());
+    }
+
+    private static Specification<CityAreaPincode> hasUpdatedAtBetween(Long from, Long to) {
+        return (root, query, criteriaBuilder) -> {
+            if (from == null && to == null) {
+                return criteriaBuilder.conjunction();
+            }
+            if (from != null && to != null) {
+                return criteriaBuilder.between(root.get("updatedAt"), from, to);
+            }
+            if (from != null) {
+                return criteriaBuilder.greaterThanOrEqualTo(root.get("updatedAt"), from);
+            }
+            return criteriaBuilder.lessThanOrEqualTo(root.get("updatedAt"), to);
         };
     }
 }
+-----------------------------------------
+package com.epay.admin.portal.master.specification;
+
+import com.epay.admin.portal.master.dto.request.StateSearchRequest;
+import com.epay.admin.portal.master.entity.State;
+import org.apache.commons.lang3.StringUtils;
+import org.springframework.data.jpa.domain.Specification;
+
+public final class StateSpecification {
+
+    private StateSpecification() {
+    }
+
+    public static Specification<State> build(StateSearchRequest request) {
+        if (request == null) {
+            return Specification.where(null);
+        }
+        return Specification.where(hasStateName(request.getStateName()))
+                .and(hasStatus(request.getStatus()))
+                .and(hasUpdatedAtBetween(request.getFromDate(), request.getToDate()));
+    }
+
+    private static Specification<State> hasStateName(String stateName) {
+        return (root, query, criteriaBuilder) -> StringUtils.isBlank(stateName)
+                ? criteriaBuilder.conjunction()
+                : criteriaBuilder.like(
+                        criteriaBuilder.lower(root.get("stateName")),
+                        "%" + stateName.toLowerCase() + "%");
+    }
+
+    private static Specification<State> hasStatus(String status) {
+        return (root, query, criteriaBuilder) -> StringUtils.isBlank(status)
+                ? criteriaBuilder.conjunction()
+                : criteriaBuilder.equal(criteriaBuilder.lower(root.get("status")), status.toLowerCase());
+    }
+
+    private static Specification<State> hasUpdatedAtBetween(Long from, Long to) {
+        return (root, query, criteriaBuilder) -> {
+            if (from == null && to == null) {
+                return criteriaBuilder.conjunction();
+            }
+            if (from != null && to != null) {
+                return criteriaBuilder.between(root.get("updatedAt"), from, to);
+            }
+            if (from != null) {
+                return criteriaBuilder.greaterThanOrEqualTo(root.get("updatedAt"), from);
+            }
+            return criteriaBuilder.lessThanOrEqualTo(root.get("updatedAt"), to);
+        };
+    }
+}
+------------------------------------------------
+package com.epay.admin.portal.master.dao;
+
+import com.epay.admin.portal.master.entity.CityAreaPincode;
+import com.epay.admin.portal.master.repository.CityAreaPincodeRepository;
+import com.sbi.epay.logging.utility.LoggerFactoryUtility;
+import com.sbi.epay.logging.utility.LoggerUtility;
+import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.jpa.domain.Specification;
+import org.springframework.stereotype.Component;
+
+import java.util.Optional;
+import java.util.UUID;
+
+@Component
+@RequiredArgsConstructor
+public class CityAreaPincodeDao {
+
+    private final CityAreaPincodeRepository cityAreaPincodeRepository;
+    private final LoggerUtility log = LoggerFactoryUtility.getLogger(this.getClass());
+
+    public boolean existsByStateIdAndCityAreaNameAndPinCode(
+            UUID stateId,
+            String cityAreaName,
+            String pinCode) {
+        log.debug(
+                "DAO: Checking city/area duplicate for stateId={} cityAreaName={} pinCode={}",
+                stateId,
+                cityAreaName,
+                pinCode);
+        return cityAreaPincodeRepository
+                .existsByStateIdAndCityAreaNameIgnoreCaseAndPinCodeIgnoreCase(
+                        stateId,
+                        cityAreaName,
+                        pinCode);
+    }
+
+    public boolean existsByStateIdAndStatus(UUID stateId, String status) {
+        log.debug("DAO: Checking city/area children for stateId={} status={}", stateId, status);
+        return cityAreaPincodeRepository.existsByStateIdAndStatus(stateId, status);
+    }
+
+    public Optional<CityAreaPincode> findById(UUID id) {
+        log.debug("DAO: Fetching city/area pin code for id={}", id);
+        return cityAreaPincodeRepository.findById(id);
+    }
+
+    public CityAreaPincode save(CityAreaPincode cityAreaPincode) {
+        log.debug(
+                "DAO: Saving city/area pin code for cityAreaName={} pinCode={}",
+                cityAreaPincode.getCityAreaName(),
+                cityAreaPincode.getPinCode());
+        return cityAreaPincodeRepository.save(cityAreaPincode);
+    }
+
+    public Page<CityAreaPincode> findAll(
+            Specification<CityAreaPincode> specification,
+            Pageable pageable) {
+        log.debug("DAO: Fetching city/area pin codes with pageable={}", pageable);
+        return cityAreaPincodeRepository.findAll(specification, pageable);
+    }
+}
+---------------------------------
+package com.epay.admin.portal.master.dao;
+
+import com.epay.admin.portal.master.entity.State;
+import com.epay.admin.portal.master.repository.StateRepository;
+import com.sbi.epay.logging.utility.LoggerFactoryUtility;
+import com.sbi.epay.logging.utility.LoggerUtility;
+import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.jpa.domain.Specification;
+import org.springframework.stereotype.Component;
+
+import java.util.Optional;
+import java.util.UUID;
+
+@Component
+@RequiredArgsConstructor
+public class StateDao {
+
+    private final StateRepository stateRepository;
+    private final LoggerUtility log = LoggerFactoryUtility.getLogger(this.getClass());
+
+    public boolean existsByStateName(String stateName) {
+        log.debug("DAO: Checking existence for stateName={}", stateName);
+        return stateRepository.existsByStateNameIgnoreCase(stateName);
+    }
+
+    public Optional<State> findById(UUID id) {
+        log.debug("DAO: Fetching state for id={}", id);
+        return stateRepository.findById(id);
+    }
+
+    public Optional<State> findByStateName(String stateName) {
+        log.debug("DAO: Fetching state for stateName={}", stateName);
+        return stateRepository.findByStateNameIgnoreCase(stateName);
+    }
+
+    public State save(State state) {
+        log.debug("DAO: Saving state for stateName={}", state.getStateName());
+        return stateRepository.save(state);
+    }
+
+    public Page<State> findAll(Specification<State> specification, Pageable pageable) {
+        log.debug("DAO: Fetching states with pageable={}", pageable);
+        return stateRepository.findAll(specification, pageable);
+    }
+}
+---------------------------
+--liquibase formatted sql
+--changeset saurabh:1778000006
+
+CREATE TABLE CITY_AREA_PINCODE (
+    ID RAW(16) DEFAULT SYS_GUID() PRIMARY KEY NOT NULL,
+    STATE_ID RAW(16) NOT NULL,
+    CITY_AREA_NAME VARCHAR2(255 CHAR) NOT NULL,
+    PIN_CODE VARCHAR2(20 CHAR) NOT NULL,
+    STATUS VARCHAR2(50 CHAR) NOT NULL,
+    VERSION NUMBER(10) DEFAULT 0 NOT NULL,
+    CREATED_BY VARCHAR2(100 CHAR) NOT NULL,
+    CREATED_AT NUMBER NOT NULL,
+    UPDATED_BY VARCHAR2(100 CHAR) NOT NULL,
+    UPDATED_AT NUMBER NOT NULL,
+    CONSTRAINT UQ_CITY_AREA_PINCODE UNIQUE (STATE_ID, CITY_AREA_NAME, PIN_CODE),
+    CONSTRAINT FK_CITY_AREA_PINCODE_STATE FOREIGN KEY (STATE_ID) REFERENCES STATE (ID)
+);
+
+CREATE INDEX IDX_CITY_AREA_PINCODE_STATE ON CITY_AREA_PINCODE (STATE_ID);
+CREATE INDEX IDX_CITY_AREA_PINCODE_STATUS ON CITY_AREA_PINCODE (STATUS);
+
+--changeset saurabh:1778000006_1
+
+INSERT INTO MASTER_TABLE (
+    MASTER_TYPE,
+    NAME,
+    IS_BULK_ALLOWED,
+    IS_MAKER_CHECKER_ENABLED,
+    IS_HEADER_PRESENT,
+    FILE_EXTENSION,
+    FILE_FORMAT_CONFIG,
+    FILE_CHECK_SUM,
+    STATUS,
+    DESCRIPTION,
+    CREATED_BY,
+    CREATED_AT
+) VALUES (
+    'CITY_AREA_PINCODE',
+    'City Area Pincode',
+    1,
+    1,
+    1,
+    'csv',
+    TO_CLOB(q'~{
+      "delimiter": ",",
+      "charset": "UTF-8",
+      "columns": [
+        {
+          "fieldName": "cityAreaName",
+          "headerName": "CityAreaName",
+          "required": true
+        },
+        {
+          "fieldName": "stateName",
+          "headerName": "StateName",
+          "required": true
+        },
+        {
+          "fieldName": "pinCode",
+          "headerName": "PinCode",
+          "required": true
+        }
+      ]
+    }~'),
+    NULL,
+    'ACTIVE',
+    'Bulk upload configuration for City Area Pincode master. Expected CSV header: CityAreaName,StateName,PinCode',
+    'SYSTEM',
+    1778000006
+);
 ---------------------------------
 --liquibase formatted sql
---changeset saurabh:1778000002
+--changeset saurabh:1778000004
 
-CREATE TABLE NATURE_OF_BUSINESS (
+CREATE TABLE STATE (
       ID RAW(16) DEFAULT SYS_GUID() PRIMARY KEY NOT NULL,
-      NATURE_OF_BUSINESS_NAME VARCHAR2(255 CHAR) NOT NULL,
-      NATURE_OF_BUSINESS_CODE VARCHAR2(100 CHAR) NOT NULL,
+      STATE_NAME VARCHAR2(255 CHAR) NOT NULL,
+      STATE_CODE VARCHAR2(100 CHAR) NOT NULL,
       STATUS VARCHAR2(50 CHAR) NOT NULL,
       VERSION NUMBER(10) DEFAULT 0 NOT NULL,
       CREATED_BY VARCHAR2(100 CHAR) NOT NULL,
       CREATED_AT NUMBER NOT NULL,
       UPDATED_BY VARCHAR2(100 CHAR) NOT NULL,
       UPDATED_AT NUMBER NOT NULL,
-      CONSTRAINT UK_NATURE_OF_BUSINESS_NAME UNIQUE (NATURE_OF_BUSINESS_NAME),
-      CONSTRAINT UK_NATURE_OF_BUSINESS_CODE UNIQUE (NATURE_OF_BUSINESS_CODE)
+      CONSTRAINT UK_STATE_NAME UNIQUE (STATE_NAME),
+      CONSTRAINT UK_STATE_CODE UNIQUE (STATE_CODE)
     );
 
-CREATE INDEX IDX_NATURE_OF_BUSINESS_STATUS ON NATURE_OF_BUSINESS (STATUS);
---------------------------------
+CREATE INDEX IDX_STATE_STATUS ON STATE (STATUS);
+-----------------------------------------
 --liquibase formatted sql
---changeset saurabh:1778000003
+--changeset saurabh:1778000005
 
 INSERT INTO MASTER_TABLE (MASTER_TYPE,NAME,IS_BULK_ALLOWED,IS_MAKER_CHECKER_ENABLED,IS_HEADER_PRESENT,FILE_EXTENSION,FILE_FORMAT_CONFIG,FILE_CHECK_SUM,STATUS,DESCRIPTION,CREATED_BY,CREATED_AT
-) VALUES ('NATURE_OF_BUSINESS','Nature Of Business',1,1,1,'csv',
+) VALUES ('STATE','State',1,1,1,'csv',
           TO_CLOB(q'~{
       "delimiter": ",",
       "charset": "UTF-8",
       "columns": [
         {
-          "fieldName": "natureOfBusinessName",
-          "headerName": "NatureOfBusinessName",
+          "fieldName": "stateName",
+          "headerName": "StateName",
           "required": true
         },
         {
@@ -387,5 +1017,5 @@ INSERT INTO MASTER_TABLE (MASTER_TYPE,NAME,IS_BULK_ALLOWED,IS_MAKER_CHECKER_ENAB
           "defaultValue": "ACTIVE"
         }
       ]
-    }~'),NULL,'ACTIVE','Bulk upload configuration for Nature Of Business master. Expected CSV header: NatureOfBusinessName,Status','SYSTEM',1778000003
+    }~'),NULL,'ACTIVE','Bulk upload configuration for State master. Expected CSV header: StateName,Status','SYSTEM',1778000005
 );
