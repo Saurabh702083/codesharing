@@ -1,130 +1,725 @@
-package com.epay.admin.portal.master.util.ENUM;
 
-import com.epay.admin.portal.exceptions.AdminPortalException;
-import com.epay.admin.portal.util.ErrorConstants;
+package com.epay.admin.portal.master.controller;
 
-import java.text.MessageFormat;
-import java.util.Arrays;
+import com.epay.admin.portal.master.dto.request.MasterApprovalRequest;
+import com.epay.admin.portal.master.dto.request.MasterInactivationRequest;
+import com.epay.admin.portal.master.dto.response.BulkUploadResponse;
+import com.epay.admin.portal.master.dto.response.MasterResponse;
+import com.epay.admin.portal.master.service.AdminMasterService;
+import com.epay.admin.portal.model.response.AdminPortalResponse;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.sbi.epay.logging.utility.LoggerFactoryUtility;
+import com.sbi.epay.logging.utility.LoggerUtility;
+import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
+import org.springframework.data.web.PageableDefault;
+import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
 
-import static com.epay.admin.portal.util.ErrorConstants.INVALID_ENUM_ERROR_MESSAGE;
+import java.io.IOException;
 
-public enum MasterType {
-    // Standalone masters
-    CONSTITUTION,
-    NATURE_OF_BUSINESS,
-    STATE,
-    COUNTRY,
 
-    // Child/Dependent masters
-    COUNTRY_CURRENCY,
-    CITY_AREA_PINCODE;
 
-    public static MasterType getMasterType(String masterType) {
-        return Arrays.stream(values())
-                .filter(s -> s.name().equalsIgnoreCase(masterType))
-                .findFirst()
-                .orElseThrow(() -> new AdminPortalException(ErrorConstants.INVALID_ENUM_ERROR_CODE, MessageFormat.format(INVALID_ENUM_ERROR_MESSAGE, "masterType")));
+@RestController
+@RequestMapping("/api/v1/masters")
+@RequiredArgsConstructor
+public class MasterController {
+
+    private final AdminMasterService masterService;
+    public static final int DEFAULT_PAGE_SIZE = 10;
+    private final LoggerUtility log = LoggerFactoryUtility.getLogger(this.getClass());
+
+    /**
+     * MAKER — Submit create request.
+     * POST /api/v1/masters/{masterType}
+     *
+     * Constitution:     { "constitutionName": "Partnership Firm" }
+     * Country:          { "countryCode": "IN", "countryName": "India" }
+     * CountryCurrency:  { "countryId": "uuid", "currencyCode": "INR", "currencyName": "Rupee" }
+     *
+     * Response: APPROVAL_PENDING, workflow PENDING
+     */
+    @PreAuthorize("hasAnyRole('ONBOARDING_MANAGER')")
+    @PostMapping("/{masterType}")
+    public AdminPortalResponse<MasterResponse> createMaster(@PathVariable String masterType, @RequestBody JsonNode requestBody) {
+        log.info("Create request received masterType={}", masterType);
+        return masterService.submitCreate(masterType, requestBody);
+    }
+
+    /**
+     * MAKER — Submit inactivation for one or more ACTIVE records.
+     * POST /api/v1/masters/{masterType}/inactivate
+     *
+     * Body: { "masterIds": ["uuid1", "uuid2"], "remark": "No longer needed" }
+     *
+     * Response: INACTIVATION_PENDING, workflow INACTIVATION_PENDING
+     * Fails if: record not ACTIVE, or parent has active children
+     */
+    @PreAuthorize("hasAnyRole('ONBOARDING_MANAGER')")
+    @PostMapping("/{masterType}/inactivate")
+    public AdminPortalResponse<MasterResponse> inactivateMaster(@PathVariable String masterType, @RequestBody MasterInactivationRequest request) {
+        log.info("Inactivate request received masterType={}", masterType);
+        return masterService.submitInactivation(masterType, request);
+    }
+
+    /**
+     * CHECKER — Approve pending records.
+     * POST /api/v1/masters/{masterType}/approve
+     *
+     * Body: { "records": [{ "masterId": "uuid", "remark": "Looks good" }] }
+     *
+     * APPROVAL_PENDING     → entity ACTIVE,   workflow APPROVED
+     * INACTIVATION_PENDING → entity INACTIVE, workflow APPROVED
+     */
+    @PreAuthorize("hasAnyRole('ONBOARDING_CHECKER')")
+    @PostMapping("/{masterType}/approve")
+    public AdminPortalResponse<String> approve(@PathVariable String masterType, @RequestBody MasterApprovalRequest request) {
+        log.info("Approve request received masterType={}", masterType);
+        return masterService.approve(masterType, request);
+    }
+
+    /**
+     * CHECKER — Reject pending records.
+     * POST /api/v1/masters/{masterType}/reject
+     *
+     * Body: { "records": [{ "masterId": "uuid", "remark": "Invalid data" }] }
+     *
+     * APPROVAL_PENDING     → entity REJECTED, workflow REJECTED
+     * INACTIVATION_PENDING → entity ACTIVE,   workflow REJECTED (rollback)
+     */
+    @PreAuthorize("hasAnyRole('ONBOARDING_CHECKER')")
+    @PostMapping("/{masterType}/reject")
+    public AdminPortalResponse<String> reject(@PathVariable String masterType, @RequestBody MasterApprovalRequest request) {
+        log.info("Reject request received masterType={}", masterType);
+        return masterService.reject(masterType, request);
+    }
+
+    /**
+     * MAKER — Bulk upload CSV.
+     * POST /api/v1/masters/{masterType}/bulk
+     * multipart/form-data, field name: "file"
+     */
+    @PreAuthorize("hasAnyRole('ONBOARDING_MANAGER')")
+    @PostMapping("/{masterType}/bulk")
+    public AdminPortalResponse<BulkUploadResponse> bulkUpload(@PathVariable String masterType, @RequestParam("file") MultipartFile file) throws IOException {
+        log.info("Bulk upload received masterType={} fileName={}", masterType, file.getOriginalFilename());
+        return masterService.bulkUpload(masterType, file);
+    }
+
+    /**
+     * BOTH — Search and paginate records.
+     * POST /api/v1/masters/{masterType}/search
+     *
+     * Constitution: { "constitutionName": "HUF", "status": "ACTIVE" }
+     * CountryCurrency: { "countryCode": "IN", "currencyCode": "INR", "status": "ACTIVE" }
+     *
+     * Supports fromDate/toDate (epoch ms) for modified date range filter.
+     * Pageable via query params: ?page=0&size=10&sort=updatedAt,desc
+     */
+    @PreAuthorize("hasAnyRole('ONBOARDING_MANAGER', 'ONBOARDING_CHECKER')")
+    @PostMapping("/{masterType}/search")
+    public AdminPortalResponse<?> search(@PathVariable String masterType, @RequestBody JsonNode request, @PageableDefault(sort = "updatedAt", size = DEFAULT_PAGE_SIZE, direction = Sort.Direction.DESC) Pageable pageable) {
+        log.info("Search request received masterType={} page={} size={}", masterType, pageable.getPageNumber(), pageable.getPageSize());
+        return masterService.search(masterType, request, pageable);
     }
 }
--------------------------------
+-----------------------------------------
+package com.epay.admin.portal.master.service;
+
+
+import com.epay.admin.portal.exceptions.AdminPortalException;
+import com.epay.admin.portal.master.dao.MasterWorkflowDao;
+import com.epay.admin.portal.master.dto.request.MasterApprovalRequest;
+import com.epay.admin.portal.master.dto.request.MasterInactivationRequest;
+import com.epay.admin.portal.master.dto.response.BulkUploadResponse;
+import com.epay.admin.portal.master.dto.response.MasterResponse;
+import com.epay.admin.portal.master.entity.MasterWorkflow;
+import com.epay.admin.portal.master.factory.MasterHandlerFactory;
+import com.epay.admin.portal.master.handler.AbstractMasterHandler;
+import com.epay.admin.portal.master.handler.MasterHandler;
+import com.epay.admin.portal.master.util.ENUM.MasterType;
+import com.epay.admin.portal.master.util.ENUM.WorkflowStatus;
+import com.epay.admin.portal.model.response.AdminPortalResponse;
+
+import com.epay.admin.portal.util.EPayIdentityUtil;
+import com.epay.admin.portal.validator.MasterRequestValidator;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.sbi.epay.logging.utility.LoggerFactoryUtility;
+import com.sbi.epay.logging.utility.LoggerUtility;
+import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Pageable;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.multipart.MultipartFile;
+
+import java.io.IOException;
+import java.text.MessageFormat;
+import java.util.List;
+import java.util.UUID;
+
+import static com.epay.admin.portal.util.AdminPortalConstants.SUCCESS_RESPONSE_CODE;
+import static com.epay.admin.portal.util.ErrorConstants.*;
+
+
+@Service
+@RequiredArgsConstructor
+public class AdminMasterService {
+
+    private final MasterWorkflowDao masterWorkflowDao;
+    private final MasterHandlerFactory handlerFactory;
+    private final MasterBulkUploadService masterBulkUploadService;
+    private final MasterRequestValidator masterRequestValidator;
+    private final ObjectMapper objectMapper;
+    private final LoggerUtility log = LoggerFactoryUtility.getLogger(this.getClass());
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // MAKER: Submit Create
+    // New entity → APPROVAL_PENDING, Workflow → PENDING
+    // ─────────────────────────────────────────────────────────────────────────
+
+    @Transactional
+    public AdminPortalResponse<MasterResponse> submitCreate(String masterType, JsonNode request) {
+        MasterType master = MasterType.getMasterType(masterType);
+        log.info("Submitting create for masterType={}", master);
+        MasterHandler<?, ?> handler = handlerFactory.getHandler(master);
+        MasterWorkflow workflow = validateAndCreate(handler, request);
+        log.info("Create workflow submitted masterType={} workflowId={}", master, workflow.getId());
+        return buildMasterResponse(List.of(buildWorkflowResponse("Request submitted successfully", workflow)));
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // MAKER: Submit Inactivation
+    // Entity ACTIVE → INACTIVATION_PENDING, Workflow → INACTIVATION_PENDING
+    // ─────────────────────────────────────────────────────────────────────────
+
+    @Transactional
+    public AdminPortalResponse<MasterResponse> submitInactivation(String masterType,
+                                                                  MasterInactivationRequest request) {
+        MasterType master = MasterType.getMasterType(masterType);
+        masterRequestValidator.validateInactivationRequest(request);
+        log.info("Submitting inactivation for masterType={} recordCount={}",
+                master, request.getMasterIds().size());
+        AbstractMasterHandler<?, ?> handler = handlerFactory.getAbstractHandler(master);
+        List<MasterResponse> responses = request.getMasterIds().stream()
+                .map(recordId -> buildWorkflowResponse(
+                        "Inactivation submitted successfully",
+                        handler.submitInactivation(recordId, request.getRemark())))
+                .toList();
+        return buildMasterResponse(responses);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // CHECKER: Approve
+    // APPROVAL_PENDING     → entity ACTIVE,    workflow APPROVED
+    // INACTIVATION_PENDING → entity INACTIVE,  workflow APPROVED
+    // ─────────────────────────────────────────────────────────────────────────
+
+    @Transactional
+    public AdminPortalResponse<String> approve(String masterType, MasterApprovalRequest request) {
+        MasterType master = MasterType.getMasterType(masterType);
+        masterRequestValidator.validateApprovalRequest(request);
+        log.info("Approving records for masterType={} count={}", master, request.getRecords().size());
+        AbstractMasterHandler<?, ?> handler = handlerFactory.getAbstractHandler(master);
+        List<String> responses = request.getRecords().stream()
+                .map(record -> processApprove(master, handler, record))
+                .toList();
+        return buildStringResponse(responses);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // CHECKER: Reject
+    // APPROVAL_PENDING     → entity REJECTED, workflow REJECTED
+    // INACTIVATION_PENDING → entity ACTIVE,   workflow REJECTED (rollback)
+    // ─────────────────────────────────────────────────────────────────────────
+
+    @Transactional
+    public AdminPortalResponse<String> reject(String masterType, MasterApprovalRequest request) {
+        MasterType master = MasterType.getMasterType(masterType);
+        masterRequestValidator.validateRejectionRequest(request);
+        log.info("Rejecting records for masterType={} count={}", master, request.getRecords().size());
+        AbstractMasterHandler<?, ?> handler = handlerFactory.getAbstractHandler(master);
+        List<String> responses = request.getRecords().stream()
+                .map(record -> processReject(master, handler, record))
+                .toList();
+        return buildStringResponse(responses);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // BOTH: Search
+    // ─────────────────────────────────────────────────────────────────────────
+
+    public AdminPortalResponse<?> search(String masterType, JsonNode request, Pageable pageable) {
+        MasterType master = MasterType.getMasterType(masterType);
+        log.info("Searching records for masterType={}", master);
+        return handlerFactory.getHandler(master).search(request, pageable);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // MAKER: Bulk Upload
+    // ─────────────────────────────────────────────────────────────────────────
+
+    public AdminPortalResponse<BulkUploadResponse> bulkUpload(String masterType,
+                                                              MultipartFile file) throws IOException {
+        log.info("Bulk upload for masterType={} fileName={}", masterType, file.getOriginalFilename());
+        BulkUploadResponse response = masterBulkUploadService.bulkUpload(masterType, file);
+        return AdminPortalResponse.<BulkUploadResponse>builder()
+                .status(SUCCESS_RESPONSE_CODE)
+                .data(List.of(response))
+                .count(1L).total(1L)
+                .build();
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Private helpers
+    // ─────────────────────────────────────────────────────────────────────────
+
+    private <T> MasterWorkflow validateAndCreate(MasterHandler<T, ?> handler, JsonNode request) {
+        T dto = deserialize(handler.getDtoClass(), request);
+        masterRequestValidator.validateCreateRequest(handler.getMasterType(), dto);
+        handler.validateCreate(dto);
+        return handler.createMaster(dto);
+    }
+
+    private <T> T deserialize(Class<T> clazz, JsonNode node) {
+        try {
+            return objectMapper.treeToValue(node, clazz);
+        } catch (JsonProcessingException | IllegalArgumentException ex) {
+            log.error("Failed to deserialize request to {}", clazz.getSimpleName(), ex);
+            throw new AdminPortalException(JSON_ERROR_CODE,
+                    MessageFormat.format(JSON_ERROR_MESSAGE, clazz.getSimpleName()));
+        }
+    }
+
+    private String processApprove(MasterType masterType,
+                                  AbstractMasterHandler<?, ?> handler,
+                                  MasterApprovalRequest.ApprovalItem record) {
+        log.info("Processing approve masterType={} masterId={}", masterType, record.getMasterId());
+        MasterWorkflow workflow = findPendingWorkflow(masterType, record.getMasterId());
+        handler.validateAndApplyApproved(workflow);          // transitions entity + workflow status
+        workflow.setRemark(record.getRemark());
+        workflow.setCheckerId(EPayIdentityUtil.getUserPrincipal().getUsername());
+        masterWorkflowDao.save(workflow);
+        log.info("Approved masterId={} masterType={}", record.getMasterId(), masterType);
+        return "Approved masterId=" + record.getMasterId();
+    }
+
+    private String processReject(MasterType masterType,
+                                 AbstractMasterHandler<?, ?> handler,
+                                 MasterApprovalRequest.ApprovalItem record) {
+        log.info("Processing reject masterType={} masterId={}", masterType, record.getMasterId());
+        MasterWorkflow workflow = findPendingWorkflow(masterType, record.getMasterId());
+        handler.validateAndApplyRejected(workflow, record.getRemark()); // transitions entity + workflow status
+        workflow.setRemark(record.getRemark());
+        workflow.setCheckerId(EPayIdentityUtil.getUserPrincipal().getUsername());
+        masterWorkflowDao.save(workflow);
+        log.info("Rejected masterId={} masterType={}", record.getMasterId(), masterType);
+        return "Rejected masterId=" + record.getMasterId();
+    }
+
+    private MasterWorkflow findPendingWorkflow(MasterType masterType, UUID recordId) {
+        return masterWorkflowDao.findLatestByMasterTypeAndRecordIdAndStatuses(
+                        masterType, recordId,
+                        List.of(WorkflowStatus.PENDING, WorkflowStatus.INACTIVATION_PENDING))
+                .orElseThrow(() -> new AdminPortalException(NOT_FOUND_ERROR_CODE,
+                        MessageFormat.format(NOT_FOUND_ERROR_MESSAGE,
+                                "Pending workflow for masterId=" + recordId)));
+    }
+
+    private MasterResponse buildWorkflowResponse(String message, MasterWorkflow workflow) {
+        return MasterResponse.builder()
+                .message(message)
+                .status(workflow.getStatus().name())
+                .masterRecordId(workflow.getRecordId())
+                .masterCode(workflow.getMasterCode())
+                .build();
+    }
+
+    private AdminPortalResponse<MasterResponse> buildMasterResponse(List<MasterResponse> data) {
+        return AdminPortalResponse.<MasterResponse>builder()
+                .status(SUCCESS_RESPONSE_CODE)
+                .data(data)
+                .count((long) data.size())
+                .total((long) data.size())
+                .build();
+    }
+
+    private AdminPortalResponse<String> buildStringResponse(List<String> data) {
+        return AdminPortalResponse.<String>builder()
+                .status(SUCCESS_RESPONSE_CODE)
+                .data(data)
+                .count((long) data.size())
+                .total((long) data.size())
+                .build();
+    }
+}
+
+--------------------------------------------------------
+package com.epay.admin.portal.validator;
+
+import com.epay.admin.portal.master.dto.request.CityAreaPincodeDto;
+import com.epay.admin.portal.master.dto.request.ConstitutionDTO;
+import com.epay.admin.portal.master.dto.request.CountryCurrencyDTO;
+import com.epay.admin.portal.master.dto.request.CountryDTO;
+import com.epay.admin.portal.master.dto.request.MasterApprovalRequest;
+import com.epay.admin.portal.master.dto.request.MasterInactivationRequest;
+import com.epay.admin.portal.master.dto.request.NatureOfBusinessDto;
+import com.epay.admin.portal.master.dto.request.StateDto;
+import com.epay.admin.portal.master.util.ENUM.MasterType;
+import com.sbi.epay.logging.utility.LoggerFactoryUtility;
+import com.sbi.epay.logging.utility.LoggerUtility;
+import org.springframework.stereotype.Component;
+
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.Set;
+import java.util.UUID;
+
+import static com.epay.admin.portal.util.AdminPortalConstants.ALPHA_ONLY_REGEX;
+import static com.epay.admin.portal.util.AdminPortalConstants.ALPHANUMERIC_REGEX;
+import static com.epay.admin.portal.util.AdminPortalConstants.COUNTRY_OR_STATE_NAME_REGEX;
+import static com.epay.admin.portal.util.AdminPortalConstants.GENERIC_TEXT_REGEX;
+import static com.epay.admin.portal.util.AdminPortalConstants.NAME_REGEX;
+import static com.epay.admin.portal.util.AdminPortalConstants.PINCODE_REGEX;
+import static com.epay.admin.portal.util.AdminPortalConstants.REMARK_LENGTH;
+import static com.epay.admin.portal.util.ErrorConstants.INVALID_ERROR_CODE;
+import static com.epay.admin.portal.util.ErrorConstants.INVALID_ERROR_MESSAGE;
+import static com.epay.admin.portal.util.ErrorConstants.INCORRECT_FORMAT;
+
+@Component
+public class MasterRequestValidator extends BaseValidator {
+
+    private static final int MASTER_NAME_MAX_LENGTH = 255;
+    private static final int COUNTRY_CODE_MAX_LENGTH = 10;
+    private static final int CURRENCY_CODE_MAX_LENGTH = 10;
+    private static final int PIN_CODE_MAX_LENGTH = 20;
+
+    private static final String CONSTITUTION_NAME = "constitutionName";
+    private static final String COUNTRY_CODE = "countryCode";
+    private static final String COUNTRY_NAME = "countryName";
+    private static final String CURRENCY_CODE = "currencyCode";
+    private static final String CURRENCY_NAME = "currencyName";
+    private static final String STATE_NAME = "stateName";
+    private static final String CITY_AREA_NAME = "cityAreaName";
+    private static final String PIN_CODE = "pinCode";
+    private static final String NATURE_OF_BUSINESS_NAME = "natureOfBusinessName";
+    private static final String REQUEST = "request";
+    private static final String RECORDS = "records";
+    private static final String MASTER_IDS = "masterIds";
+    private static final String MASTER_ID = "masterId";
+    private static final String REMARK = "remark";
+    private static final String DUPLICATE_VALUE = "Duplicate value provided";
+
+    private final LoggerUtility logger = LoggerFactoryUtility.getLogger(this.getClass());
+
+    public void validateCreateRequest(MasterType masterType, Object request) {
+        logger.info("Validating master create request for masterType={}", masterType);
+        errorDtoList = new ArrayList<>();
+        checkMandatoryField(request, REQUEST);
+        throwIfErrors();
+
+        switch (masterType) {
+            case CONSTITUTION -> validateConstitution((ConstitutionDTO) request);
+            case COUNTRY -> validateCountry((CountryDTO) request);
+            case COUNTRY_CURRENCY -> validateCountryCurrency((CountryCurrencyDTO) request);
+            case STATE -> validateState((StateDto) request);
+            case CITY_AREA_PINCODE -> validateCityAreaPincode((CityAreaPincodeDto) request);
+            case NATURE_OF_BUSINESS -> validateNatureOfBusiness((NatureOfBusinessDto) request);
+        }
+    }
+
+    public void validateInactivationRequest(MasterInactivationRequest request) {
+        logger.info("Validating master inactivation request");
+        errorDtoList = new ArrayList<>();
+        checkMandatoryField(request, REQUEST);
+        throwIfErrors();
+
+        checkMandatoryField(request.getMasterIds(), MASTER_IDS);
+        checkMandatoryField(request.getRemark(), REMARK);
+        throwIfErrors();
+
+        validateMasterIds(request.getMasterIds(), MASTER_IDS);
+        validateLeadingTrailing(REMARK, request.getRemark());
+        validateMaxLength(REMARK, request.getRemark(), REMARK_LENGTH);
+    }
+
+    public void validateApprovalRequest(MasterApprovalRequest request) {
+        logger.info("Validating master approval request");
+        validateApprovalOrRejectionRequest(request, false);
+    }
+
+    public void validateRejectionRequest(MasterApprovalRequest request) {
+        logger.info("Validating master rejection request");
+        validateApprovalOrRejectionRequest(request, true);
+    }
+
+    private void validateConstitution(ConstitutionDTO request) {
+        validateMandatoryFields(CONSTITUTION_NAME, request.getConstitutionName());
+        validateLeadingTrailing(CONSTITUTION_NAME, request.getConstitutionName());
+        validateMaxLength(CONSTITUTION_NAME, request.getConstitutionName(), MASTER_NAME_MAX_LENGTH);
+        validateFormat(CONSTITUTION_NAME, request.getConstitutionName(), GENERIC_TEXT_REGEX);
+    }
+
+    private void validateCountry(CountryDTO request) {
+        validateMandatoryFields(
+                COUNTRY_CODE, request.getCountryCode(),
+                COUNTRY_NAME, request.getCountryName());
+        validateLeadingTrailing(
+                COUNTRY_CODE, request.getCountryCode(),
+                COUNTRY_NAME, request.getCountryName());
+        validateMaxLength(
+                COUNTRY_CODE, request.getCountryCode(), COUNTRY_CODE_MAX_LENGTH,
+                COUNTRY_NAME, request.getCountryName(), MASTER_NAME_MAX_LENGTH);
+        validateFormat(COUNTRY_CODE, request.getCountryCode(), ALPHANUMERIC_REGEX);
+        validateFormat(COUNTRY_NAME, request.getCountryName(), COUNTRY_OR_STATE_NAME_REGEX);
+    }
+
+    private void validateCountryCurrency(CountryCurrencyDTO request) {
+        validateMandatoryFields(
+                COUNTRY_CODE, request.getCountryCode(),
+                CURRENCY_CODE, request.getCurrencyCode(),
+                CURRENCY_NAME, request.getCurrencyName());
+        validateLeadingTrailing(
+                COUNTRY_CODE, request.getCountryCode(),
+                CURRENCY_CODE, request.getCurrencyCode(),
+                CURRENCY_NAME, request.getCurrencyName());
+        validateMaxLength(
+                COUNTRY_CODE, request.getCountryCode(), COUNTRY_CODE_MAX_LENGTH,
+                CURRENCY_CODE, request.getCurrencyCode(), CURRENCY_CODE_MAX_LENGTH,
+                CURRENCY_NAME, request.getCurrencyName(), MASTER_NAME_MAX_LENGTH);
+        validateFormat(COUNTRY_CODE, request.getCountryCode(), ALPHANUMERIC_REGEX);
+        validateFormat(CURRENCY_CODE, request.getCurrencyCode(), ALPHA_ONLY_REGEX);
+        validateFormat(CURRENCY_NAME, request.getCurrencyName(), NAME_REGEX);
+    }
+
+    private void validateState(StateDto request) {
+        validateMandatoryFields(STATE_NAME, request.getStateName());
+        validateLeadingTrailing(STATE_NAME, request.getStateName());
+        validateMaxLength(STATE_NAME, request.getStateName(), MASTER_NAME_MAX_LENGTH);
+        validateFormat(STATE_NAME, request.getStateName(), COUNTRY_OR_STATE_NAME_REGEX);
+    }
+
+    private void validateCityAreaPincode(CityAreaPincodeDto request) {
+        validateMandatoryFields(
+                CITY_AREA_NAME, request.getCityAreaName(),
+                STATE_NAME, request.getStateName(),
+                PIN_CODE, request.getPinCode());
+        validateLeadingTrailing(
+                CITY_AREA_NAME, request.getCityAreaName(),
+                STATE_NAME, request.getStateName(),
+                PIN_CODE, request.getPinCode());
+        validateMaxLength(
+                CITY_AREA_NAME, request.getCityAreaName(), MASTER_NAME_MAX_LENGTH,
+                STATE_NAME, request.getStateName(), MASTER_NAME_MAX_LENGTH,
+                PIN_CODE, request.getPinCode(), PIN_CODE_MAX_LENGTH);
+        validateFormat(CITY_AREA_NAME, request.getCityAreaName(), GENERIC_TEXT_REGEX);
+        validateFormat(STATE_NAME, request.getStateName(), COUNTRY_OR_STATE_NAME_REGEX);
+        validateFormat(PIN_CODE, request.getPinCode(), PINCODE_REGEX);
+    }
+
+    private void validateNatureOfBusiness(NatureOfBusinessDto request) {
+        validateMandatoryFields(NATURE_OF_BUSINESS_NAME, request.getNatureOfBusinessName());
+        validateLeadingTrailing(NATURE_OF_BUSINESS_NAME, request.getNatureOfBusinessName());
+        validateMaxLength(NATURE_OF_BUSINESS_NAME, request.getNatureOfBusinessName(), MASTER_NAME_MAX_LENGTH);
+        validateFormat(NATURE_OF_BUSINESS_NAME, request.getNatureOfBusinessName(), GENERIC_TEXT_REGEX);
+    }
+
+    private void validateMandatoryFields(Object... fields) {
+        for (int index = 0; index < fields.length; index += 2) {
+            checkMandatoryField((String) fields[index + 1], (String) fields[index]);
+        }
+        throwIfErrors();
+    }
+
+    private void validateLeadingTrailing(Object... fields) {
+        for (int index = 0; index < fields.length; index += 2) {
+            checkForLeadingTrailingAndSingleSpace((String) fields[index + 1], (String) fields[index]);
+        }
+        throwIfErrors();
+    }
+
+    private void validateMaxLength(Object... fields) {
+        for (int index = 0; index < fields.length; index += 3) {
+            validateFieldLength((String) fields[index + 1], (int) fields[index + 2], (String) fields[index]);
+        }
+        throwIfErrors();
+    }
+
+    private void validateFormat(String fieldName, String value, String regex) {
+        validateFieldWithRegexAndEmpty(value, regex, fieldName, INCORRECT_FORMAT);
+        throwIfErrors();
+    }
+
+    private void validateApprovalOrRejectionRequest(MasterApprovalRequest request, boolean remarkRequired) {
+        errorDtoList = new ArrayList<>();
+        checkMandatoryField(request, REQUEST);
+        throwIfErrors();
+
+        checkMandatoryField(request.getRecords(), RECORDS);
+        throwIfErrors();
+
+        Set<UUID> uniqueMasterIds = new HashSet<>();
+        for (MasterApprovalRequest.ApprovalItem record : request.getRecords()) {
+            checkMandatoryField(record, RECORDS);
+            if (record == null) {
+                continue;
+            }
+            checkMandatoryField(record.getMasterId(), MASTER_ID);
+            if (remarkRequired) {
+                checkMandatoryField(record.getRemark(), REMARK);
+            }
+        }
+        throwIfErrors();
+
+        for (MasterApprovalRequest.ApprovalItem record : request.getRecords()) {
+            if (!uniqueMasterIds.add(record.getMasterId())) {
+                addError(INVALID_ERROR_CODE, INVALID_ERROR_MESSAGE, (Object) MASTER_ID, DUPLICATE_VALUE);
+            }
+            if (record.getRemark() != null) {
+                checkForLeadingTrailingAndSingleSpace(record.getRemark(), REMARK);
+                validateFieldLength(record.getRemark(), REMARK_LENGTH, REMARK);
+            }
+        }
+        throwIfErrors();
+    }
+
+    private void validateMasterIds(Iterable<UUID> masterIds, String fieldName) {
+        Set<UUID> uniqueMasterIds = new HashSet<>();
+        for (UUID masterId : masterIds) {
+            checkMandatoryField(masterId, MASTER_ID);
+            if (masterId != null && !uniqueMasterIds.add(masterId)) {
+                addError(INVALID_ERROR_CODE, INVALID_ERROR_MESSAGE, (Object) fieldName, DUPLICATE_VALUE);
+            }
+        }
+        throwIfErrors();
+    }
+}
+----------------------------------
+// CountryDTO.java
 package com.epay.admin.portal.master.dto.request;
 
-import jakarta.validation.constraints.NotBlank;
+import lombok.Data;
+
+@Data
+public class CountryDTO {
+
+    private String countryCode;
+
+    private String countryName;
+}
+----------------------------------------
+package com.epay.admin.portal.master.dto.request;
+
 import lombok.Data;
 
 @Data
 public class CityAreaPincodeDto {
 
-    @NotBlank(message = "City/area name is required")
     private String cityAreaName;
 
-    @NotBlank(message = "State name is required")
     private String stateName;
 
-    @NotBlank(message = "Pin code is required")
     private String pinCode;
 }
 ------------------------------
+// ConstitutionDTO.java
 package com.epay.admin.portal.master.dto.request;
 
 import lombok.Data;
-import lombok.EqualsAndHashCode;
 
 @Data
-@EqualsAndHashCode(callSuper = true)
-public class CityAreaPinCodeSearchRequest extends MasterSearchRequest {
-    private String cityAreaName;
-    private String stateName;
-    private String pinCode;
+public class ConstitutionDTO {
+
+    private String constitutionName;
 }
-----------------------------------
+-----------------------
+// CountryCurrencyDTO.java
 package com.epay.admin.portal.master.dto.request;
 
-import jakarta.validation.constraints.NotBlank;
+import lombok.Data;
+
+@Data
+public class CountryCurrencyDTO {
+
+    private String countryCode;
+
+    private String currencyCode;
+
+    private String currencyName;
+
+}
+-----------------------
+// CountryDTO.java
+package com.epay.admin.portal.master.dto.request;
+
+import lombok.Data;
+
+@Data
+public class CountryDTO {
+
+    private String countryCode;
+
+    private String countryName;
+}
+--------------------------
+// MasterApprovalRequest.java
+package com.epay.admin.portal.master.dto.request;
+
+import lombok.Data;
+import java.util.List;
+import java.util.UUID;
+
+@Data
+public class MasterApprovalRequest {
+
+    private List<ApprovalItem> records;
+
+    @Data
+    public static class ApprovalItem {
+
+        private UUID masterId;
+
+        // Optional remark — required only for checker reject
+        private String remark;
+    }
+}
+----------------------------
+// MasterInactivationRequest.java
+package com.epay.admin.portal.master.dto.request;
+
+import lombok.Data;
+import java.util.List;
+import java.util.UUID;
+
+@Data
+public class MasterInactivationRequest {
+
+    private List<UUID> masterIds;
+
+    private String remark;
+}
+--------------------------
+package com.epay.admin.portal.master.dto.request;
+
+import lombok.Data;
+
+@Data
+public class NatureOfBusinessDto {
+
+    private String natureOfBusinessName;
+}
+--------------------------
+package com.epay.admin.portal.master.dto.request;
+
 import lombok.Data;
 
 @Data
 public class StateDto {
 
-    @NotBlank(message = "State name is required")
     private String stateName;
-}
------------------------------------
-package com.epay.admin.portal.master.dto.request;
-
-import lombok.Data;
-import lombok.EqualsAndHashCode;
-
-@Data
-@EqualsAndHashCode(callSuper = true)
-public class StateSearchRequest extends MasterSearchRequest {
-    private String stateName;
-}
-----------------------------
-package com.epay.admin.portal.master.dto.response;
-
-import com.fasterxml.jackson.annotation.JsonInclude;
-import lombok.Builder;
-import lombok.Data;
-
-import java.util.UUID;
-
-@Data
-@Builder
-@JsonInclude(JsonInclude.Include.NON_NULL)
-public class CityAreaPincodeResponse {
-    private UUID id;
-    private UUID stateId;
-    private String stateName;
-    private String cityAreaName;
-    private String pinCode;
-    private String status;
-    private Long createdAt;
-    private String createdBy;
-    private Long updatedAt;
-    private String updatedBy;
-}
-------------------------------------
-package com.epay.admin.portal.master.dto.response;
-
-import com.fasterxml.jackson.annotation.JsonInclude;
-import lombok.Builder;
-import lombok.Data;
-
-import java.util.UUID;
-
-@Data
-@Builder
-@JsonInclude(JsonInclude.Include.NON_NULL)
-public class StateResponse {
-    private UUID id;
-    private String stateName;
-    private String stateCode;
-    private String status;
-    private Long createdAt;
-    private String createdBy;
-    private Long updatedAt;
-    private String updatedBy;
 }
 ---------------------------------
 package com.epay.admin.portal.master.entity;
@@ -135,8 +730,6 @@ import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
-import jakarta.persistence.UniqueConstraint;
-import jakarta.persistence.Version;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -146,13 +739,7 @@ import lombok.NoArgsConstructor;
 import java.util.UUID;
 
 @Entity
-@Table(
-        name = "CITY_AREA_PINCODE",
-        uniqueConstraints = @UniqueConstraint(
-                name = "UQ_CITY_AREA_PINCODE",
-                columnNames = {"STATE_ID", "CITY_AREA_NAME", "PIN_CODE"}
-        )
-)
+@Table(name = "CITY_AREA_PINCODE")
 @Data
 @Builder
 @NoArgsConstructor
@@ -164,22 +751,384 @@ public class CityAreaPincode extends MasterDependent {
     @GeneratedValue(strategy = GenerationType.UUID)
     private UUID id;
 
-    @Column(name = "STATE_ID", nullable = false)
+    @Column(name = "STATE_ID")
     private UUID stateId;
 
-    @Column(name = "CITY_AREA_NAME", nullable = false)
+    @Column(name = "CITY_AREA_NAME")
     private String cityAreaName;
 
-    @Column(name = "PIN_CODE", nullable = false, length = 20)
+    @Column(name = "PIN_CODE")
     private String pinCode;
 
-    @Column(name = "STATUS", nullable = false)
+}
+-----------------------------
+// Constitution.java
+package com.epay.admin.portal.master.entity;
+
+import jakarta.persistence.*;
+import lombok.*;
+import java.util.UUID;
+
+@Entity
+@Table(name = "CONSTITUTION")
+@Data
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
+@EqualsAndHashCode(callSuper = false)
+public class Constitution extends MasterStandalone {
+
+    @Id
+    @GeneratedValue(strategy = GenerationType.UUID)
+    private UUID id;
+
+    @Column(name = "CONSTITUTION_NAME")
+    private String constitutionName;
+
+    @Column(name = "CONSTITUTION_CODE")
+    private String constitutionCode;
+}
+-------------------------------
+// Country.java
+package com.epay.admin.portal.master.entity;
+
+import jakarta.persistence.*;
+import lombok.*;
+import java.util.UUID;
+
+@Entity
+@Table(name = "COUNTRY")
+@Data
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
+@EqualsAndHashCode(callSuper = false)
+public class Country extends MasterStandalone {
+
+    @Id
+    @GeneratedValue(strategy = GenerationType.UUID)
+    private UUID id;
+
+    @Column(name = "COUNTRY_CODE")
+    private String countryCode;
+
+    @Column(name = "COUNTRY_NAME")
+    private String countryName;
+}
+-------------------------------
+package com.epay.admin.portal.master.entity;
+
+import jakarta.persistence.*;
+import lombok.*;
+import java.util.UUID;
+
+@Entity
+@Table(name = "COUNTRY_CURRENCY")
+@Data
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
+@EqualsAndHashCode(callSuper = false)
+public class CountryCurrency extends MasterDependent {
+
+    @Id
+    @GeneratedValue(strategy = GenerationType.UUID)
+    private UUID id;
+
+    @Column(name = "COUNTRY_ID")
+    private UUID countryId;
+
+    @Column(name = "CURRENCY_CODE")
+    private String currencyCode;
+
+    @Column(name = "CURRENCY_NAME")
+    private String currencyName;
+}
+------------------------
+// MasterFileUpload.java
+package com.epay.admin.portal.master.entity;
+
+import com.epay.admin.portal.entity.AuditEntity;
+import com.epay.admin.portal.master.util.ENUM.BulkUploadFileStatus;
+import com.epay.admin.portal.master.util.ENUM.MasterType;
+import jakarta.persistence.*;
+import lombok.*;
+import java.util.UUID;
+
+@Entity
+@Table(name = "MASTER_FILE_UPLOAD")
+@Data
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
+@EqualsAndHashCode(callSuper = false)
+public class MasterFileUpload extends AuditEntity {
+
+    @Id
+    @GeneratedValue(strategy = GenerationType.UUID)
+    private UUID id;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "MASTER_TYPE")
+    private MasterType masterType;
+
+    @Column(name = "S3_FILE_PATH")
+    private String s3FilePath;
+
+    @Column(name = "TOTAL_RECORD")
+    private int totalRecord;
+
+    @Column(name = "SUCCESS_RECORD")
+    private int successRecord;
+
+    @Column(name = "FAILED_RECORD")
+    private int failedRecord;
+
+    @Column(name = "FILE_CHECKSUM")
+    private String fileChecksum;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "STATUS")
+    private BulkUploadFileStatus status;
+
+    @Column(name = "ERROR_MESSAGE")
+    private String errorMessage;
+
+    @Column(name = "REMARK")
+    private String remark;
+}
+--------------------------------
+// MasterFileUploadDtls.java
+package com.epay.admin.portal.master.entity;
+
+import com.epay.admin.portal.entity.AuditEntity;
+import com.epay.admin.portal.master.util.ENUM.BulkUploadRecordStatus;
+import jakarta.persistence.*;
+import lombok.*;
+import java.util.UUID;
+
+@Entity
+@Table(name = "MASTER_FILE_UPLOAD_DTLS")
+@Data
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
+@EqualsAndHashCode(callSuper = false)
+public class MasterFileUploadDtls extends AuditEntity {
+
+    @Id
+    @GeneratedValue(strategy = GenerationType.UUID)
+    private UUID id;
+
+    @Column(name = "MASTER_FILE_UPLOAD_ID")
+    private UUID masterFileUpload;
+
+    @Lob
+    @Column(name = "RECORD_JSON")
+    private String recordJson;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "STATUS")
+    private BulkUploadRecordStatus status;
+
+    @Column(name = "ERROR_MESSAGE")
+    private String errorMessage;
+
+    @Column(name = "REMARK")
+    private String remark;
+}
+-----------------------------
+// MasterStandalone.java
+package com.epay.admin.portal.master.entity;
+
+import com.epay.admin.portal.entity.AuditEntity;
+import jakarta.persistence.Column;
+import jakarta.persistence.MappedSuperclass;
+import jakarta.persistence.Version;
+import lombok.Getter;
+import lombok.Setter;
+import org.hibernate.envers.Audited;
+
+/**
+ * Base for all standalone (no-parent) master entities.
+ */
+@Getter
+@Setter
+@Audited
+@MappedSuperclass
+public abstract class MasterStandalone extends AuditEntity {
+    @Column(name = "STATUS")
     private String status;
 
     @Version
     private int version;
 }
-------------------------------------
+--------------------------------------
+// MasterTable.java
+package com.epay.admin.portal.master.entity;
+
+import com.epay.admin.portal.master.util.ENUM.MasterType;
+import jakarta.persistence.*;
+import lombok.*;
+import org.springframework.data.annotation.CreatedBy;
+import org.springframework.data.annotation.CreatedDate;
+import org.springframework.data.jpa.domain.support.AuditingEntityListener;
+import java.util.UUID;
+
+@Entity
+@Table(name = "MASTER_TABLE")
+@Data
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
+@EntityListeners(AuditingEntityListener.class)
+public class MasterTable {
+
+    @Id
+    @GeneratedValue(strategy = GenerationType.UUID)
+    private UUID id;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "MASTER_TYPE")
+    private MasterType masterType;
+
+    @Column(name = "NAME")
+    private String name;
+
+    @Column(name = "IS_BULK_ALLOWED")
+    private Boolean bulkAllowed;
+
+    @Column(name = "IS_MAKER_CHECKER_ENABLED")
+    private Boolean makerCheckerEnabled;
+
+    @Column(name = "IS_HEADER_PRESENT")
+    private Boolean headerPresent;
+
+    @Column(name = "FILE_EXTENSION")
+    private String fileExtension;
+
+    @Lob
+    @Column(name = "FILE_FORMAT_CONFIG")
+    private String fileFormatConfig;
+
+    @Column(name = "FILE_CHECK_SUM")
+    private String fileCheckSum;
+
+    @Column(name = "STATUS")
+    private String status;
+
+    @Column(name = "DESCRIPTION")
+    private String description;
+
+    @CreatedDate
+    private Long createdAt;
+
+    @CreatedBy
+    private String createdBy;
+}
+---------------------------------
+package com.epay.admin.portal.master.entity;
+
+import com.epay.admin.portal.master.util.ENUM.MasterType;
+import com.epay.admin.portal.master.util.ENUM.WorkflowStatus;
+import jakarta.persistence.*;
+import lombok.*;
+import org.springframework.data.annotation.CreatedDate;
+import org.springframework.data.annotation.LastModifiedDate;
+import org.springframework.data.jpa.domain.support.AuditingEntityListener;
+import java.util.UUID;
+
+@Entity
+@Table(name = "MASTER_WORKFLOW")
+@Data
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
+@EntityListeners(AuditingEntityListener.class)
+public class MasterWorkflow {
+
+    @Id
+    @GeneratedValue(strategy = GenerationType.UUID)
+    private UUID id;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "MASTER_TYPE")
+    private MasterType masterType;
+
+    @Column(name = "MASTER_CODE")
+    private String masterCode;
+
+    @Column(name = "RECORD_ID")
+    private UUID recordId;
+
+    @Column(name = "ACTION_TYPE")
+    private String actionType;
+
+    @Lob
+    @Column(name = "OLD_VALUE")
+    private String oldValue;
+
+    @Lob
+    @Column(name = "NEW_VALUE")
+    private String newValue;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "STATUS")
+    private WorkflowStatus status;
+
+    @Column(name = "MAKER_ID")
+    private String makerId;
+
+    @Column(name = "CHECKER_ID")
+    private String checkerId;
+
+    @Column(name = "REMARK")
+    private String remark;
+
+    @CreatedDate
+    private Long createdAt;
+
+    @LastModifiedDate
+    private Long updatedAt;
+}
+--------------------------------
+package com.epay.admin.portal.master.entity;
+
+import jakarta.persistence.Column;
+import jakarta.persistence.Entity;
+import jakarta.persistence.GeneratedValue;
+import jakarta.persistence.GenerationType;
+import jakarta.persistence.Id;
+import jakarta.persistence.Table;
+import jakarta.persistence.Version;
+import lombok.AllArgsConstructor;
+import lombok.Builder;
+import lombok.Data;
+import lombok.EqualsAndHashCode;
+import lombok.NoArgsConstructor;
+
+import java.util.UUID;
+
+@Entity
+@Table(name = "NATURE_OF_BUSINESS")
+@Data
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
+@EqualsAndHashCode(callSuper = false)
+public class NatureOfBusiness extends MasterStandalone {
+
+    @Id
+    @GeneratedValue(strategy = GenerationType.UUID)
+    private UUID id;
+
+    @Column(name = "NATURE_OF_BUSINESS_NAME")
+    private String natureOfBusinessName;
+
+    @Column(name = "NATURE_OF_BUSINESS_CODE")
+    private String natureOfBusinessCode;
+}
+-------------------------------
 package com.epay.admin.portal.master.entity;
 
 import jakarta.persistence.Column;
@@ -210,702 +1159,35 @@ public class State extends MasterStandalone {
     @GeneratedValue(strategy = GenerationType.UUID)
     private UUID id;
 
-    @Column(name = "STATE_NAME", nullable = false, unique = true)
+    @Column(name = "STATE_NAME")
     private String stateName;
 
-    @Column(name = "STATE_CODE", nullable = false, unique = true)
+    @Column(name = "STATE_CODE")
     private String stateCode;
-
-    @Column(name = "STATUS", nullable = false)
-    private String status;
-
-    @Version
-    private int version;
 }
------------------------------------
-package com.epay.admin.portal.master.handler;
+-----------------------------
+--liquibase formatted sql
+--changeset Saurabh :1777
 
-import com.epay.admin.portal.exceptions.AdminPortalException;
-import com.epay.admin.portal.master.dao.CityAreaPincodeDao;
-import com.epay.admin.portal.master.dao.MasterWorkflowDao;
-import com.epay.admin.portal.master.dao.StateDao;
-import com.epay.admin.portal.master.dto.request.CityAreaPinCodeSearchRequest;
-import com.epay.admin.portal.master.dto.request.CityAreaPincodeDto;
-import com.epay.admin.portal.master.dto.response.CityAreaPincodeResponse;
-import com.epay.admin.portal.master.entity.CityAreaPincode;
-import com.epay.admin.portal.master.entity.MasterWorkflow;
-import com.epay.admin.portal.master.entity.State;
-import com.epay.admin.portal.master.mapper.CityAreaPincodeMapper;
-import com.epay.admin.portal.master.specification.CityAreaPincodeSpecification;
-import com.epay.admin.portal.master.util.ENUM.ActionType;
-import com.epay.admin.portal.master.util.ENUM.MasterStatus;
-import com.epay.admin.portal.master.util.ENUM.MasterType;
-import com.epay.admin.portal.master.util.ENUM.WorkflowStatus;
-import com.epay.admin.portal.model.response.AdminPortalResponse;
-import com.epay.admin.portal.util.EPayIdentityUtil;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import org.springframework.data.domain.Page;
-import org.springframework.data.domain.Pageable;
-import org.springframework.stereotype.Component;
+CREATE TABLE MASTER_WORKFLOW (
+     ID RAW(16) DEFAULT SYS_GUID() PRIMARY KEY NOT NULL,
+     MASTER_TYPE VARCHAR2(100 CHAR) NOT NULL,
+     MASTER_CODE VARCHAR2(100 CHAR),
+     RECORD_ID RAW(16) NOT NULL,
+     ACTION_TYPE VARCHAR2(50 CHAR) NOT NULL,
+     OLD_VALUE CLOB,
+     NEW_VALUE CLOB,
+     STATUS VARCHAR2(50 CHAR) NOT NULL,
+     MAKER_ID VARCHAR2(100 CHAR) NOT NULL,
+     CHECKER_ID VARCHAR2(100 CHAR),
+     REMARK VARCHAR2(1000 CHAR),
+     CREATED_AT NUMBER NOT NULL,
+     UPDATED_AT NUMBER NOT NULL
+);
 
-import java.text.MessageFormat;
-import java.util.UUID;
-
-import static com.epay.admin.portal.util.AdminPortalConstants.SUCCESS_RESPONSE_CODE;
-import static com.epay.admin.portal.util.ErrorConstants.DUPLICATE_ERROR_CODE;
-import static com.epay.admin.portal.util.ErrorConstants.DUPLICATE_ERROR_MESSAGE;
-import static com.epay.admin.portal.util.ErrorConstants.INVALID_STATUS_ERROR_CODE;
-import static com.epay.admin.portal.util.ErrorConstants.NOT_FOUND_ERROR_CODE;
-import static com.epay.admin.portal.util.ErrorConstants.NOT_FOUND_ERROR_MESSAGE;
-
-@Component
-public class CityAreaPincodeHandler
-        extends AbstractChildMasterHandler<CityAreaPincodeDto, CityAreaPincode> {
-
-    private final CityAreaPincodeDao cityAreaPincodeDao;
-    private final StateDao stateDao;
-    private final CityAreaPincodeMapper cityAreaPincodeMapper;
-
-    public CityAreaPincodeHandler(
-            CityAreaPincodeDao cityAreaPincodeDao,
-            StateDao stateDao,
-            MasterWorkflowDao masterWorkflowDao,
-            ObjectMapper objectMapper,
-            CityAreaPincodeMapper cityAreaPincodeMapper) {
-        super(masterWorkflowDao, objectMapper);
-        this.cityAreaPincodeDao = cityAreaPincodeDao;
-        this.stateDao = stateDao;
-        this.cityAreaPincodeMapper = cityAreaPincodeMapper;
-    }
-
-    @Override
-    public MasterType getMasterType() {
-        return MasterType.CITY_AREA_PINCODE;
-    }
-
-    @Override
-    protected MasterType getParentMasterType() {
-        return MasterType.STATE;
-    }
-
-    @Override
-    public Class<CityAreaPincodeDto> getDtoClass() {
-        return CityAreaPincodeDto.class;
-    }
-
-    @Override
-    protected void validateAndResolveParent(CityAreaPincodeDto dto) {
-        log.info("Resolving parent State for stateName={}", dto.getStateName());
-        State state = getStateByName(dto.getStateName());
-        if (!MasterStatus.ACTIVE.matches(state.getStatus())) {
-            throw new AdminPortalException(
-                    INVALID_STATUS_ERROR_CODE,
-                    MessageFormat.format(
-                            "Parent State must be ACTIVE to add a city/area pin code. "
-                                    + "stateName={0} currentStatus={1}",
-                            dto.getStateName(),
-                            state.getStatus()));
-        }
-    }
-
-    @Override
-    protected void validateChildCreate(CityAreaPincodeDto dto) {
-        log.info(
-                "Validating city/area pin code for stateName={} cityAreaName={} pinCode={}",
-                dto.getStateName(),
-                dto.getCityAreaName(),
-                dto.getPinCode());
-        State state = getStateByName(dto.getStateName());
-        boolean duplicate = cityAreaPincodeDao.existsByStateIdAndCityAreaNameAndPinCode(
-                state.getId(),
-                dto.getCityAreaName(),
-                dto.getPinCode());
-        if (duplicate) {
-            throw new AdminPortalException(
-                    DUPLICATE_ERROR_CODE,
-                    MessageFormat.format(
-                            DUPLICATE_ERROR_MESSAGE,
-                            "City/area and pin code",
-                            dto.getCityAreaName() + ", " + dto.getPinCode()
-                                    + " already mapped to stateName=" + dto.getStateName()));
-        }
-    }
-
-    @Override
-    public MasterWorkflow createMaster(CityAreaPincodeDto dto) {
-        log.info(
-                "Creating pending city/area pin code for stateName={} cityAreaName={} pinCode={}",
-                dto.getStateName(),
-                dto.getCityAreaName(),
-                dto.getPinCode());
-        String makerId = EPayIdentityUtil.getUserPrincipal().getUsername();
-        State state = getStateByName(dto.getStateName());
-
-        CityAreaPincode entity = cityAreaPincodeMapper.toEntity(dto, state.getId());
-        entity.setStatus(MasterStatus.APPROVAL_PENDING.getValue());
-        entity.setCreatedBy(makerId);
-
-        CityAreaPincode saved = cityAreaPincodeDao.save(entity);
-        MasterWorkflow workflow = MasterWorkflow.builder()
-                .masterType(MasterType.CITY_AREA_PINCODE)
-                .masterCode(saved.getPinCode())
-                .recordId(saved.getId())
-                .newValue(serializeEntity(saved, "city-area-pincode create payload"))
-                .status(WorkflowStatus.PENDING)
-                .actionType(ActionType.CREATE.name())
-                .makerId(makerId)
-                .build();
-
-        MasterWorkflow savedWorkflow = masterWorkflowDao.save(workflow);
-        log.info("CityAreaPincode workflow created workflowId={}", savedWorkflow.getId());
-        return savedWorkflow;
-    }
-
-    @Override
-    public AdminPortalResponse<?> search(JsonNode request, Pageable pageable) {
-        log.info("Searching city/area pin code records pageable={}", pageable);
-        CityAreaPinCodeSearchRequest searchRequest =
-                objectMapper.convertValue(request, CityAreaPinCodeSearchRequest.class);
-        Page<CityAreaPincode> page = cityAreaPincodeDao.findAll(
-                CityAreaPincodeSpecification.build(searchRequest),
-                pageable);
-        return AdminPortalResponse.<CityAreaPincodeResponse>builder()
-                .status(SUCCESS_RESPONSE_CODE)
-                .data(page.getContent().stream().map(this::toResponse).toList())
-                .count((long) page.getNumberOfElements())
-                .total(page.getTotalElements())
-                .build();
-    }
-
-    @Override
-    public CityAreaPincode findEntityById(UUID id) {
-        return cityAreaPincodeDao.findById(id).orElseThrow(() -> new AdminPortalException(NOT_FOUND_ERROR_CODE, MessageFormat.format(NOT_FOUND_ERROR_MESSAGE, "CityAreaPincode with id=" + id)));
-    }
-
-    @Override
-    public CityAreaPincode saveEntity(CityAreaPincode entity) {
-        return cityAreaPincodeDao.save(entity);
-    }
-
-    @Override
-    public String getEntityStatus(CityAreaPincode entity) {
-        return entity.getStatus();
-    }
-
-    @Override
-    public void setEntityStatus(CityAreaPincode entity, String status) {
-        entity.setStatus(status);
-    }
-
-    @Override
-    public String getEntityMasterCode(CityAreaPincode entity) {
-        return entity.getPinCode();
-    }
-
-    private State getStateByName(String stateName) {
-        return stateDao.findByStateName(stateName).orElseThrow(() -> new AdminPortalException(NOT_FOUND_ERROR_CODE, MessageFormat.format(NOT_FOUND_ERROR_MESSAGE, "State with stateName=" + stateName)));
-    }
-
-    private CityAreaPincodeResponse toResponse(CityAreaPincode cityAreaPincode) {
-        State state = stateDao.findById(cityAreaPincode.getStateId()).orElse(null);
-        return cityAreaPincodeMapper.toResponse(cityAreaPincode, state);
-    }
-}
-------------------------------------------
-package com.epay.admin.portal.master.handler;
-
-import com.epay.admin.portal.exceptions.AdminPortalException;
-import com.epay.admin.portal.master.dao.CityAreaPincodeDao;
-import com.epay.admin.portal.master.dao.MasterWorkflowDao;
-import com.epay.admin.portal.master.dao.StateDao;
-import com.epay.admin.portal.master.dto.request.StateDto;
-import com.epay.admin.portal.master.dto.request.StateSearchRequest;
-import com.epay.admin.portal.master.dto.response.StateResponse;
-import com.epay.admin.portal.master.entity.MasterWorkflow;
-import com.epay.admin.portal.master.entity.State;
-import com.epay.admin.portal.master.mapper.StateMapper;
-import com.epay.admin.portal.master.specification.StateSpecification;
-import com.epay.admin.portal.master.util.ENUM.ActionType;
-import com.epay.admin.portal.master.util.ENUM.MasterStatus;
-import com.epay.admin.portal.master.util.ENUM.MasterType;
-import com.epay.admin.portal.master.util.ENUM.WorkflowStatus;
-import com.epay.admin.portal.master.util.MasterUtil;
-import com.epay.admin.portal.model.response.AdminPortalResponse;
-import com.epay.admin.portal.util.EPayIdentityUtil;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import org.springframework.data.domain.Page;
-import org.springframework.data.domain.Pageable;
-import org.springframework.stereotype.Component;
-
-import java.text.MessageFormat;
-import java.util.UUID;
-
-import static com.epay.admin.portal.util.AdminPortalConstants.SUCCESS_RESPONSE_CODE;
-import static com.epay.admin.portal.util.ErrorConstants.DUPLICATE_ERROR_CODE;
-import static com.epay.admin.portal.util.ErrorConstants.DUPLICATE_ERROR_MESSAGE;
-import static com.epay.admin.portal.util.ErrorConstants.NOT_FOUND_ERROR_CODE;
-import static com.epay.admin.portal.util.ErrorConstants.NOT_FOUND_ERROR_MESSAGE;
-
-@Component
-public class StateHandler extends AbstractMasterHandler<StateDto, State> {
-
-    private final StateDao stateDao;
-    private final CityAreaPincodeDao cityAreaPincodeDao;
-    private final StateMapper stateMapper;
-
-    public StateHandler(StateDao stateDao,
-                        CityAreaPincodeDao cityAreaPincodeDao,
-                        MasterWorkflowDao masterWorkflowDao,
-                        ObjectMapper objectMapper,
-                        StateMapper stateMapper) {
-        super(masterWorkflowDao, objectMapper);
-        this.stateDao = stateDao;
-        this.cityAreaPincodeDao = cityAreaPincodeDao;
-        this.stateMapper = stateMapper;
-    }
-
-    @Override
-    public MasterType getMasterType() {
-        return MasterType.STATE;
-    }
-
-    @Override
-    public Class<StateDto> getDtoClass() {
-        return StateDto.class;
-    }
-
-    @Override
-    public void validateCreate(StateDto dto) {
-        log.info("Validating state create for stateName={}", dto.getStateName());
-        if (stateDao.existsByStateName(dto.getStateName())) {
-            throw new AdminPortalException(
-                    DUPLICATE_ERROR_CODE,
-                    MessageFormat.format(DUPLICATE_ERROR_MESSAGE, "State name", dto.getStateName()));
-        }
-    }
-
-    @Override
-    public MasterWorkflow createMaster(StateDto dto) {
-        log.info("Creating pending state for stateName={}", dto.getStateName());
-        String makerId = EPayIdentityUtil.getUserPrincipal().getUsername();
-
-        State entity = stateMapper.toEntity(dto);
-        entity.setStateCode(MasterUtil.generateMasterCode(dto.getStateName(), MasterType.STATE));
-        entity.setStatus(MasterStatus.APPROVAL_PENDING.getValue());
-        entity.setCreatedBy(makerId);
-
-        State saved = stateDao.save(entity);
-
-        MasterWorkflow workflow = MasterWorkflow.builder()
-                .masterType(MasterType.STATE)
-                .masterCode(saved.getStateCode())
-                .recordId(saved.getId())
-                .newValue(serializeEntity(saved, "state create payload"))
-                .status(WorkflowStatus.PENDING)
-                .actionType(ActionType.CREATE.name())
-                .makerId(makerId)
-                .build();
-
-        MasterWorkflow savedWorkflow = masterWorkflowDao.save(workflow);
-        log.info("State workflow created workflowId={}", savedWorkflow.getId());
-        return savedWorkflow;
-    }
-
-    @Override
-    public AdminPortalResponse<?> search(JsonNode request, Pageable pageable) {
-        log.info("Searching state records pageable={}", pageable);
-        StateSearchRequest searchRequest = objectMapper.convertValue(request, StateSearchRequest.class);
-        Page<State> page = stateDao.findAll(StateSpecification.build(searchRequest), pageable);
-        return AdminPortalResponse.<StateResponse>builder()
-                .status(SUCCESS_RESPONSE_CODE)
-                .data(page.getContent().stream().map(stateMapper::toResponse).toList())
-                .count((long) page.getNumberOfElements())
-                .total(page.getTotalElements())
-                .build();
-    }
-
-    @Override
-    public State findEntityById(UUID id) {
-        return stateDao.findById(id)
-                .orElseThrow(() -> new AdminPortalException(
-                        NOT_FOUND_ERROR_CODE,
-                        MessageFormat.format(NOT_FOUND_ERROR_MESSAGE, "State with id=" + id)));
-    }
-
-    @Override
-    public boolean hasActiveChildren(UUID stateId) {
-        boolean hasActiveChildren = cityAreaPincodeDao.existsByStateIdAndStatus(
-                stateId,
-                MasterStatus.ACTIVE.getValue());
-        boolean hasPendingChildren = cityAreaPincodeDao.existsByStateIdAndStatus(
-                stateId,
-                MasterStatus.APPROVAL_PENDING.getValue());
-        log.info(
-                "State id={} hasActiveCityAreaPincodes={} hasPendingCityAreaPincodes={}",
-                stateId,
-                hasActiveChildren,
-                hasPendingChildren);
-        return hasActiveChildren || hasPendingChildren;
-    }
-
-    @Override
-    public State saveEntity(State state) {
-        return stateDao.save(state);
-    }
-
-    @Override
-    public String getEntityStatus(State state) {
-        return state.getStatus();
-    }
-
-    @Override
-    public void setEntityStatus(State state, String status) {
-        state.setStatus(status);
-    }
-
-    @Override
-    public String getEntityMasterCode(State state) {
-        return state.getStateCode();
-    }
-}
------------------------------------------------
-package com.epay.admin.portal.master.mapper;
-
-import com.epay.admin.portal.master.dto.request.CityAreaPincodeDto;
-import com.epay.admin.portal.master.dto.response.CityAreaPincodeResponse;
-import com.epay.admin.portal.master.entity.CityAreaPincode;
-import com.epay.admin.portal.master.entity.State;
-import org.mapstruct.Mapper;
-import org.mapstruct.Mapping;
-import org.mapstruct.ReportingPolicy;
-
-import java.util.UUID;
-
-@Mapper(componentModel = "spring", unmappedTargetPolicy = ReportingPolicy.IGNORE)
-public interface CityAreaPincodeMapper {
-
-    @Mapping(target = "stateId", source = "stateId")
-    @Mapping(target = "cityAreaName", expression = "java(dto.getCityAreaName() == null ? null : dto.getCityAreaName().trim())")
-    @Mapping(target = "pinCode", expression = "java(dto.getPinCode() == null ? null : dto.getPinCode().trim())")
-    CityAreaPincode toEntity(CityAreaPincodeDto dto, UUID stateId);
-
-    @Mapping(target = "id", source = "entity.id")
-    @Mapping(target = "stateId", source = "entity.stateId")
-    @Mapping(target = "stateName", source = "state.stateName")
-    @Mapping(target = "cityAreaName", source = "entity.cityAreaName")
-    @Mapping(target = "pinCode", source = "entity.pinCode")
-    @Mapping(target = "status", source = "entity.status")
-    @Mapping(target = "createdAt", source = "entity.createdAt")
-    @Mapping(target = "createdBy", source = "entity.createdBy")
-    @Mapping(target = "updatedAt", source = "entity.updatedAt")
-    @Mapping(target = "updatedBy", source = "entity.updatedBy")
-    CityAreaPincodeResponse toResponse(CityAreaPincode entity, State state);
-}
------------------------------------------
-package com.epay.admin.portal.master.mapper;
-
-import com.epay.admin.portal.master.dto.request.StateDto;
-import com.epay.admin.portal.master.dto.response.StateResponse;
-import com.epay.admin.portal.master.entity.State;
-import org.mapstruct.Mapper;
-import org.mapstruct.Mapping;
-import org.mapstruct.ReportingPolicy;
-
-@Mapper(componentModel = "spring", unmappedTargetPolicy = ReportingPolicy.IGNORE)
-public interface StateMapper {
-
-    @Mapping(target = "stateName", expression = "java(dto.getStateName() == null ? null : dto.getStateName().trim())")
-    State toEntity(StateDto dto);
-
-    StateResponse toResponse(State entity);
-}
---------------------------------------
-package com.epay.admin.portal.master.repository;
-
-import com.epay.admin.portal.master.entity.CityAreaPincode;
-import org.springframework.data.jpa.repository.JpaRepository;
-import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
-import org.springframework.stereotype.Repository;
-
-import java.util.UUID;
-
-@Repository
-public interface CityAreaPincodeRepository
-        extends JpaRepository<CityAreaPincode, UUID>, JpaSpecificationExecutor<CityAreaPincode> {
-
-    boolean existsByStateIdAndCityAreaNameIgnoreCaseAndPinCodeIgnoreCase(
-            UUID stateId,
-            String cityAreaName,
-            String pinCode);
-
-    boolean existsByStateIdAndStatus(UUID stateId, String status);
-}
+CREATE INDEX IDX_MASTER_WORKFLOW_TYPE_STATUS ON MASTER_WORKFLOW (MASTER_TYPE, STATUS);
+CREATE INDEX IDX_MASTER_WORKFLOW_RECORD_ID ON MASTER_WORKFLOW (RECORD_ID);
 ---------------------------------
-package com.epay.admin.portal.master.repository;
-
-import com.epay.admin.portal.master.entity.State;
-import org.springframework.data.jpa.repository.JpaRepository;
-import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
-import org.springframework.stereotype.Repository;
-
-import java.util.Optional;
-import java.util.UUID;
-
-@Repository
-public interface StateRepository extends JpaRepository<State, UUID>, JpaSpecificationExecutor<State> {
-
-    boolean existsByStateNameIgnoreCase(String stateName);
-
-    Optional<State> findByStateNameIgnoreCase(String stateName);
-}
------------------------------------
-package com.epay.admin.portal.master.specification;
-
-import com.epay.admin.portal.master.dto.request.CityAreaPinCodeSearchRequest;
-import com.epay.admin.portal.master.entity.CityAreaPincode;
-import com.epay.admin.portal.master.entity.State;
-import jakarta.persistence.criteria.Subquery;
-import org.apache.commons.lang3.StringUtils;
-import org.springframework.data.jpa.domain.Specification;
-
-import java.util.UUID;
-
-public final class CityAreaPincodeSpecification {
-
-    private CityAreaPincodeSpecification() {
-    }
-
-    public static Specification<CityAreaPincode> build(CityAreaPinCodeSearchRequest request) {
-        if (request == null) {
-            return Specification.where(null);
-        }
-        return Specification.where(hasCityAreaName(request.getCityAreaName()))
-                .and(hasStateName(request.getStateName()))
-                .and(hasPinCode(request.getPinCode()))
-                .and(hasStatus(request.getStatus()))
-                .and(hasUpdatedAtBetween(request.getFromDate(), request.getToDate()));
-    }
-
-    private static Specification<CityAreaPincode> hasCityAreaName(String cityAreaName) {
-        return (root, query, criteriaBuilder) -> StringUtils.isBlank(cityAreaName)
-                ? criteriaBuilder.conjunction()
-                : criteriaBuilder.like(
-                        criteriaBuilder.lower(root.get("cityAreaName")),
-                        "%" + cityAreaName.toLowerCase() + "%");
-    }
-
-    private static Specification<CityAreaPincode> hasStateName(String stateName) {
-        return (root, query, criteriaBuilder) -> {
-            if (StringUtils.isBlank(stateName)) {
-                return criteriaBuilder.conjunction();
-            }
-            Subquery<UUID> subquery = query.subquery(UUID.class);
-            var state = subquery.from(State.class);
-            subquery.select(state.get("id"))
-                    .where(criteriaBuilder.like(
-                            criteriaBuilder.lower(state.get("stateName")),
-                            "%" + stateName.toLowerCase() + "%"));
-            return root.get("stateId").in(subquery);
-        };
-    }
-
-    private static Specification<CityAreaPincode> hasPinCode(String pinCode) {
-        return (root, query, criteriaBuilder) -> StringUtils.isBlank(pinCode)
-                ? criteriaBuilder.conjunction()
-                : criteriaBuilder.like(
-                        criteriaBuilder.lower(root.get("pinCode")),
-                        "%" + pinCode.toLowerCase() + "%");
-    }
-
-    private static Specification<CityAreaPincode> hasStatus(String status) {
-        return (root, query, criteriaBuilder) -> StringUtils.isBlank(status)
-                ? criteriaBuilder.conjunction()
-                : criteriaBuilder.equal(
-                        criteriaBuilder.lower(root.get("status")),
-                        status.toLowerCase());
-    }
-
-    private static Specification<CityAreaPincode> hasUpdatedAtBetween(Long from, Long to) {
-        return (root, query, criteriaBuilder) -> {
-            if (from == null && to == null) {
-                return criteriaBuilder.conjunction();
-            }
-            if (from != null && to != null) {
-                return criteriaBuilder.between(root.get("updatedAt"), from, to);
-            }
-            if (from != null) {
-                return criteriaBuilder.greaterThanOrEqualTo(root.get("updatedAt"), from);
-            }
-            return criteriaBuilder.lessThanOrEqualTo(root.get("updatedAt"), to);
-        };
-    }
-}
------------------------------------------
-package com.epay.admin.portal.master.specification;
-
-import com.epay.admin.portal.master.dto.request.StateSearchRequest;
-import com.epay.admin.portal.master.entity.State;
-import org.apache.commons.lang3.StringUtils;
-import org.springframework.data.jpa.domain.Specification;
-
-public final class StateSpecification {
-
-    private StateSpecification() {
-    }
-
-    public static Specification<State> build(StateSearchRequest request) {
-        if (request == null) {
-            return Specification.where(null);
-        }
-        return Specification.where(hasStateName(request.getStateName()))
-                .and(hasStatus(request.getStatus()))
-                .and(hasUpdatedAtBetween(request.getFromDate(), request.getToDate()));
-    }
-
-    private static Specification<State> hasStateName(String stateName) {
-        return (root, query, criteriaBuilder) -> StringUtils.isBlank(stateName)
-                ? criteriaBuilder.conjunction()
-                : criteriaBuilder.like(
-                        criteriaBuilder.lower(root.get("stateName")),
-                        "%" + stateName.toLowerCase() + "%");
-    }
-
-    private static Specification<State> hasStatus(String status) {
-        return (root, query, criteriaBuilder) -> StringUtils.isBlank(status)
-                ? criteriaBuilder.conjunction()
-                : criteriaBuilder.equal(criteriaBuilder.lower(root.get("status")), status.toLowerCase());
-    }
-
-    private static Specification<State> hasUpdatedAtBetween(Long from, Long to) {
-        return (root, query, criteriaBuilder) -> {
-            if (from == null && to == null) {
-                return criteriaBuilder.conjunction();
-            }
-            if (from != null && to != null) {
-                return criteriaBuilder.between(root.get("updatedAt"), from, to);
-            }
-            if (from != null) {
-                return criteriaBuilder.greaterThanOrEqualTo(root.get("updatedAt"), from);
-            }
-            return criteriaBuilder.lessThanOrEqualTo(root.get("updatedAt"), to);
-        };
-    }
-}
-------------------------------------------------
-package com.epay.admin.portal.master.dao;
-
-import com.epay.admin.portal.master.entity.CityAreaPincode;
-import com.epay.admin.portal.master.repository.CityAreaPincodeRepository;
-import com.sbi.epay.logging.utility.LoggerFactoryUtility;
-import com.sbi.epay.logging.utility.LoggerUtility;
-import lombok.RequiredArgsConstructor;
-import org.springframework.data.domain.Page;
-import org.springframework.data.domain.Pageable;
-import org.springframework.data.jpa.domain.Specification;
-import org.springframework.stereotype.Component;
-
-import java.util.Optional;
-import java.util.UUID;
-
-@Component
-@RequiredArgsConstructor
-public class CityAreaPincodeDao {
-
-    private final CityAreaPincodeRepository cityAreaPincodeRepository;
-    private final LoggerUtility log = LoggerFactoryUtility.getLogger(this.getClass());
-
-    public boolean existsByStateIdAndCityAreaNameAndPinCode(
-            UUID stateId,
-            String cityAreaName,
-            String pinCode) {
-        log.debug(
-                "DAO: Checking city/area duplicate for stateId={} cityAreaName={} pinCode={}",
-                stateId,
-                cityAreaName,
-                pinCode);
-        return cityAreaPincodeRepository
-                .existsByStateIdAndCityAreaNameIgnoreCaseAndPinCodeIgnoreCase(
-                        stateId,
-                        cityAreaName,
-                        pinCode);
-    }
-
-    public boolean existsByStateIdAndStatus(UUID stateId, String status) {
-        log.debug("DAO: Checking city/area children for stateId={} status={}", stateId, status);
-        return cityAreaPincodeRepository.existsByStateIdAndStatus(stateId, status);
-    }
-
-    public Optional<CityAreaPincode> findById(UUID id) {
-        log.debug("DAO: Fetching city/area pin code for id={}", id);
-        return cityAreaPincodeRepository.findById(id);
-    }
-
-    public CityAreaPincode save(CityAreaPincode cityAreaPincode) {
-        log.debug(
-                "DAO: Saving city/area pin code for cityAreaName={} pinCode={}",
-                cityAreaPincode.getCityAreaName(),
-                cityAreaPincode.getPinCode());
-        return cityAreaPincodeRepository.save(cityAreaPincode);
-    }
-
-    public Page<CityAreaPincode> findAll(
-            Specification<CityAreaPincode> specification,
-            Pageable pageable) {
-        log.debug("DAO: Fetching city/area pin codes with pageable={}", pageable);
-        return cityAreaPincodeRepository.findAll(specification, pageable);
-    }
-}
----------------------------------
-package com.epay.admin.portal.master.dao;
-
-import com.epay.admin.portal.master.entity.State;
-import com.epay.admin.portal.master.repository.StateRepository;
-import com.sbi.epay.logging.utility.LoggerFactoryUtility;
-import com.sbi.epay.logging.utility.LoggerUtility;
-import lombok.RequiredArgsConstructor;
-import org.springframework.data.domain.Page;
-import org.springframework.data.domain.Pageable;
-import org.springframework.data.jpa.domain.Specification;
-import org.springframework.stereotype.Component;
-
-import java.util.Optional;
-import java.util.UUID;
-
-@Component
-@RequiredArgsConstructor
-public class StateDao {
-
-    private final StateRepository stateRepository;
-    private final LoggerUtility log = LoggerFactoryUtility.getLogger(this.getClass());
-
-    public boolean existsByStateName(String stateName) {
-        log.debug("DAO: Checking existence for stateName={}", stateName);
-        return stateRepository.existsByStateNameIgnoreCase(stateName);
-    }
-
-    public Optional<State> findById(UUID id) {
-        log.debug("DAO: Fetching state for id={}", id);
-        return stateRepository.findById(id);
-    }
-
-    public Optional<State> findByStateName(String stateName) {
-        log.debug("DAO: Fetching state for stateName={}", stateName);
-        return stateRepository.findByStateNameIgnoreCase(stateName);
-    }
-
-    public State save(State state) {
-        log.debug("DAO: Saving state for stateName={}", state.getStateName());
-        return stateRepository.save(state);
-    }
-
-    public Page<State> findAll(Specification<State> specification, Pageable pageable) {
-        log.debug("DAO: Fetching states with pageable={}", pageable);
-        return stateRepository.findAll(specification, pageable);
-    }
-}
----------------------------
 --liquibase formatted sql
 --changeset saurabh:1778000006
 
@@ -976,46 +1258,192 @@ INSERT INTO MASTER_TABLE (
     'SYSTEM',
     1778000006
 );
----------------------------------
---liquibase formatted sql
---changeset saurabh:1778000004
+-----------------------------------
+package admin.validator;
 
-CREATE TABLE STATE (
-      ID RAW(16) DEFAULT SYS_GUID() PRIMARY KEY NOT NULL,
-      STATE_NAME VARCHAR2(255 CHAR) NOT NULL,
-      STATE_CODE VARCHAR2(100 CHAR) NOT NULL,
-      STATUS VARCHAR2(50 CHAR) NOT NULL,
-      VERSION NUMBER(10) DEFAULT 0 NOT NULL,
-      CREATED_BY VARCHAR2(100 CHAR) NOT NULL,
-      CREATED_AT NUMBER NOT NULL,
-      UPDATED_BY VARCHAR2(100 CHAR) NOT NULL,
-      UPDATED_AT NUMBER NOT NULL,
-      CONSTRAINT UK_STATE_NAME UNIQUE (STATE_NAME),
-      CONSTRAINT UK_STATE_CODE UNIQUE (STATE_CODE)
-    );
+import com.epay.admin.portal.exceptions.ValidationException;
+import com.epay.admin.portal.master.dto.request.CityAreaPincodeDto;
+import com.epay.admin.portal.master.dto.request.ConstitutionDTO;
+import com.epay.admin.portal.master.dto.request.CountryCurrencyDTO;
+import com.epay.admin.portal.master.dto.request.CountryDTO;
+import com.epay.admin.portal.master.dto.request.MasterApprovalRequest;
+import com.epay.admin.portal.master.dto.request.MasterInactivationRequest;
+import com.epay.admin.portal.master.dto.request.StateDto;
+import com.epay.admin.portal.master.util.ENUM.MasterType;
+import com.epay.admin.portal.validator.MasterRequestValidator;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 
-CREATE INDEX IDX_STATE_STATUS ON STATE (STATUS);
------------------------------------------
---liquibase formatted sql
---changeset saurabh:1778000005
+import java.util.List;
+import java.util.UUID;
 
-INSERT INTO MASTER_TABLE (MASTER_TYPE,NAME,IS_BULK_ALLOWED,IS_MAKER_CHECKER_ENABLED,IS_HEADER_PRESENT,FILE_EXTENSION,FILE_FORMAT_CONFIG,FILE_CHECK_SUM,STATUS,DESCRIPTION,CREATED_BY,CREATED_AT
-) VALUES ('STATE','State',1,1,1,'csv',
-          TO_CLOB(q'~{
-      "delimiter": ",",
-      "charset": "UTF-8",
-      "columns": [
-        {
-          "fieldName": "stateName",
-          "headerName": "StateName",
-          "required": true
-        },
-        {
-          "fieldName": "status",
-          "headerName": "Status",
-          "required": false,
-          "defaultValue": "ACTIVE"
-        }
-      ]
-    }~'),NULL,'ACTIVE','Bulk upload configuration for State master. Expected CSV header: StateName,Status','SYSTEM',1778000005
-);
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+class MasterRequestValidatorTest {
+
+    private MasterRequestValidator validator;
+
+    @BeforeEach
+    void setUp() {
+        validator = new MasterRequestValidator();
+    }
+
+    @Test
+    void validateCreateRequest_shouldPass_whenCountryRequestIsValid() {
+        CountryDTO request = new CountryDTO();
+        request.setCountryCode("IN");
+        request.setCountryName("India");
+
+        assertDoesNotThrow(() -> validator.validateCreateRequest(MasterType.COUNTRY, request));
+    }
+
+    @Test
+    void validateCreateRequest_shouldThrow_whenMandatoryFieldIsMissing() {
+        ConstitutionDTO request = new ConstitutionDTO();
+
+        ValidationException exception = assertThrows(
+                ValidationException.class,
+                () -> validator.validateCreateRequest(MasterType.CONSTITUTION, request));
+
+        assertTrue(exception.getErrorMessages().getFirst().getErrorMessage().contains("constitutionName"));
+    }
+
+    @Test
+    void validateCreateRequest_shouldThrow_whenLeadingOrTrailingSpaceExists() {
+        StateDto request = new StateDto();
+        request.setStateName(" Maharashtra ");
+
+        ValidationException exception = assertThrows(
+                ValidationException.class,
+                () -> validator.validateCreateRequest(MasterType.STATE, request));
+
+        assertTrue(exception.getErrorMessages().getFirst().getErrorMessage().contains("stateName"));
+    }
+
+    @Test
+    void validateCreateRequest_shouldThrow_whenFieldExceedsMaxLength() {
+        CountryCurrencyDTO request = new CountryCurrencyDTO();
+        request.setCountryCode("IN");
+        request.setCurrencyCode("TOO_LONG_CODE");
+        request.setCurrencyName("Indian Rupee");
+
+        ValidationException exception = assertThrows(
+                ValidationException.class,
+                () -> validator.validateCreateRequest(MasterType.COUNTRY_CURRENCY, request));
+
+        assertTrue(exception.getErrorMessages().getFirst().getErrorMessage().contains("currencyCode"));
+    }
+
+    @Test
+    void validateCreateRequest_shouldThrow_whenPincodeFormatIsInvalid() {
+        CityAreaPincodeDto request = new CityAreaPincodeDto();
+        request.setCityAreaName("Mumbai");
+        request.setStateName("Maharashtra");
+        request.setPinCode("ABC123");
+
+        ValidationException exception = assertThrows(
+                ValidationException.class,
+                () -> validator.validateCreateRequest(MasterType.CITY_AREA_PINCODE, request));
+
+        assertTrue(exception.getErrorMessages().getFirst().getErrorMessage().contains("pinCode"));
+    }
+
+    @Test
+    void validateCreateRequest_shouldThrow_whenRequestBodyIsNull() {
+        ValidationException exception = assertThrows(
+                ValidationException.class,
+                () -> validator.validateCreateRequest(MasterType.NATURE_OF_BUSINESS, null));
+
+        assertTrue(exception.getErrorMessages().getFirst().getErrorMessage().contains("request"));
+    }
+
+    @Test
+    void validateInactivationRequest_shouldPass_whenRequestIsValid() {
+        MasterInactivationRequest request = new MasterInactivationRequest();
+        request.setMasterIds(List.of(UUID.randomUUID()));
+        request.setRemark("No longer required");
+
+        assertDoesNotThrow(() -> validator.validateInactivationRequest(request));
+    }
+
+    @Test
+    void validateInactivationRequest_shouldThrow_whenMasterIdsAreMissing() {
+        MasterInactivationRequest request = new MasterInactivationRequest();
+        request.setRemark("No longer required");
+
+        ValidationException exception = assertThrows(
+                ValidationException.class,
+                () -> validator.validateInactivationRequest(request));
+
+        assertTrue(exception.getErrorMessages().getFirst().getErrorMessage().contains("masterIds"));
+    }
+
+    @Test
+    void validateApprovalRequest_shouldPass_whenRequestIsValid() {
+        MasterApprovalRequest request = approvalRequest(UUID.randomUUID(), null);
+
+        assertDoesNotThrow(() -> validator.validateApprovalRequest(request));
+    }
+
+    @Test
+    void validateApprovalRequest_shouldThrow_whenMasterIdIsMissing() {
+        MasterApprovalRequest request = approvalRequest(null, null);
+
+        ValidationException exception = assertThrows(
+                ValidationException.class,
+                () -> validator.validateApprovalRequest(request));
+
+        assertTrue(exception.getErrorMessages().getFirst().getErrorMessage().contains("masterId"));
+    }
+
+    @Test
+    void validateApprovalRequest_shouldThrow_whenDuplicateMasterIdIsProvided() {
+        UUID masterId = UUID.randomUUID();
+        MasterApprovalRequest request = new MasterApprovalRequest();
+        request.setRecords(List.of(approvalItem(masterId, null), approvalItem(masterId, null)));
+
+        ValidationException exception = assertThrows(
+                ValidationException.class,
+                () -> validator.validateApprovalRequest(request));
+
+        assertTrue(exception.getErrorMessages().getFirst().getErrorMessage().contains("masterId"));
+    }
+
+    @Test
+    void validateRejectionRequest_shouldThrow_whenRemarkIsMissing() {
+        MasterApprovalRequest request = approvalRequest(UUID.randomUUID(), null);
+
+        ValidationException exception = assertThrows(
+                ValidationException.class,
+                () -> validator.validateRejectionRequest(request));
+
+        assertTrue(exception.getErrorMessages().getFirst().getErrorMessage().contains("remark"));
+    }
+
+    @Test
+    void validateRejectionRequest_shouldThrow_whenRemarkHasLeadingSpace() {
+        MasterApprovalRequest request = approvalRequest(UUID.randomUUID(), " Invalid data");
+
+        ValidationException exception = assertThrows(
+                ValidationException.class,
+                () -> validator.validateRejectionRequest(request));
+
+        assertTrue(exception.getErrorMessages().getFirst().getErrorMessage().contains("remark"));
+    }
+
+    private MasterApprovalRequest approvalRequest(UUID masterId, String remark) {
+        MasterApprovalRequest request = new MasterApprovalRequest();
+        request.setRecords(List.of(approvalItem(masterId, remark)));
+        return request;
+    }
+
+    private MasterApprovalRequest.ApprovalItem approvalItem(UUID masterId, String remark) {
+        MasterApprovalRequest.ApprovalItem item = new MasterApprovalRequest.ApprovalItem();
+        item.setMasterId(masterId);
+        item.setRemark(remark);
+        return item;
+    }
+}
+----------------------------------------------------------------
