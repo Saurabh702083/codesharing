@@ -1,3 +1,45 @@
+if (consentReadApiResponse.getData().getFirst().getConsentAvailable()) {
+            log.info("Consent is already available for userName :{}, mId :{}",userName, mId);
+            log.debug("checking consent sync status for ntbid: {}", consentReadApiResponse.getData().getFirst().getNtbId());
+            ConsentCaptureInfo consentCaptureInfo =  consentCaptureDao.getMerchantByNtbId(consentReadApiResponse.getData().getFirst().getNtbId(),merchantUser.getEmail());
+            if(!consentCaptureInfo.getSyncStatus().equals(SUCCESS)){
+                consentCaptureInfo.setSyncStatus(SUCCESS);
+                consentCaptureDao.save(consentCaptureInfo);
+            }
+            return MerchantResponse.builder().data(List.of(("Consent is available for the mId"))).status(RESPONSE_SUCCESS).build();
+        }
+
+
+ public ConsentCaptureInfo getMerchantByNtbId(String ntbId,String email) {
+        return consentCaptureInfoRepository.findByNtbIdAndEmail(ntbId,email).orElseThrow(() -> new MerchantException(ErrorConstants.NOT_FOUND_ERROR_CODE, MessageFormat.format(ErrorConstants.NOT_FOUND_ERROR_MESSAGE, "Consent")));
+    }
+
+import com.epay.merchant.entity.ConsentCaptureInfo;
+import org.springframework.data.jpa.repository.JpaRepository;
+import java.util.Optional;
+import java.util.UUID;
+
+
+/**
+ * Repository Name: ConsentCaptureInfoRepository
+ * <p>
+ * Description: Repository interface for performing CRUD operations on the `ConsentCaptureInfo` entity.
+ * This handles data management related to merchant consent and validation records
+ * Author: Rahul Prajapati.
+ * <p>
+ * Copyright (c) 2026 [State Bank of India]
+ * All rights reserved
+ * *
+ * Version:1.0
+ */
+public interface ConsentCaptureInfoRepository extends JpaRepository<ConsentCaptureInfo, UUID> {
+    Optional<ConsentCaptureInfo> findByNtbIdAndEmail(String ntbId,String email);
+
+    boolean existsBymIdAndStatus(String mId, String status);
+    boolean existsByNtbIdAndMobileNoAndEmail(String ntbId,String mobileNo, String email);
+}
+---------------------------------------------
+
 2026-06-18 14:59:00.380 DEBUG | com.epay.cs.util.dcms.eis.DCMSEISEncryptionDecryptionUtil:149 | principal= | scenario=pendingConsentSyncScheduler | operation=pendingConsentSyncScheduler | correlation=76973058-c0ba-4b0e-8aee-718e822827ab | signSHA256RSA | Private Key Path: certs/SBI_private.key
 V/KpL7Lyj6oOXIgb1BHVCc3FBzi4+W5pn0r3HQ== 
 V/KpL7Lyj6oOXIgb1BHVCc3FBzi4+W5pn0r3HQ== , reqRefNumber SBIEY26169145900330010415 
