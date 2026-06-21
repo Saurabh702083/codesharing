@@ -1,3 +1,46 @@
+
+public void validateMidConsentRequest(MidConsentRequest midConsentRequest) {
+    errorDtoList = new ArrayList<>();
+    logger.debug("Validation start for mid {}", midConsentRequest.getMId());
+    validateMid(midConsentRequest.getMId());
+    throwIfErrors();
+    for (Consent consent : midConsentRequest.getConsents()) {
+        checkMandatoryField(consent.getPurposeCode(), PURPOSE_CODE);
+        checkMandatoryField(consent.getPurposeVersion(), PURPOSE_VERSION);
+        checkMandatoryField(consent.getConsented(), CONSENTED);
+        throwIfErrors();
+        checkForLeadingTrailingAndSingleSpace(consent.getPurposeCode(), PURPOSE_CODE);
+        checkForLeadingTrailingAndSingleSpace(consent.getPurposeVersion(), PURPOSE_VERSION);
+        throwIfErrors();
+        validateFieldLength(consent.getPurposeCode(), MAX_NAME_LENGTH, PURPOSE_CODE);
+        throwIfErrors();
+        validateFieldWithRegex(consent.getPurposeCode(), "^\\S+$", PURPOSE_CODE, "Format is incorrect.");
+        validateFieldWithRegex(consent.getPurposeVersion(), "\\d+", PURPOSE_VERSION, "Format is incorrect.");
+        throwIfErrors();
+
+        // Validate consentedProducts string lengths
+        if (consent.getConsentedProducts() != null) {
+            Arrays.stream(consent.getConsentedProducts())
+                    .forEach(product -> validateFieldLength(product, MAX_PRODUCT_NAME_LENGTH, CONSENTED_PRODUCTS));
+        }
+
+        // Validate notConsentedProducts string lengths
+        if (consent.getNotConsentedProducts() != null) {
+            Arrays.stream(consent.getNotConsentedProducts())
+                    .forEach(product -> validateFieldLength(product, MAX_PRODUCT_NAME_LENGTH, NOT_CONSENTED_PRODUCTS));
+        }
+        throwIfErrors();
+    }
+}
+
+----------
+
+
+
+
+
+
+
 @Data
 @Builder
 @NoArgsConstructor
