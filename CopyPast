@@ -1,1932 +1,282 @@
---liquibase formatted sql
---changeset Hariom:3
-
-
-CREATE TABLE CONSENT_CAPTURE_INFO (
-  ID                  RAW(16) DEFAULT SYS_GUID() ,
-  CONSENT_CODE        VARCHAR2(100) UNIQUE,
-  TOUCHPOINT_CODE     VARCHAR2(100),
-  PURPOSE_CODE        VARCHAR2(100),
-  REQUEST             CLOB,
-  RESPONSE            CLOB,
-  SYNC_STATUS         VARCHAR2(50),
-  CONSENT_STATUS      VARCHAR2(20),
-  RETRY_COUNT         NUMBER          DEFAULT 0,
-  CREATED_AT          NUMBER          NOT NULL,
-  UPDATED_AT          NUMBER,
-  CONSTRAINT  PK_CONST_CAPTURE_INFO PRIMARY KEY(ID)
-)  PCTFREE 30  INITRANS 100;
-
-
-
- public CommunicationResponse<String> consentSave(ConsentSaveRequest consentSaveRequest) {
-        // Step-1: Validate consent white request
-        logger.info("Validating consentSave request body.");
-        consentValidator.validateConsentRequest(consentSaveRequest);
-
-        // Step-2: Set the consent write request and insert in DB
-        logger.info("Saving consent request in DB.");
-        String consentRequestString = null;
-        try {
-            consentRequestString = objectMapper.writeValueAsString(consentSaveRequest);
-        } catch (JsonProcessingException e) {
-            logger.error("Parse exception during converting request object to string.", e.getMessage());
-        }
-        ConsentCaptureInfo consentInfo = ConsentCaptureInfo.builder().purposeCode(consentSaveRequest.getPurposeSetId()).touchpointCode(consentSaveRequest.getTouchPointId()).consentCode(consentSaveRequest.getNtbId()).request(consentRequestString).syncStatus(SyncStatus.PENDING).build();
-        ConsentCaptureInfo savedConsentInfo = consentDao.checkConsentWritten(consentInfo);
-        try {
-            // Step-3: Call EIS write method and get the response
-            ConsentRequest consentRequest = buildConsentWriteRequest(consentSaveRequest);
-            EisWriteResponse eisResponse = eisWriteConsent(consentRequest);
-            EisApiHistoryDto eisApiHistoryDto = buildEISWriteApiRequest(consentRequest, eisResponse);
-            consentDao.saveEisHistory(eisApiHistoryDto);
-            String consentResponse = objectMapper.writeValueAsString(eisResponse.getEisResponse().getBody());
-            // Step-4: Set the response to entity and update in DB
-            savedConsentInfo.setResponse(consentResponse);
-            SyncStatus syncStatus = ObjectUtils.isEmpty(eisResponse.getEisResponse().getBody().getConsentId()) ? SyncStatus.PENDING : SyncStatus.SUCCESS;
-            savedConsentInfo.setSyncStatus(syncStatus);
-            savedConsentInfo.setConsentStatus(ConsentStatus.ACTIVE);
-            consentDao.saveConsent(savedConsentInfo);
-            return  CommunicationResponse.<String>builder().status(RESPONSE_SUCCESS).data(List.of("Consent saved successfully.")).build();
-        } catch (JsonProcessingException e) {
-            logger.error("Parse exception during converting response object to string.", e.getMessage());
-            return CommunicationResponse.<String>builder().status(RESPONSE_SUCCESS).data(List.of("Failed to save the consent.")).build();
-        } catch (Exception e) {
-            logger.error("CommunicationException or other Exception during calling eis writeConsent method.", e.getMessage());
-            return CommunicationResponse.<String>builder().status(RESPONSE_SUCCESS).data(List.of("Failed to save the consent.")).build();
-        }
-    }
-
-
-
-    public ConsentCaptureInfo checkConsentWritten(ConsentCaptureInfo consentCaptureInfo){
-        logger.info("Check if consent is present for ntbId :{}",consentCaptureInfo.getConsentStatus());
-       return consentCaptureInfoRepository.findByConsentCode(consentCaptureInfo.getConsentCode()).map(existing->updateFields(existing,consentCaptureInfo)).orElse(consentCaptureInfo);
-    }
-
-    private ConsentCaptureInfo updateFields(ConsentCaptureInfo existing, ConsentCaptureInfo incoming){
-        existing.setTouchpointCode(incoming.getTouchpointCode());
-        existing.setPurposeCode(incoming.getPurposeCode());
-        existing.setRequest(incoming.getRequest());
-        existing.setSyncStatus(incoming.getSyncStatus());
-        return existing;
-    }
-
-
-@Repository
-public interface ConsentCaptureInfoRepository extends JpaRepository<ConsentCaptureInfo, UUID> {
-    Optional<ConsentCaptureInfo> findByConsentCodeAndTouchpointCodeAndPurposeCode(String cifId, String touchPointId, String purposeCode);
-
-    Optional<ConsentCaptureInfo> findByConsentCode(String consentCode);
-
-    @Query("SELECT c FROM ConsentCaptureInfo c WHERE c.syncStatus = 'PENDING'")
-    List<ConsentCaptureInfo> findBySyncStatusPending();
-
+@Data
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
+public class MidConsentRequest {
+    @JsonProperty("mId")
+    private String mId;
+    private List<Consent> consents;
 }
 
----------------------------------------------------------------------
+@Data
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
+public class Consent {
+    private String purposeCode;
+    private String purposeVersion;
+    private Boolean consented;
+    private String[] consentedProducts;
+    private String[] notConsentedProducts;
+}
 
-Hibernate: 
-    select
-        cci1_0.id,
-        cci1_0.consent_code,
-        cci1_0.consent_status,
-        cci1_0.created_at,
-        cci1_0.purpose_code,
-        cci1_0.request,
-        cci1_0.response,
-        cci1_0.retry_count,
-        cci1_0.sync_status,
-        cci1_0.touchpoint_code,
-        cci1_0.updated_at 
-    from
-        consent_capture_info cci1_0 
-    where
-        cci1_0.consent_code=?
-2026-06-21 05:07:31.804 WARN | com.epay.cs.dao.ConsentDao:95 | principal= | scenario=/api/communication/v1/consent/save | operation=POST | correlation=026d70e7-fab6-486a-ad4d-f16a5bf5026c | checkConsentWritten | SQL Error: 604, SQLState: 60000
-2026-06-21 05:07:31.805 ERROR | com.epay.cs.dao.ConsentDao:95 | principal= | scenario=/api/communication/v1/consent/save | operation=POST | correlation=026d70e7-fab6-486a-ad4d-f16a5bf5026c | checkConsentWritten | ORA-00604: error occurred at recursive SQL level 1
-ORA-01157: cannot identify/lock data file 10 - see DBWR trace file
-ORA-01110: data file 10: '/oracle19c/app/oracle/product/19.3.0/db_home1/dbs/ +PAYAGGS_DATA'
 
---------------------------------
 
-if (consentReadApiResponse.getData().getFirst().getConsentAvailable()) {
-            log.info("Consent is already available for userName :{}, mId :{}",userName, mId);
-            log.debug("checking consent sync status for ntbid: {}", consentReadApiResponse.getData().getFirst().getNtbId());
-            ConsentCaptureInfo consentCaptureInfo =  consentCaptureDao.getMerchantByNtbId(consentReadApiResponse.getData().getFirst().getNtbId(),merchantUser.getEmail());
-            if(!consentCaptureInfo.getSyncStatus().equals(SUCCESS)){
-                consentCaptureInfo.setSyncStatus(SUCCESS);
-                consentCaptureDao.save(consentCaptureInfo);
-            }
-            return MerchantResponse.builder().data(List.of(("Consent is available for the mId"))).status(RESPONSE_SUCCESS).build();
+    public void validateMidConsentRequest(MidConsentRequest midConsentRequest) {
+        errorDtoList = new ArrayList<>();
+        logger.debug("Validation start for mid {}",midConsentRequest.getMId());
+        validateMid(midConsentRequest.getMId());
+        throwIfErrors();
+        for (Consent consent : midConsentRequest.getConsents()) {
+            checkMandatoryField(consent.getPurposeCode(), PURPOSE_CODE);
+            checkMandatoryField(consent.getPurposeVersion(), PURPOSE_VERSION);
+            checkMandatoryField(consent.getConsented(), CONSENTED);
+            throwIfErrors();
+            checkForLeadingTrailingAndSingleSpace(consent.getPurposeCode(), PURPOSE_CODE);
+            checkForLeadingTrailingAndSingleSpace(consent.getPurposeVersion(), PURPOSE_VERSION);
+            throwIfErrors();
+            validateFieldLength(consent.getPurposeCode(), MAX_NAME_LENGTH, PURPOSE_CODE);
+            throwIfErrors();
+            validateFieldWithRegex(consent.getPurposeCode(), "^\\S+$", PURPOSE_CODE, "Format is incorrect.");
+            validateFieldWithRegex(consent.getPurposeVersion(), "\\d+", PURPOSE_VERSION, "Format is incorrect.");
+            throwIfErrors();
+            Arrays.stream(consent.getConsentedProducts()).map()
         }
-
-
- public ConsentCaptureInfo getMerchantByNtbId(String ntbId,String email) {
-        return consentCaptureInfoRepository.findByNtbIdAndEmail(ntbId,email).orElseThrow(() -> new MerchantException(ErrorConstants.NOT_FOUND_ERROR_CODE, MessageFormat.format(ErrorConstants.NOT_FOUND_ERROR_MESSAGE, "Consent")));
     }
 
-import com.epay.merchant.entity.ConsentCaptureInfo;
-import org.springframework.data.jpa.repository.JpaRepository;
-import java.util.Optional;
-import java.util.UUID;
 
+package com.epay.merchant.validator;
 
+import com.epay.merchant.dto.ErrorDto;
+import com.epay.merchant.exception.ValidationException;
+import com.epay.merchant.util.MerchantConstant;
+import org.apache.commons.collections4.CollectionUtils;
+import org.apache.commons.lang3.EnumUtils;
+import org.apache.commons.lang3.ObjectUtils;
+import org.apache.commons.lang3.StringUtils;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
+import java.text.MessageFormat;
+import java.util.*;
+import java.util.regex.Pattern;
+import static com.epay.merchant.util.DateTimeUtils.getCurrentTimeInMills;
+import static com.epay.merchant.util.ErrorConstants.*;
 /**
- * Repository Name: ConsentCaptureInfoRepository
+ * Class Name:BaseValidator
+ * *
+ * Description: BaseValidator is a base class for all validators, providing common functionality
+ * for storing and managing validation errors.
+ * *
+ * Author: Bhoopendra Rajput
  * <p>
- * Description: Repository interface for performing CRUD operations on the `ConsentCaptureInfo` entity.
- * This handles data management related to merchant consent and validation records
- * Author: Rahul Prajapati.
- * <p>
- * Copyright (c) 2026 [State Bank of India]
- * All rights reserved
+ * Copyright (c) 2024 [State Bank of India]
+ * All right reserved
  * *
  * Version:1.0
  */
-public interface ConsentCaptureInfoRepository extends JpaRepository<ConsentCaptureInfo, UUID> {
-    Optional<ConsentCaptureInfo> findByNtbIdAndEmail(String ntbId,String email);
+public class BaseValidator {
 
-    boolean existsBymIdAndStatus(String mId, String status);
-    boolean existsByNtbIdAndMobileNoAndEmail(String ntbId,String mobileNo, String email);
-}
----------------------------------------------
-
-2026-06-18 14:59:00.380 DEBUG | com.epay.cs.util.dcms.eis.DCMSEISEncryptionDecryptionUtil:149 | principal= | scenario=pendingConsentSyncScheduler | operation=pendingConsentSyncScheduler | correlation=76973058-c0ba-4b0e-8aee-718e822827ab | signSHA256RSA | Private Key Path: certs/SBI_private.key
-V/KpL7Lyj6oOXIgb1BHVCc3FBzi4+W5pn0r3HQ== 
-V/KpL7Lyj6oOXIgb1BHVCc3FBzi4+W5pn0r3HQ== , reqRefNumber SBIEY26169145900330010415 
-2026-06-18 14:59:00.450 INFO | com.epay.cs.service.ConsentService:202 | principal= | scenario=pendingConsentSyncScheduler | operation=pendingConsentSyncScheduler | correlation=76973058-c0ba-4b0e-8aee-718e822827ab | writeConsent | Encrypted request created :{"REQUEST":"/SSEMuv4EnDWoZx7e/q8JIhzchqS23jeUuO2m2LW3LouOFqxFcpS+8Y/qCglQTHfxrGXmR5IlfoW0S7R/fZu0rtq65+87PhDpSvBBBk4itmSUqcDe4zX+fLIW59qAq4bsS2/08jrgCbuUMD9Mg7bEi23p9gCeAXPTKLIX+b2nn+NnKpOLfzE3HNbRKuH4700NOkWc9gt2er5fwTiM98Rz3XaUCCdSmTFSYPfWtH0kbOmtMmbWoxNGyrCIBPE5FTpfMGyv9q3RLPxXPQrp7x0pMjIcX6KQ5imCa/JZb6AMwLk0ovA2iPKMfsTx+2V3DiOD926653VYGlmG1YWkKqX/bMR30Mam+GWSpklXFhj90eDDK9vVMapaCy3+QdNdTwrQ4crMrg42SbQLTfgtfotF4deabfxbWGjyZp9hLSKoH5LYCz2811n8DXoy4io9g4nfwLHWWJodlAamehod+Ovwfdk/NkFo4RMeFdeQT2SYoOm0/a6/f8AD1IY/+kJt+f/C4hJeEsJyQ/yD/Elx2kUfwXM3b1MFEltSk+UUg5IFMObq9Tu/OPL+aMPalk9PG5wSSKfQlZyXgO/GClAKBw6yAZNtnuDE+qloLYNQnpqB8alX0xqzwWFJFG5u3dMqZswMatnlPvIFrVFIBodKB5SdM1H7GY3rRfdg9gj6x2h8yCrfA3Gp/8iACQJy96Ryracn3YoIJusDWBC6kteVAs1h1MtxkcxOSyMJJH8oKpvL7QsAc9L/ZZfaJaL7thWH87C/2X5GplT3IVwJz4ibKpGo+4KPQnj4uuoQvf6QPlM+fNLwAHmm3L6OlLX44NnlvmhmlEHiFS44hLJYt9ClaQIf9+CPKUXwDGIlSvpAwFRJslbhyyGysgf9A4qap+v8pS5tXRTDGB6j4Nxm7kJ7vFJmLOC1cBAmcunZikOD8oDdhA5DTNnpPvI+GJEA0HxFSEounK0WQm42i+V1x97yYB99IKRngJmQ8Hx1T3d+e+9cJCmFJjlmNu0e1R70X+808e1nWSja6KMRSZbcV9wsC94tQ/q3iF+dbnqiQ6zG3J/gfKjabdo7pjVWcZU1YpBgjQ3LCUoOJMYaaZQbarF/QKa7MewwItn8c3cVuBbfja6BPs8H1SZFJiomBOjNFtl4KPcLV7Wpu84OrTySp8VkceypYclWMIm3C3jvKsnGGvvfGAxPuoOHNrvYGP7byyy9DXglZfvbtQdCdpZawMQJjfw8/xTDCFYDnpW0LjFBAtuat3ThbPAl2ZpjotUMsXZAOxWtlqvPvg1sEzVH5II4VzWJiKDScwWqH+6KtCrvdOKDA7QcFKnbvtVvQ==","REQUEST_REFERENCE_NUMBER":"SBIEY26169145900330010415","DIGI_SIGN":"Ilbyr8iLvrc7XebR00HU4Cj3WY5nOrpwJbSdto+3wV9dc5uz+Q9UKel/apniE/zuukp6Ue7VXfMJ\rcqB5f9oU7Ok3Scf8cCVi4Xb6dB05CvAuHgJWnD6+rTde8REhRQrGfPnt9IBupZNC2UwnxVW7WRd8\rasDoOT9t01QRJf3+193+L+uoRYf2BQoST5Do/zx003gRCo9oFLkGaJEQGdiOzsM4qm9EQSwCkm2S\rFupSIxY/re6ZiDlkIBByDon7Co0FA3JFcnzMdNJMy4oDz1ikCuO6eF2z7+4bto8HenN/SrfnLi0B\rV/KpL7Lyj6oOXIgb1BHVCc3FBzi4+W5pn0r3HQ=="}
-2026-06-18 14:59:00.450 INFO | com.epay.cs.util.dcms.eis.DCMSEISEncryptionDecryptionUtil:171 | principal= | scenario=pendingConsentSyncScheduler | operation=pendingConsentSyncScheduler | correlation=76973058-c0ba-4b0e-8aee-718e822827ab | getEISPublicKey | Public Key Path of EIS: certs/EIS_ENC_UAT.cer
-2026-06-18 14:59:00.508 INFO | com.epay.cs.externalservice.EISServicesClient:52 | principal= | scenario=pendingConsentSyncScheduler | operation=pendingConsentSyncScheduler | correlation=76973058-c0ba-4b0e-8aee-718e822827ab | postEncryptedRequest | Calling EIS Privacy Notice API
-Um93Mneo1nBzG/hGDlHirUaXB9az36ydxzC/Lg==
-2026-06-18 14:59:00.508 INFO | com.epay.cs.externalservice.EISServicesClient:55 | principal= | scenario=pendingConsentSyncScheduler | operation=pendingConsentSyncScheduler | correlation=76973058-c0ba-4b0e-8aee-718e822827ab | postEncryptedRequest | EIS URI: https://eissiuat.sbi.co.in/gen6/gateway/misc/thirdParty/wrapper/services
-2026-06-18 14:59:01.273 WARN | reactor.util.Loggers$Slf4JLogger:304 | principal= | scenario= | operation= | correlation= | warn | [192be1d0-1, L:/10.30.64.115:63669 - R:eissiuat.sbi.co.in/10.177.56.205:443] The connection observed an error
-java.lang.IllegalArgumentException: Validation failed for header 'AccessToken'
-	at io.netty.handler.codec.DefaultHeaders.validateValue(DefaultHeaders.java:1019)
-	at io.netty.handler.codec.DefaultHeaders.setObject(DefaultHeaders.java:536)
-	at io.netty.handler.codec.http.DefaultHttpHeaders.set(DefaultHttpHeaders.java:241)
-	at org.springframework.http.client.reactive.ReactorClientHttpRequest.lambda$applyHeaders$3(ReactorClientHttpRequest.java:127)
-	at java.base/java.util.LinkedHashMap.forEach(LinkedHashMap.java:986)
-	at org.springframework.util.LinkedCaseInsensitiveMap.forEach(LinkedCaseInsensitiveMap.java:292)
-	at org.springframework.util.MultiValueMapAdapter.forEach(MultiValueMapAdapter.java:179)
-	at org.springframework.http.HttpHeaders.forEach(HttpHeaders.java:1870)
-	at org.springframework.http.client.reactive.ReactorClientHttpRequest.applyHeaders(ReactorClientHttpRequest.java:127)
-	at org.springframework.http.client.reactive.AbstractClientHttpRequest.lambda$doCommit$0(AbstractClientHttpRequest.java:141)
-	at reactor.core.publisher.MonoRunnable.subscribe(MonoRunnable.java:49)
-	at reactor.core.publisher.Mono.subscribe(Mono.java:4576)
-	at reactor.core.publisher.FluxConcatIterable$ConcatIterableSubscriber.onComplete(FluxConcatIterable.java:148)
-	at reactor.core.publisher.FluxConcatIterable.subscribe(FluxConcatIterable.java:60)
-	at reactor.core.publisher.MonoFromFluxOperator.subscribe(MonoFromFluxOperator.java:83)
-	at reactor.core.publisher.MonoFlatMap$FlatMapMain.onNext(MonoFlatMap.java:165)
-	at reactor.core.publisher.FluxSwitchIfEmpty$SwitchIfEmptySubscriber.onNext(FluxSwitchIfEmpty.java:74)
-	at reactor.core.publisher.Operators$MonoInnerProducerBase.complete(Operators.java:2864)
-	at reactor.core.publisher.MonoSingle$SingleSubscriber.onComplete(MonoSingle.java:180)
-	at reactor.core.publisher.FluxMapFuseable$MapFuseableSubscriber.onComplete(FluxMapFuseable.java:152)
-	at reactor.core.publisher.Operators$ScalarSubscription.request(Operators.java:2573)
-	at reactor.core.publisher.FluxMapFuseable$MapFuseableSubscriber.request(FluxMapFuseable.java:171)
-	at reactor.core.publisher.MonoSingle$SingleSubscriber.doOnRequest(MonoSingle.java:103)
-	at reactor.core.publisher.Operators$MonoInnerProducerBase.request(Operators.java:2931)
-	at reactor.core.publisher.Operators$MultiSubscriptionSubscriber.set(Operators.java:2367)
-	at reactor.core.publisher.Operators$MultiSubscriptionSubscriber.onSubscribe(Operators.java:2241)
-	at reactor.core.publisher.MonoSingle$SingleSubscriber.onSubscribe(MonoSingle.java:115)
-	at reactor.core.publisher.FluxMapFuseable$MapFuseableSubscriber.onSubscribe(FluxMapFuseable.java:96)
-	at reactor.core.publisher.FluxJust.subscribe(FluxJust.java:68)
-	at reactor.core.publisher.InternalMonoOperator.subscribe(InternalMonoOperator.java:76)
-	at reactor.core.publisher.MonoDefer.subscribe(MonoDefer.java:53)
-	at reactor.netty.http.client.HttpClientConnect$HttpIOHandlerObserver.onStateChange(HttpClientConnect.java:467)
-	at reactor.netty.ReactorNetty$CompositeConnectionObserver.onStateChange(ReactorNetty.java:716)
-	at reactor.netty.resources.DefaultPooledConnectionProvider$DisposableAcquire.onStateChange(DefaultPooledConnectionProvider.java:205)
-	at reactor.netty.resources.DefaultPooledConnectionProvider$PooledConnection.onStateChange(DefaultPooledConnectionProvider.java:466)
-	at reactor.netty.channel.ChannelOperationsHandler.channelActive(ChannelOperationsHandler.java:62)
-	at io.netty.channel.AbstractChannelHandlerContext.invokeChannelActive(AbstractChannelHandlerContext.java:260)
-	at io.netty.channel.AbstractChannelHandlerContext.invokeChannelActive(AbstractChannelHandlerContext.java:238)
-	at io.netty.channel.AbstractChannelHandlerContext.fireChannelActive(AbstractChannelHandlerContext.java:231)
-	at io.netty.channel.CombinedChannelDuplexHandler$DelegatingChannelHandlerContext.fireChannelActive(CombinedChannelDuplexHandler.java:412)
-	at io.netty.channel.ChannelInboundHandlerAdapter.channelActive(ChannelInboundHandlerAdapter.java:69)
-	at io.netty.channel.CombinedChannelDuplexHandler.channelActive(CombinedChannelDuplexHandler.java:211)
-	at io.netty.channel.AbstractChannelHandlerContext.invokeChannelActive(AbstractChannelHandlerContext.java:260)
-	at io.netty.channel.AbstractChannelHandlerContext.invokeChannelActive(AbstractChannelHandlerContext.java:238)
-	at io.netty.channel.AbstractChannelHandlerContext.fireChannelActive(AbstractChannelHandlerContext.java:231)
-	at reactor.netty.tcp.SslProvider$SslReadHandler.userEventTriggered(SslProvider.java:861)
-	at io.netty.channel.AbstractChannelHandlerContext.invokeUserEventTriggered(AbstractChannelHandlerContext.java:398)
-	at io.netty.channel.AbstractChannelHandlerContext.invokeUserEventTriggered(AbstractChannelHandlerContext.java:376)
-	at io.netty.channel.AbstractChannelHandlerContext.fireUserEventTriggered(AbstractChannelHandlerContext.java:368)
-	at io.netty.handler.ssl.SslHandler.setHandshakeSuccess(SslHandler.java:1995)
-	at io.netty.handler.ssl.SslHandler.wrapNonAppData(SslHandler.java:1016)
-	at io.netty.handler.ssl.SslHandler.unwrap(SslHandler.java:1555)
-	at io.netty.handler.ssl.SslHandler.decodeJdkCompatible(SslHandler.java:1377)
-	at io.netty.handler.ssl.SslHandler.decode(SslHandler.java:1428)
-	at io.netty.handler.codec.ByteToMessageDecoder.decodeRemovalReentryProtection(ByteToMessageDecoder.java:530)
-	at io.netty.handler.codec.ByteToMessageDecoder.callDecode(ByteToMessageDecoder.java:469)
-	at io.netty.handler.codec.ByteToMessageDecoder.channelRead(ByteToMessageDecoder.java:290)
-	at io.netty.channel.AbstractChannelHandlerContext.invokeChannelRead(AbstractChannelHandlerContext.java:444)
-	at io.netty.channel.AbstractChannelHandlerContext.invokeChannelRead(AbstractChannelHandlerContext.java:420)
-	at io.netty.channel.AbstractChannelHandlerContext.fireChannelRead(AbstractChannelHandlerContext.java:412)
-	at io.netty.channel.DefaultChannelPipeline$HeadContext.channelRead(DefaultChannelPipeline.java:1357)
-	at io.netty.channel.AbstractChannelHandlerContext.invokeChannelRead(AbstractChannelHandlerContext.java:440)
-	at io.netty.channel.AbstractChannelHandlerContext.invokeChannelRead(AbstractChannelHandlerContext.java:420)
-	at io.netty.channel.DefaultChannelPipeline.fireChannelRead(DefaultChannelPipeline.java:868)
-	at io.netty.channel.nio.AbstractNioByteChannel$NioByteUnsafe.read(AbstractNioByteChannel.java:166)
-	at io.netty.channel.nio.NioEventLoop.processSelectedKey(NioEventLoop.java:796)
-	at io.netty.channel.nio.NioEventLoop.processSelectedKeysOptimized(NioEventLoop.java:732)
-	at io.netty.channel.nio.NioEventLoop.processSelectedKeys(NioEventLoop.java:658)
-	at io.netty.channel.nio.NioEventLoop.run(NioEventLoop.java:562)
-	at io.netty.util.concurrent.SingleThreadEventExecutor$4.run(SingleThreadEventExecutor.java:998)
-	at io.netty.util.internal.ThreadExecutorMap$2.run(ThreadExecutorMap.java:74)
-	at io.netty.util.concurrent.FastThreadLocalRunnable.run(FastThreadLocalRunnable.java:30)
-	at java.base/java.lang.Thread.run(Thread.java:1583)
-Caused by: java.lang.IllegalArgumentException: a header value contains prohibited character 0xd at index 76.
-	at io.netty.handler.codec.http.DefaultHttpHeadersFactory$2.validate(DefaultHttpHeadersFactory.java:50)
-	at io.netty.handler.codec.http.DefaultHttpHeadersFactory$2.validate(DefaultHttpHeadersFactory.java:44)
-	at io.netty.handler.codec.DefaultHeaders.validateValue(DefaultHeaders.java:1017)
-	... 72 common frames omitted
-2026-06-18 14:59:01.280 ERROR | com.epay.cs.config.annotation.AuditSchedulerAspect:45 | principal= | scenario=pendingConsentSyncScheduler | operation=pendingConsentSyncScheduler | correlation=76973058-c0ba-4b0e-8aee-718e822827ab | logAudit | Scheduler execution failed: Validation failed for header 'AccessToken'
-org.springframework.web.reactive.function.client.WebClientRequestException: Validation failed for header 'AccessToken'
-	at org.springframework.web.reactive.function.client.ExchangeFunctions$DefaultExchangeFunction.lambda$wrapException$9(ExchangeFunctions.java:136)
-	Suppressed: reactor.core.publisher.FluxOnAssembly$OnAssemblyException: 
-Error has been observed at the following site(s):
-	*__checkpoint ⇢ Request to POST https://eissiuat.sbi.co.in/gen6/gateway/misc/thirdParty/wrapper/services [DefaultWebClient]
-Original Stack Trace:
-		at org.springframework.web.reactive.function.client.ExchangeFunctions$DefaultExchangeFunction.lambda$wrapException$9(ExchangeFunctions.java:136)
-		at reactor.core.publisher.MonoErrorSupplied.subscribe(MonoErrorSupplied.java:55)
-		at reactor.core.publisher.Mono.subscribe(Mono.java:4576)
-		at reactor.core.publisher.FluxOnErrorResume$ResumeSubscriber.onError(FluxOnErrorResume.java:103)
-		at reactor.core.publisher.FluxPeek$PeekSubscriber.onError(FluxPeek.java:222)
-		at reactor.core.publisher.FluxPeek$PeekSubscriber.onError(FluxPeek.java:222)
-		at reactor.core.publisher.FluxPeek$PeekSubscriber.onError(FluxPeek.java:222)
-		at reactor.core.publisher.MonoNext$NextSubscriber.onError(MonoNext.java:93)
-		at reactor.core.publisher.MonoFlatMapMany$FlatMapManyMain.onError(MonoFlatMapMany.java:205)
-		at reactor.core.publisher.SerializedSubscriber.onError(SerializedSubscriber.java:124)
-		at reactor.core.publisher.FluxRetryWhen$RetryWhenMainSubscriber.whenError(FluxRetryWhen.java:229)
-		at reactor.core.publisher.FluxRetryWhen$RetryWhenOtherSubscriber.onError(FluxRetryWhen.java:279)
-		at reactor.core.publisher.FluxContextWrite$ContextWriteSubscriber.onError(FluxContextWrite.java:121)
-		at reactor.core.publisher.FluxConcatMapNoPrefetch$FluxConcatMapNoPrefetchSubscriber.maybeOnError(FluxConcatMapNoPrefetch.java:327)
-		at reactor.core.publisher.FluxConcatMapNoPrefetch$FluxConcatMapNoPrefetchSubscriber.onNext(FluxConcatMapNoPrefetch.java:212)
-		at reactor.core.publisher.FluxContextWrite$ContextWriteSubscriber.onNext(FluxContextWrite.java:107)
-		at reactor.core.publisher.SinkManyEmitterProcessor.drain(SinkManyEmitterProcessor.java:476)
-		at reactor.core.publisher.SinkManyEmitterProcessor$EmitterInner.drainParent(SinkManyEmitterProcessor.java:620)
-		at reactor.core.publisher.FluxPublish$PubSubInner.request(FluxPublish.java:874)
-		at reactor.core.publisher.FluxContextWrite$ContextWriteSubscriber.request(FluxContextWrite.java:136)
-		at reactor.core.publisher.FluxConcatMapNoPrefetch$FluxConcatMapNoPrefetchSubscriber.request(FluxConcatMapNoPrefetch.java:337)
-		at reactor.core.publisher.FluxContextWrite$ContextWriteSubscriber.request(FluxContextWrite.java:136)
-		at reactor.core.publisher.Operators$DeferredSubscription.request(Operators.java:1743)
-		at reactor.core.publisher.FluxRetryWhen$RetryWhenMainSubscriber.onError(FluxRetryWhen.java:196)
-		at reactor.core.publisher.MonoCreate$DefaultMonoSink.error(MonoCreate.java:205)
-		at reactor.netty.http.client.HttpClientConnect$HttpObserver.onUncaughtException(HttpClientConnect.java:425)
-		at reactor.netty.ReactorNetty$CompositeConnectionObserver.onUncaughtException(ReactorNetty.java:709)
-		at reactor.netty.resources.DefaultPooledConnectionProvider$DisposableAcquire.onUncaughtException(DefaultPooledConnectionProvider.java:223)
-		at reactor.netty.resources.DefaultPooledConnectionProvider$PooledConnection.onUncaughtException(DefaultPooledConnectionProvider.java:476)
-		at reactor.netty.http.client.HttpClientOperations.onOutboundError(HttpClientOperations.java:687)
-		at reactor.netty.channel.ChannelOperations.onError(ChannelOperations.java:272)
-		at reactor.core.publisher.FluxContextWrite$ContextWriteSubscriber.onError(FluxContextWrite.java:121)
-		at reactor.core.publisher.MonoFlatMap$FlatMapMain.secondError(MonoFlatMap.java:241)
-		at reactor.core.publisher.MonoFlatMap$FlatMapInner.onError(MonoFlatMap.java:315)
-		at reactor.core.publisher.MonoIgnoreElements$IgnoreElementsSubscriber.onError(MonoIgnoreElements.java:84)
-		at reactor.core.publisher.Operators$MultiSubscriptionSubscriber.onError(Operators.java:2236)
-		at reactor.core.publisher.MonoRunnable.subscribe(MonoRunnable.java:52)
-		at reactor.core.publisher.Mono.subscribe(Mono.java:4576)
-		at reactor.core.publisher.FluxConcatIterable$ConcatIterableSubscriber.onComplete(FluxConcatIterable.java:148)
-		at reactor.core.publisher.FluxConcatIterable.subscribe(FluxConcatIterable.java:60)
-		at reactor.core.publisher.MonoFromFluxOperator.subscribe(MonoFromFluxOperator.java:83)
-		at reactor.core.publisher.MonoFlatMap$FlatMapMain.onNext(MonoFlatMap.java:165)
-		at reactor.core.publisher.FluxSwitchIfEmpty$SwitchIfEmptySubscriber.onNext(FluxSwitchIfEmpty.java:74)
-		at reactor.core.publisher.Operators$MonoInnerProducerBase.complete(Operators.java:2864)
-		at reactor.core.publisher.MonoSingle$SingleSubscriber.onComplete(MonoSingle.java:180)
-		at reactor.core.publisher.FluxMapFuseable$MapFuseableSubscriber.onComplete(FluxMapFuseable.java:152)
-		at reactor.core.publisher.Operators$ScalarSubscription.request(Operators.java:2573)
-		at reactor.core.publisher.FluxMapFuseable$MapFuseableSubscriber.request(FluxMapFuseable.java:171)
-		at reactor.core.publisher.MonoSingle$SingleSubscriber.doOnRequest(MonoSingle.java:103)
-		at reactor.core.publisher.Operators$MonoInnerProducerBase.request(Operators.java:2931)
-		at reactor.core.publisher.Operators$MultiSubscriptionSubscriber.set(Operators.java:2367)
-		at reactor.core.publisher.Operators$MultiSubscriptionSubscriber.onSubscribe(Operators.java:2241)
-		at reactor.core.publisher.MonoSingle$SingleSubscriber.onSubscribe(MonoSingle.java:115)
-		at reactor.core.publisher.FluxMapFuseable$MapFuseableSubscriber.onSubscribe(FluxMapFuseable.java:96)
-		at reactor.core.publisher.FluxJust.subscribe(FluxJust.java:68)
-		at reactor.core.publisher.InternalMonoOperator.subscribe(InternalMonoOperator.java:76)
-		at reactor.core.publisher.MonoDefer.subscribe(MonoDefer.java:53)
-		at reactor.netty.http.client.HttpClientConnect$HttpIOHandlerObserver.onStateChange(HttpClientConnect.java:467)
-		at reactor.netty.ReactorNetty$CompositeConnectionObserver.onStateChange(ReactorNetty.java:716)
-		at reactor.netty.resources.DefaultPooledConnectionProvider$DisposableAcquire.onStateChange(DefaultPooledConnectionProvider.java:205)
-		at reactor.netty.resources.DefaultPooledConnectionProvider$PooledConnection.onStateChange(DefaultPooledConnectionProvider.java:466)
-		at reactor.netty.channel.ChannelOperationsHandler.channelActive(ChannelOperationsHandler.java:62)
-		at io.netty.channel.AbstractChannelHandlerContext.invokeChannelActive(AbstractChannelHandlerContext.java:260)
-		at io.netty.channel.AbstractChannelHandlerContext.invokeChannelActive(AbstractChannelHandlerContext.java:238)
-		at io.netty.channel.AbstractChannelHandlerContext.fireChannelActive(AbstractChannelHandlerContext.java:231)
-		at io.netty.channel.CombinedChannelDuplexHandler$DelegatingChannelHandlerContext.fireChannelActive(CombinedChannelDuplexHandler.java:412)
-		at io.netty.channel.ChannelInboundHandlerAdapter.channelActive(ChannelInboundHandlerAdapter.java:69)
-		at io.netty.channel.CombinedChannelDuplexHandler.channelActive(CombinedChannelDuplexHandler.java:211)
-		at io.netty.channel.AbstractChannelHandlerContext.invokeChannelActive(AbstractChannelHandlerContext.java:260)
-		at io.netty.channel.AbstractChannelHandlerContext.invokeChannelActive(AbstractChannelHandlerContext.java:238)
-		at io.netty.channel.AbstractChannelHandlerContext.fireChannelActive(AbstractChannelHandlerContext.java:231)
-		at reactor.netty.tcp.SslProvider$SslReadHandler.userEventTriggered(SslProvider.java:861)
-		at io.netty.channel.AbstractChannelHandlerContext.invokeUserEventTriggered(AbstractChannelHandlerContext.java:398)
-		at io.netty.channel.AbstractChannelHandlerContext.invokeUserEventTriggered(AbstractChannelHandlerContext.java:376)
-		at io.netty.channel.AbstractChannelHandlerContext.fireUserEventTriggered(AbstractChannelHandlerContext.java:368)
-		at io.netty.handler.ssl.SslHandler.setHandshakeSuccess(SslHandler.java:1995)
-		at io.netty.handler.ssl.SslHandler.wrapNonAppData(SslHandler.java:1016)
-		at io.netty.handler.ssl.SslHandler.unwrap(SslHandler.java:1555)
-		at io.netty.handler.ssl.SslHandler.decodeJdkCompatible(SslHandler.java:1377)
-		at io.netty.handler.ssl.SslHandler.decode(SslHandler.java:1428)
-		at io.netty.handler.codec.ByteToMessageDecoder.decodeRemovalReentryProtection(ByteToMessageDecoder.java:530)
-		at io.netty.handler.codec.ByteToMessageDecoder.callDecode(ByteToMessageDecoder.java:469)
-		at io.netty.handler.codec.ByteToMessageDecoder.channelRead(ByteToMessageDecoder.java:290)
-		at io.netty.channel.AbstractChannelHandlerContext.invokeChannelRead(AbstractChannelHandlerContext.java:444)
-		at io.netty.channel.AbstractChannelHandlerContext.invokeChannelRead(AbstractChannelHandlerContext.java:420)
-		at io.netty.channel.AbstractChannelHandlerContext.fireChannelRead(AbstractChannelHandlerContext.java:412)
-		at io.netty.channel.DefaultChannelPipeline$HeadContext.channelRead(DefaultChannelPipeline.java:1357)
-		at io.netty.channel.AbstractChannelHandlerContext.invokeChannelRead(AbstractChannelHandlerContext.java:440)
-		at io.netty.channel.AbstractChannelHandlerContext.invokeChannelRead(AbstractChannelHandlerContext.java:420)
-		at io.netty.channel.DefaultChannelPipeline.fireChannelRead(DefaultChannelPipeline.java:868)
-		at io.netty.channel.nio.AbstractNioByteChannel$NioByteUnsafe.read(AbstractNioByteChannel.java:166)
-		at io.netty.channel.nio.NioEventLoop.processSelectedKey(NioEventLoop.java:796)
-		at io.netty.channel.nio.NioEventLoop.processSelectedKeysOptimized(NioEventLoop.java:732)
-		at io.netty.channel.nio.NioEventLoop.processSelectedKeys(NioEventLoop.java:658)
-		at io.netty.channel.nio.NioEventLoop.run(NioEventLoop.java:562)
-		at io.netty.util.concurrent.SingleThreadEventExecutor$4.run(SingleThreadEventExecutor.java:998)
-		at io.netty.util.internal.ThreadExecutorMap$2.run(ThreadExecutorMap.java:74)
-		at io.netty.util.concurrent.FastThreadLocalRunnable.run(FastThreadLocalRunnable.java:30)
-		at java.base/java.lang.Thread.run(Thread.java:1583)
-	Suppressed: java.lang.Exception: #block terminated with an error
-		at reactor.core.publisher.BlockingSingleSubscriber.blockingGet(BlockingSingleSubscriber.java:104)
-		at reactor.core.publisher.Mono.block(Mono.java:1779)
-		at com.epay.cs.externalservice.EISServicesClient.postEncryptedRequest(EISServicesClient.java:75)
-		at com.epay.cs.dao.ConsentDao.getWriteConsent(ConsentDao.java:109)
-		at com.epay.cs.service.ConsentService.writeConsent(ConsentService.java:203)
-		at com.epay.cs.service.ConsentService.lambda$getConsentCaptureInfo$1(ConsentService.java:518)
-		at java.base/java.util.stream.ReferencePipeline$3$1.accept(ReferencePipeline.java:197)
-		at java.base/java.util.ArrayList$ArrayListSpliterator.forEachRemaining(ArrayList.java:1708)
-		at java.base/java.util.stream.AbstractPipeline.copyInto(AbstractPipeline.java:509)
-		at java.base/java.util.stream.AbstractPipeline.wrapAndCopyInto(AbstractPipeline.java:499)
-		at java.base/java.util.stream.AbstractPipeline.evaluate(AbstractPipeline.java:575)
-		at java.base/java.util.stream.AbstractPipeline.evaluateToArrayNode(AbstractPipeline.java:260)
-		at java.base/java.util.stream.ReferencePipeline.toArray(ReferencePipeline.java:616)
-		at java.base/java.util.stream.ReferencePipeline.toArray(ReferencePipeline.java:622)
-		at java.base/java.util.stream.ReferencePipeline.toList(ReferencePipeline.java:627)
-		at com.epay.cs.service.ConsentService.getConsentCaptureInfo(ConsentService.java:531)
-		at com.epay.cs.scheduler.ConsentSyncScheduler.pendingConsentSyncScheduler(ConsentSyncScheduler.java:42)
-		at java.base/jdk.internal.reflect.DirectMethodHandleAccessor.invoke(DirectMethodHandleAccessor.java:103)
-		at java.base/java.lang.reflect.Method.invoke(Method.java:580)
-		at org.springframework.aop.support.AopUtils.invokeJoinpointUsingReflection(AopUtils.java:355)
-		at org.springframework.aop.framework.ReflectiveMethodInvocation.invokeJoinpoint(ReflectiveMethodInvocation.java:196)
-		at org.springframework.aop.framework.ReflectiveMethodInvocation.proceed(ReflectiveMethodInvocation.java:163)
-		at org.springframework.aop.framework.CglibAopProxy$CglibMethodInvocation.proceed(CglibAopProxy.java:768)
-		at org.springframework.aop.aspectj.MethodInvocationProceedingJoinPoint.proceed(MethodInvocationProceedingJoinPoint.java:89)
-		at com.epay.cs.config.annotation.AuditSchedulerAspect.logAudit(AuditSchedulerAspect.java:40)
-		at java.base/jdk.internal.reflect.DirectMethodHandleAccessor.invoke(DirectMethodHandleAccessor.java:103)
-		at java.base/java.lang.reflect.Method.invoke(Method.java:580)
-		at org.springframework.aop.aspectj.AbstractAspectJAdvice.invokeAdviceMethodWithGivenArgs(AbstractAspectJAdvice.java:641)
-		at org.springframework.aop.aspectj.AbstractAspectJAdvice.invokeAdviceMethod(AbstractAspectJAdvice.java:631)
-		at org.springframework.aop.aspectj.AspectJAroundAdvice.invoke(AspectJAroundAdvice.java:71)
-		at org.springframework.aop.framework.ReflectiveMethodInvocation.proceed(ReflectiveMethodInvocation.java:173)
-		at org.springframework.aop.framework.CglibAopProxy$CglibMethodInvocation.proceed(CglibAopProxy.java:768)
-		at org.springframework.aop.interceptor.ExposeInvocationInterceptor.invoke(ExposeInvocationInterceptor.java:97)
-		at org.springframework.aop.framework.ReflectiveMethodInvocation.proceed(ReflectiveMethodInvocation.java:184)
-		at org.springframework.aop.framework.CglibAopProxy$CglibMethodInvocation.proceed(CglibAopProxy.java:768)
-		at org.springframework.aop.framework.CglibAopProxy$DynamicAdvisedInterceptor.intercept(CglibAopProxy.java:720)
-		at com.epay.cs.scheduler.ConsentSyncScheduler$$SpringCGLIB$$0.pendingConsentSyncScheduler(<generated>)
-		at java.base/jdk.internal.reflect.DirectMethodHandleAccessor.invoke(DirectMethodHandleAccessor.java:103)
-		at java.base/java.lang.reflect.Method.invoke(Method.java:580)
-		at org.springframework.scheduling.support.ScheduledMethodRunnable.runInternal(ScheduledMethodRunnable.java:130)
-		at org.springframework.scheduling.support.ScheduledMethodRunnable.lambda$run$2(ScheduledMethodRunnable.java:124)
-		at io.micrometer.observation.Observation.observe(Observation.java:499)
-		at org.springframework.scheduling.support.ScheduledMethodRunnable.run(ScheduledMethodRunnable.java:124)
-		at org.springframework.scheduling.support.DelegatingErrorHandlingRunnable.run(DelegatingErrorHandlingRunnable.java:54)
-		at org.springframework.scheduling.concurrent.ReschedulingRunnable.run(ReschedulingRunnable.java:96)
-		at java.base/java.util.concurrent.Executors$RunnableAdapter.call(Executors.java:572)
-		at java.base/java.util.concurrent.FutureTask.run$$$capture(FutureTask.java:317)
-		at java.base/java.util.concurrent.FutureTask.run(FutureTask.java)
-		at java.base/java.util.concurrent.ScheduledThreadPoolExecutor$ScheduledFutureTask.run(ScheduledThreadPoolExecutor.java:304)
-		at java.base/java.util.concurrent.ThreadPoolExecutor.runWorker(ThreadPoolExecutor.java:1144)
-		at java.base/java.util.concurrent.ThreadPoolExecutor$Worker.run(ThreadPoolExecutor.java:642)
-		at java.base/java.lang.Thread.run(Thread.java:1583)
-Caused by: java.lang.IllegalArgumentException: Validation failed for header 'AccessToken'
-	at io.netty.handler.codec.DefaultHeaders.validateValue(DefaultHeaders.java:1019)
-	at io.netty.handler.codec.DefaultHeaders.setObject(DefaultHeaders.java:536)
-	at io.netty.handler.codec.http.DefaultHttpHeaders.set(DefaultHttpHeaders.java:241)
-	at org.springframework.http.client.reactive.ReactorClientHttpRequest.lambda$applyHeaders$3(ReactorClientHttpRequest.java:127)
-	at java.base/java.util.LinkedHashMap.forEach(LinkedHashMap.java:986)
-	at org.springframework.util.LinkedCaseInsensitiveMap.forEach(LinkedCaseInsensitiveMap.java:292)
-	at org.springframework.util.MultiValueMapAdapter.forEach(MultiValueMapAdapter.java:179)
-	at org.springframework.http.HttpHeaders.forEach(HttpHeaders.java:1870)
-	at org.springframework.http.client.reactive.ReactorClientHttpRequest.applyHeaders(ReactorClientHttpRequest.java:127)
-	at org.springframework.http.client.reactive.AbstractClientHttpRequest.lambda$doCommit$0(AbstractClientHttpRequest.java:141)
-	at reactor.core.publisher.MonoRunnable.subscribe(MonoRunnable.java:49)
-	at reactor.core.publisher.Mono.subscribe(Mono.java:4576)
-	at reactor.core.publisher.FluxConcatIterable$ConcatIterableSubscriber.onComplete(FluxConcatIterable.java:148)
-	at reactor.core.publisher.FluxConcatIterable.subscribe(FluxConcatIterable.java:60)
-	at reactor.core.publisher.MonoFromFluxOperator.subscribe(MonoFromFluxOperator.java:83)
-	at reactor.core.publisher.MonoFlatMap$FlatMapMain.onNext(MonoFlatMap.java:165)
-	at reactor.core.publisher.FluxSwitchIfEmpty$SwitchIfEmptySubscriber.onNext(FluxSwitchIfEmpty.java:74)
-	at reactor.core.publisher.Operators$MonoInnerProducerBase.complete(Operators.java:2864)
-	at reactor.core.publisher.MonoSingle$SingleSubscriber.onComplete(MonoSingle.java:180)
-	at reactor.core.publisher.FluxMapFuseable$MapFuseableSubscriber.onComplete(FluxMapFuseable.java:152)
-	at reactor.core.publisher.Operators$ScalarSubscription.request(Operators.java:2573)
-	at reactor.core.publisher.FluxMapFuseable$MapFuseableSubscriber.request(FluxMapFuseable.java:171)
-	at reactor.core.publisher.MonoSingle$SingleSubscriber.doOnRequest(MonoSingle.java:103)
-	at reactor.core.publisher.Operators$MonoInnerProducerBase.request(Operators.java:2931)
-	at reactor.core.publisher.Operators$MultiSubscriptionSubscriber.set(Operators.java:2367)
-	at reactor.core.publisher.Operators$MultiSubscriptionSubscriber.onSubscribe(Operators.java:2241)
-	at reactor.core.publisher.MonoSingle$SingleSubscriber.onSubscribe(MonoSingle.java:115)
-	at reactor.core.publisher.FluxMapFuseable$MapFuseableSubscriber.onSubscribe(FluxMapFuseable.java:96)
-	at reactor.core.publisher.FluxJust.subscribe(FluxJust.java:68)
-	at reactor.core.publisher.InternalMonoOperator.subscribe(InternalMonoOperator.java:76)
-	at reactor.core.publisher.MonoDefer.subscribe(MonoDefer.java:53)
-	at reactor.netty.http.client.HttpClientConnect$HttpIOHandlerObserver.onStateChange(HttpClientConnect.java:467)
-	at reactor.netty.ReactorNetty$CompositeConnectionObserver.onStateChange(ReactorNetty.java:716)
-	at reactor.netty.resources.DefaultPooledConnectionProvider$DisposableAcquire.onStateChange(DefaultPooledConnectionProvider.java:205)
-	at reactor.netty.resources.DefaultPooledConnectionProvider$PooledConnection.onStateChange(DefaultPooledConnectionProvider.java:466)
-	at reactor.netty.channel.ChannelOperationsHandler.channelActive(ChannelOperationsHandler.java:62)
-	at io.netty.channel.AbstractChannelHandlerContext.invokeChannelActive(AbstractChannelHandlerContext.java:260)
-	at io.netty.channel.AbstractChannelHandlerContext.invokeChannelActive(AbstractChannelHandlerContext.java:238)
-	at io.netty.channel.AbstractChannelHandlerContext.fireChannelActive(AbstractChannelHandlerContext.java:231)
-	at io.netty.channel.CombinedChannelDuplexHandler$DelegatingChannelHandlerContext.fireChannelActive(CombinedChannelDuplexHandler.java:412)
-	at io.netty.channel.ChannelInboundHandlerAdapter.channelActive(ChannelInboundHandlerAdapter.java:69)
-	at io.netty.channel.CombinedChannelDuplexHandler.channelActive(CombinedChannelDuplexHandler.java:211)
-	at io.netty.channel.AbstractChannelHandlerContext.invokeChannelActive(AbstractChannelHandlerContext.java:260)
-	at io.netty.channel.AbstractChannelHandlerContext.invokeChannelActive(AbstractChannelHandlerContext.java:238)
-	at io.netty.channel.AbstractChannelHandlerContext.fireChannelActive(AbstractChannelHandlerContext.java:231)
-	at reactor.netty.tcp.SslProvider$SslReadHandler.userEventTriggered(SslProvider.java:861)
-	at io.netty.channel.AbstractChannelHandlerContext.invokeUserEventTriggered(AbstractChannelHandlerContext.java:398)
-	at io.netty.channel.AbstractChannelHandlerContext.invokeUserEventTriggered(AbstractChannelHandlerContext.java:376)
-	at io.netty.channel.AbstractChannelHandlerContext.fireUserEventTriggered(AbstractChannelHandlerContext.java:368)
-	at io.netty.handler.ssl.SslHandler.setHandshakeSuccess(SslHandler.java:1995)
-	at io.netty.handler.ssl.SslHandler.wrapNonAppData(SslHandler.java:1016)
-	at io.netty.handler.ssl.SslHandler.unwrap(SslHandler.java:1555)
-	at io.netty.handler.ssl.SslHandler.decodeJdkCompatible(SslHandler.java:1377)
-	at io.netty.handler.ssl.SslHandler.decode(SslHandler.java:1428)
-	at io.netty.handler.codec.ByteToMessageDecoder.decodeRemovalReentryProtection(ByteToMessageDecoder.java:530)
-	at io.netty.handler.codec.ByteToMessageDecoder.callDecode(ByteToMessageDecoder.java:469)
-	at io.netty.handler.codec.ByteToMessageDecoder.channelRead(ByteToMessageDecoder.java:290)
-	at io.netty.channel.AbstractChannelHandlerContext.invokeChannelRead(AbstractChannelHandlerContext.java:444)
-	at io.netty.channel.AbstractChannelHandlerContext.invokeChannelRead(AbstractChannelHandlerContext.java:420)
-	at io.netty.channel.AbstractChannelHandlerContext.fireChannelRead(AbstractChannelHandlerContext.java:412)
-	at io.netty.channel.DefaultChannelPipeline$HeadContext.channelRead(DefaultChannelPipeline.java:1357)
-	at io.netty.channel.AbstractChannelHandlerContext.invokeChannelRead(AbstractChannelHandlerContext.java:440)
-	at io.netty.channel.AbstractChannelHandlerContext.invokeChannelRead(AbstractChannelHandlerContext.java:420)
-	at io.netty.channel.DefaultChannelPipeline.fireChannelRead(DefaultChannelPipeline.java:868)
-	at io.netty.channel.nio.AbstractNioByteChannel$NioByteUnsafe.read(AbstractNioByteChannel.java:166)
-	at io.netty.channel.nio.NioEventLoop.processSelectedKey(NioEventLoop.java:796)
-	at io.netty.channel.nio.NioEventLoop.processSelectedKeysOptimized(NioEventLoop.java:732)
-	at io.netty.channel.nio.NioEventLoop.processSelectedKeys(NioEventLoop.java:658)
-	at io.netty.channel.nio.NioEventLoop.run(NioEventLoop.java:562)
-	at io.netty.util.concurrent.SingleThreadEventExecutor$4.run(SingleThreadEventExecutor.java:998)
-	at io.netty.util.internal.ThreadExecutorMap$2.run(ThreadExecutorMap.java:74)
-	at io.netty.util.concurrent.FastThreadLocalRunnable.run(FastThreadLocalRunnable.java:30)
-	at java.base/java.lang.Thread.run(Thread.java:1583)
-Caused by: java.lang.IllegalArgumentException: a header value contains prohibited character 0xd at index 76.
-	at io.netty.handler.codec.http.DefaultHttpHeadersFactory$2.validate(DefaultHttpHeadersFactory.java:50)
-	at io.netty.handler.codec.http.DefaultHttpHeadersFactory$2.validate(DefaultHttpHeadersFactory.java:44)
-	at io.netty.handler.codec.DefaultHeaders.validateValue(DefaultHeaders.java:1017)
-	... 72 common frames omitted
-2026-06-18 14:59:01.284 DEBUG | com.epay.cs.util.DateTimeUtils:44 | principal= | scenario=pendingConsentSyncScheduler | operation=pendingConsentSyncScheduler | correlation=76973058-c0ba-4b0e-8aee-718e822827ab | getCurrentTimeInMills | Fetching current time in milliseconds
-Hibernate: insert into scheduler_audit_log (error_message,instance_id,job_end_time,job_name,job_start_time,status,id) values (?,?,?,?,?,?,?)
-2026-06-18 14:59:01.369 INFO | com.epay.cs.config.annotation.AuditSchedulerAspect:49 | principal= | scenario=pendingConsentSyncScheduler | operation=pendingConsentSyncScheduler | correlation=76973058-c0ba-4b0e-8aee-718e822827ab | logAudit | Scheduler audit saved: Pending_Consent_Sync_Scheduler | status = FAILED
-
-package com.epay.admin.portal.master.controller;
-
-import com.epay.admin.portal.master.dto.request.MasterApprovalRequest;
-import com.epay.admin.portal.master.dto.request.MasterInactivationRequest;
-import com.epay.admin.portal.master.dto.response.BulkUploadResponse;
-import com.epay.admin.portal.master.dto.response.MasterResponse;
-import com.epay.admin.portal.master.service.AdminMasterService;
-import com.epay.admin.portal.model.response.AdminPortalResponse;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.sbi.epay.logging.utility.LoggerFactoryUtility;
-import com.sbi.epay.logging.utility.LoggerUtility;
-import lombok.RequiredArgsConstructor;
-import org.springframework.data.domain.Pageable;
-import org.springframework.data.domain.Sort;
-import org.springframework.data.web.PageableDefault;
-import org.springframework.security.access.prepost.PreAuthorize;
-import org.springframework.web.bind.annotation.*;
-import org.springframework.web.multipart.MultipartFile;
-
-import java.io.IOException;
-
-
-
-@RestController
-@RequestMapping("/api/v1/masters")
-@RequiredArgsConstructor
-public class MasterController {
-
-    private final AdminMasterService masterService;
-    public static final int DEFAULT_PAGE_SIZE = 10;
-    private final LoggerUtility log = LoggerFactoryUtility.getLogger(this.getClass());
+    List<ErrorDto> errorDtoList;
 
     /**
-     * MAKER — Submit create request.
-     * POST /api/v1/masters/{masterType}
+     * Check mandatory field
      *
-     * Constitution:     { "constitutionName": "Partnership Firm" }
-     * Country:          { "countryCode": "IN", "countryName": "India" }
-     * CountryCurrency:  { "countryId": "uuid", "currencyCode": "INR", "currencyName": "Rupee" }
-     *
-     * Response: APPROVAL_PENDING, workflow PENDING
+     * @param value     String
+     * @param fieldName String
      */
-    @PreAuthorize("hasAnyRole('ONBOARDING_MANAGER')")
-    @PostMapping("/{masterType}")
-    public AdminPortalResponse<MasterResponse> createMaster(@PathVariable String masterType, @RequestBody JsonNode requestBody) {
-        log.info("Create request received masterType={}", masterType);
-        return masterService.submitCreate(masterType, requestBody);
+    protected void checkMandatoryField(String value, String fieldName) {
+        if (StringUtils.isEmpty(StringUtils.strip(value)) || StringUtils.equalsAnyIgnoreCase(value, "null")) {
+            addError(fieldName, MANDATORY_ERROR_CODE, MANDATORY_ERROR_MESSAGE);
+        }
     }
 
     /**
-     * MAKER — Submit inactivation for one or more ACTIVE records.
-     * POST /api/v1/masters/{masterType}/inactivate
+     * Checks if a given object is null or empty, and adds an error if it is.
      *
-     * Body: { "masterIds": ["uuid1", "uuid2"], "remark": "No longer needed" }
-     *
-     * Response: INACTIVATION_PENDING, workflow INACTIVATION_PENDING
-     * Fails if: record not ACTIVE, or parent has active children
+     * @param value     - The object to check
+     * @param fieldName - The name of the field to include in the error message
      */
-    @PreAuthorize("hasAnyRole('ONBOARDING_MANAGER')")
-    @PostMapping("/{masterType}/inactivate")
-    public AdminPortalResponse<MasterResponse> inactivateMaster(@PathVariable String masterType, @RequestBody MasterInactivationRequest request) {
-        log.info("Inactivate request received masterType={}", masterType);
-        return masterService.submitInactivation(masterType, request);
+    void checkMandatoryField(Object value, String fieldName) {
+        if (ObjectUtils.isEmpty(value)) {
+            addError(fieldName, MANDATORY_ERROR_CODE, MANDATORY_ERROR_MESSAGE);
+        }
     }
 
     /**
-     * CHECKER — Approve pending records.
-     * POST /api/v1/masters/{masterType}/approve
+     * Check mandatory field
      *
-     * Body: { "records": [{ "masterId": "uuid", "remark": "Looks good" }] }
-     *
-     * APPROVAL_PENDING     → entity ACTIVE,   workflow APPROVED
-     * INACTIVATION_PENDING → entity INACTIVE, workflow APPROVED
+     * @param value     UUID
+     * @param fieldName String
      */
-    @PreAuthorize("hasAnyRole('ONBOARDING_CHECKER')")
-    @PostMapping("/{masterType}/approve")
-    public AdminPortalResponse<String> approve(@PathVariable String masterType, @RequestBody MasterApprovalRequest request) {
-        log.info("Approve request received masterType={}", masterType);
-        return masterService.approve(masterType, request);
+    protected void checkMandatoryField(UUID value, String fieldName) {
+        if (ObjectUtils.isEmpty(value)) {
+            addError(fieldName, MANDATORY_ERROR_CODE, MANDATORY_ERROR_MESSAGE);
+        }
     }
 
     /**
-     * CHECKER — Reject pending records.
-     * POST /api/v1/masters/{masterType}/reject
+     * Check mandatory collection
      *
-     * Body: { "records": [{ "masterId": "uuid", "remark": "Invalid data" }] }
-     *
-     * APPROVAL_PENDING     → entity REJECTED, workflow REJECTED
-     * INACTIVATION_PENDING → entity ACTIVE,   workflow REJECTED (rollback)
+     * @param collection Collection
+     * @param fieldName  String
      */
-    @PreAuthorize("hasAnyRole('ONBOARDING_CHECKER')")
-    @PostMapping("/{masterType}/reject")
-    public AdminPortalResponse<String> reject(@PathVariable String masterType, @RequestBody MasterApprovalRequest request) {
-        log.info("Reject request received masterType={}", masterType);
-        return masterService.reject(masterType, request);
+    protected void checkMandatoryCollection(Collection<?> collection, String fieldName) {
+        if (CollectionUtils.isEmpty(collection)) {
+            addError(fieldName, MANDATORY_ERROR_CODE, MANDATORY_ERROR_MESSAGE);
+        }
     }
 
     /**
-     * MAKER — Bulk upload CSV.
-     * POST /api/v1/masters/{masterType}/bulk
-     * multipart/form-data, field name: "file"
+     * Check mandatory fields
+     *
+     * @param fieldName String
+     * @param values    String...
      */
-    @PreAuthorize("hasAnyRole('ONBOARDING_MANAGER')")
-    @PostMapping("/{masterType}/bulk")
-    public AdminPortalResponse<BulkUploadResponse> bulkUpload(@PathVariable String masterType, @RequestParam("file") MultipartFile file) throws IOException {
-        log.info("Bulk upload received masterType={} fileName={}", masterType, file.getOriginalFilename());
-        return masterService.bulkUpload(masterType, file);
+    protected void checkMandatoryFields(String fieldName, String... values) {
+        boolean allEmpty = Arrays.stream(values).allMatch(StringUtils::isEmpty);
+        if (allEmpty) {
+            addError(fieldName, MANDATORY_ERROR_CODE, MANDATORY_ERROR_MESSAGE);
+        }
     }
 
     /**
-     * BOTH — Search and paginate records.
-     * POST /api/v1/masters/{masterType}/search
+     * Check mandatary date field
      *
-     * Constitution: { "constitutionName": "HUF", "status": "ACTIVE" }
-     * CountryCurrency: { "countryCode": "IN", "currencyCode": "INR", "status": "ACTIVE" }
-     *
-     * Supports fromDate/toDate (epoch ms) for modified date range filter.
-     * Pageable via query params: ?page=0&size=10&sort=updatedAt,desc
+     * @param date      Long
+     * @param fieldName String
      */
-    @PreAuthorize("hasAnyRole('ONBOARDING_MANAGER', 'ONBOARDING_CHECKER')")
-    @PostMapping("/{masterType}/search")
-    public AdminPortalResponse<?> search(@PathVariable String masterType, @RequestBody JsonNode request, @PageableDefault(sort = "updatedAt", size = DEFAULT_PAGE_SIZE, direction = Sort.Direction.DESC) Pageable pageable) {
-        log.info("Search request received masterType={} page={} size={}", masterType, pageable.getPageNumber(), pageable.getPageSize());
-        return masterService.search(masterType, request, pageable);
-    }
-}
------------------------------------------
-package com.epay.admin.portal.master.service;
-
-
-import com.epay.admin.portal.exceptions.AdminPortalException;
-import com.epay.admin.portal.master.dao.MasterWorkflowDao;
-import com.epay.admin.portal.master.dto.request.MasterApprovalRequest;
-import com.epay.admin.portal.master.dto.request.MasterInactivationRequest;
-import com.epay.admin.portal.master.dto.response.BulkUploadResponse;
-import com.epay.admin.portal.master.dto.response.MasterResponse;
-import com.epay.admin.portal.master.entity.MasterWorkflow;
-import com.epay.admin.portal.master.factory.MasterHandlerFactory;
-import com.epay.admin.portal.master.handler.AbstractMasterHandler;
-import com.epay.admin.portal.master.handler.MasterHandler;
-import com.epay.admin.portal.master.util.ENUM.MasterType;
-import com.epay.admin.portal.master.util.ENUM.WorkflowStatus;
-import com.epay.admin.portal.model.response.AdminPortalResponse;
-
-import com.epay.admin.portal.util.EPayIdentityUtil;
-import com.epay.admin.portal.validator.MasterRequestValidator;
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.sbi.epay.logging.utility.LoggerFactoryUtility;
-import com.sbi.epay.logging.utility.LoggerUtility;
-import lombok.RequiredArgsConstructor;
-import org.springframework.data.domain.Pageable;
-import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
-import org.springframework.web.multipart.MultipartFile;
-
-import java.io.IOException;
-import java.text.MessageFormat;
-import java.util.List;
-import java.util.UUID;
-
-import static com.epay.admin.portal.util.AdminPortalConstants.SUCCESS_RESPONSE_CODE;
-import static com.epay.admin.portal.util.ErrorConstants.*;
-
-
-@Service
-@RequiredArgsConstructor
-public class AdminMasterService {
-
-    private final MasterWorkflowDao masterWorkflowDao;
-    private final MasterHandlerFactory handlerFactory;
-    private final MasterBulkUploadService masterBulkUploadService;
-    private final MasterRequestValidator masterRequestValidator;
-    private final ObjectMapper objectMapper;
-    private final LoggerUtility log = LoggerFactoryUtility.getLogger(this.getClass());
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // MAKER: Submit Create
-    // New entity → APPROVAL_PENDING, Workflow → PENDING
-    // ─────────────────────────────────────────────────────────────────────────
-
-    @Transactional
-    public AdminPortalResponse<MasterResponse> submitCreate(String masterType, JsonNode request) {
-        MasterType master = MasterType.getMasterType(masterType);
-        log.info("Submitting create for masterType={}", master);
-        MasterHandler<?, ?> handler = handlerFactory.getHandler(master);
-        MasterWorkflow workflow = validateAndCreate(handler, request);
-        log.info("Create workflow submitted masterType={} workflowId={}", master, workflow.getId());
-        return buildMasterResponse(List.of(buildWorkflowResponse("Request submitted successfully", workflow)));
-    }
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // MAKER: Submit Inactivation
-    // Entity ACTIVE → INACTIVATION_PENDING, Workflow → INACTIVATION_PENDING
-    // ─────────────────────────────────────────────────────────────────────────
-
-    @Transactional
-    public AdminPortalResponse<MasterResponse> submitInactivation(String masterType,
-                                                                  MasterInactivationRequest request) {
-        MasterType master = MasterType.getMasterType(masterType);
-        masterRequestValidator.validateInactivationRequest(request);
-        log.info("Submitting inactivation for masterType={} recordCount={}",
-                master, request.getMasterIds().size());
-        AbstractMasterHandler<?, ?> handler = handlerFactory.getAbstractHandler(master);
-        List<MasterResponse> responses = request.getMasterIds().stream()
-                .map(recordId -> buildWorkflowResponse(
-                        "Inactivation submitted successfully",
-                        handler.submitInactivation(recordId, request.getRemark())))
-                .toList();
-        return buildMasterResponse(responses);
-    }
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // CHECKER: Approve
-    // APPROVAL_PENDING     → entity ACTIVE,    workflow APPROVED
-    // INACTIVATION_PENDING → entity INACTIVE,  workflow APPROVED
-    // ─────────────────────────────────────────────────────────────────────────
-
-    @Transactional
-    public AdminPortalResponse<String> approve(String masterType, MasterApprovalRequest request) {
-        MasterType master = MasterType.getMasterType(masterType);
-        masterRequestValidator.validateApprovalRequest(request);
-        log.info("Approving records for masterType={} count={}", master, request.getRecords().size());
-        AbstractMasterHandler<?, ?> handler = handlerFactory.getAbstractHandler(master);
-        List<String> responses = request.getRecords().stream()
-                .map(record -> processApprove(master, handler, record))
-                .toList();
-        return buildStringResponse(responses);
-    }
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // CHECKER: Reject
-    // APPROVAL_PENDING     → entity REJECTED, workflow REJECTED
-    // INACTIVATION_PENDING → entity ACTIVE,   workflow REJECTED (rollback)
-    // ─────────────────────────────────────────────────────────────────────────
-
-    @Transactional
-    public AdminPortalResponse<String> reject(String masterType, MasterApprovalRequest request) {
-        MasterType master = MasterType.getMasterType(masterType);
-        masterRequestValidator.validateRejectionRequest(request);
-        log.info("Rejecting records for masterType={} count={}", master, request.getRecords().size());
-        AbstractMasterHandler<?, ?> handler = handlerFactory.getAbstractHandler(master);
-        List<String> responses = request.getRecords().stream()
-                .map(record -> processReject(master, handler, record))
-                .toList();
-        return buildStringResponse(responses);
-    }
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // BOTH: Search
-    // ─────────────────────────────────────────────────────────────────────────
-
-    public AdminPortalResponse<?> search(String masterType, JsonNode request, Pageable pageable) {
-        MasterType master = MasterType.getMasterType(masterType);
-        log.info("Searching records for masterType={}", master);
-        return handlerFactory.getHandler(master).search(request, pageable);
-    }
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // MAKER: Bulk Upload
-    // ─────────────────────────────────────────────────────────────────────────
-
-    public AdminPortalResponse<BulkUploadResponse> bulkUpload(String masterType,
-                                                              MultipartFile file) throws IOException {
-        log.info("Bulk upload for masterType={} fileName={}", masterType, file.getOriginalFilename());
-        BulkUploadResponse response = masterBulkUploadService.bulkUpload(masterType, file);
-        return AdminPortalResponse.<BulkUploadResponse>builder()
-                .status(SUCCESS_RESPONSE_CODE)
-                .data(List.of(response))
-                .count(1L).total(1L)
-                .build();
-    }
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // Private helpers
-    // ─────────────────────────────────────────────────────────────────────────
-
-    private <T> MasterWorkflow validateAndCreate(MasterHandler<T, ?> handler, JsonNode request) {
-        T dto = deserialize(handler.getDtoClass(), request);
-        masterRequestValidator.validateCreateRequest(handler.getMasterType(), dto);
-        handler.validateCreate(dto);
-        return handler.createMaster(dto);
-    }
-
-    private <T> T deserialize(Class<T> clazz, JsonNode node) {
-        try {
-            return objectMapper.treeToValue(node, clazz);
-        } catch (JsonProcessingException | IllegalArgumentException ex) {
-            log.error("Failed to deserialize request to {}", clazz.getSimpleName(), ex);
-            throw new AdminPortalException(JSON_ERROR_CODE,
-                    MessageFormat.format(JSON_ERROR_MESSAGE, clazz.getSimpleName()));
+    protected void checkMandatoryDateField(Long date, String fieldName) {
+        if (ObjectUtils.isEmpty(date) || date < 0) {
+            addError(fieldName, MANDATORY_ERROR_CODE, MANDATORY_ERROR_MESSAGE);
         }
     }
 
-    private String processApprove(MasterType masterType,
-                                  AbstractMasterHandler<?, ?> handler,
-                                  MasterApprovalRequest.ApprovalItem record) {
-        log.info("Processing approve masterType={} masterId={}", masterType, record.getMasterId());
-        MasterWorkflow workflow = findPendingWorkflow(masterType, record.getMasterId());
-        handler.validateAndApplyApproved(workflow);          // transitions entity + workflow status
-        workflow.setRemark(record.getRemark());
-        workflow.setCheckerId(EPayIdentityUtil.getUserPrincipal().getUsername());
-        masterWorkflowDao.save(workflow);
-        log.info("Approved masterId={} masterType={}", record.getMasterId(), masterType);
-        return "Approved masterId=" + record.getMasterId();
-    }
-
-    private String processReject(MasterType masterType,
-                                 AbstractMasterHandler<?, ?> handler,
-                                 MasterApprovalRequest.ApprovalItem record) {
-        log.info("Processing reject masterType={} masterId={}", masterType, record.getMasterId());
-        MasterWorkflow workflow = findPendingWorkflow(masterType, record.getMasterId());
-        handler.validateAndApplyRejected(workflow, record.getRemark()); // transitions entity + workflow status
-        workflow.setRemark(record.getRemark());
-        workflow.setCheckerId(EPayIdentityUtil.getUserPrincipal().getUsername());
-        masterWorkflowDao.save(workflow);
-        log.info("Rejected masterId={} masterType={}", record.getMasterId(), masterType);
-        return "Rejected masterId=" + record.getMasterId();
-    }
-
-    private MasterWorkflow findPendingWorkflow(MasterType masterType, UUID recordId) {
-        return masterWorkflowDao.findLatestByMasterTypeAndRecordIdAndStatuses(
-                        masterType, recordId,
-                        List.of(WorkflowStatus.PENDING, WorkflowStatus.INACTIVATION_PENDING))
-                .orElseThrow(() -> new AdminPortalException(NOT_FOUND_ERROR_CODE,
-                        MessageFormat.format(NOT_FOUND_ERROR_MESSAGE,
-                                "Pending workflow for masterId=" + recordId)));
-    }
-
-    private MasterResponse buildWorkflowResponse(String message, MasterWorkflow workflow) {
-        return MasterResponse.builder()
-                .message(message)
-                .status(workflow.getStatus().name())
-                .masterRecordId(workflow.getRecordId())
-                .masterCode(workflow.getMasterCode())
-                .build();
-    }
-
-    private AdminPortalResponse<MasterResponse> buildMasterResponse(List<MasterResponse> data) {
-        return AdminPortalResponse.<MasterResponse>builder()
-                .status(SUCCESS_RESPONSE_CODE)
-                .data(data)
-                .count((long) data.size())
-                .total((long) data.size())
-                .build();
-    }
-
-    private AdminPortalResponse<String> buildStringResponse(List<String> data) {
-        return AdminPortalResponse.<String>builder()
-                .status(SUCCESS_RESPONSE_CODE)
-                .data(data)
-                .count((long) data.size())
-                .total((long) data.size())
-                .build();
-    }
-}
-
---------------------------------------------------------
-package com.epay.admin.portal.validator;
-
-import com.epay.admin.portal.master.dto.request.CityAreaPincodeDto;
-import com.epay.admin.portal.master.dto.request.ConstitutionDTO;
-import com.epay.admin.portal.master.dto.request.CountryCurrencyDTO;
-import com.epay.admin.portal.master.dto.request.CountryDTO;
-import com.epay.admin.portal.master.dto.request.MasterApprovalRequest;
-import com.epay.admin.portal.master.dto.request.MasterInactivationRequest;
-import com.epay.admin.portal.master.dto.request.NatureOfBusinessDto;
-import com.epay.admin.portal.master.dto.request.StateDto;
-import com.epay.admin.portal.master.util.ENUM.MasterType;
-import com.sbi.epay.logging.utility.LoggerFactoryUtility;
-import com.sbi.epay.logging.utility.LoggerUtility;
-import org.springframework.stereotype.Component;
-
-import java.util.ArrayList;
-import java.util.HashSet;
-import java.util.Set;
-import java.util.UUID;
-
-import static com.epay.admin.portal.util.AdminPortalConstants.ALPHA_ONLY_REGEX;
-import static com.epay.admin.portal.util.AdminPortalConstants.ALPHANUMERIC_REGEX;
-import static com.epay.admin.portal.util.AdminPortalConstants.COUNTRY_OR_STATE_NAME_REGEX;
-import static com.epay.admin.portal.util.AdminPortalConstants.GENERIC_TEXT_REGEX;
-import static com.epay.admin.portal.util.AdminPortalConstants.NAME_REGEX;
-import static com.epay.admin.portal.util.AdminPortalConstants.PINCODE_REGEX;
-import static com.epay.admin.portal.util.AdminPortalConstants.REMARK_LENGTH;
-import static com.epay.admin.portal.util.ErrorConstants.INVALID_ERROR_CODE;
-import static com.epay.admin.portal.util.ErrorConstants.INVALID_ERROR_MESSAGE;
-import static com.epay.admin.portal.util.ErrorConstants.INCORRECT_FORMAT;
-
-@Component
-public class MasterRequestValidator extends BaseValidator {
-
-    private static final int MASTER_NAME_MAX_LENGTH = 255;
-    private static final int COUNTRY_CODE_MAX_LENGTH = 10;
-    private static final int CURRENCY_CODE_MAX_LENGTH = 10;
-    private static final int PIN_CODE_MAX_LENGTH = 20;
-
-    private static final String CONSTITUTION_NAME = "constitutionName";
-    private static final String COUNTRY_CODE = "countryCode";
-    private static final String COUNTRY_NAME = "countryName";
-    private static final String CURRENCY_CODE = "currencyCode";
-    private static final String CURRENCY_NAME = "currencyName";
-    private static final String STATE_NAME = "stateName";
-    private static final String CITY_AREA_NAME = "cityAreaName";
-    private static final String PIN_CODE = "pinCode";
-    private static final String NATURE_OF_BUSINESS_NAME = "natureOfBusinessName";
-    private static final String REQUEST = "request";
-    private static final String RECORDS = "records";
-    private static final String MASTER_IDS = "masterIds";
-    private static final String MASTER_ID = "masterId";
-    private static final String REMARK = "remark";
-    private static final String DUPLICATE_VALUE = "Duplicate value provided";
-
-    private final LoggerUtility logger = LoggerFactoryUtility.getLogger(this.getClass());
-
-    public void validateCreateRequest(MasterType masterType, Object request) {
-        logger.info("Validating master create request for masterType={}", masterType);
-        errorDtoList = new ArrayList<>();
-        checkMandatoryField(request, REQUEST);
-        throwIfErrors();
-
-        switch (masterType) {
-            case CONSTITUTION -> validateConstitution((ConstitutionDTO) request);
-            case COUNTRY -> validateCountry((CountryDTO) request);
-            case COUNTRY_CURRENCY -> validateCountryCurrency((CountryCurrencyDTO) request);
-            case STATE -> validateState((StateDto) request);
-            case CITY_AREA_PINCODE -> validateCityAreaPincode((CityAreaPincodeDto) request);
-            case NATURE_OF_BUSINESS -> validateNatureOfBusiness((NatureOfBusinessDto) request);
+    protected void validateFieldLength(String value, int maxLength, String fieldName) {
+        if (StringUtils.isNotEmpty(value) && value.length() > maxLength) {
+            addError(MIN_MAX_ALLOWED_LENGTH_ERROR_CODE, MAX_ALLOWED_LENGTH_ERROR_MESSAGE, fieldName, maxLength);
         }
     }
 
-    public void validateInactivationRequest(MasterInactivationRequest request) {
-        logger.info("Validating master inactivation request");
-        errorDtoList = new ArrayList<>();
-        checkMandatoryField(request, REQUEST);
-        throwIfErrors();
 
-        checkMandatoryField(request.getMasterIds(), MASTER_IDS);
-        checkMandatoryField(request.getRemark(), REMARK);
-        throwIfErrors();
-
-        validateMasterIds(request.getMasterIds(), MASTER_IDS);
-        validateLeadingTrailing(REMARK, request.getRemark());
-        validateMaxLength(REMARK, request.getRemark(), REMARK_LENGTH);
-    }
-
-    public void validateApprovalRequest(MasterApprovalRequest request) {
-        logger.info("Validating master approval request");
-        validateApprovalOrRejectionRequest(request, false);
-    }
-
-    public void validateRejectionRequest(MasterApprovalRequest request) {
-        logger.info("Validating master rejection request");
-        validateApprovalOrRejectionRequest(request, true);
-    }
-
-    private void validateConstitution(ConstitutionDTO request) {
-        validateMandatoryFields(CONSTITUTION_NAME, request.getConstitutionName());
-        validateLeadingTrailing(CONSTITUTION_NAME, request.getConstitutionName());
-        validateMaxLength(CONSTITUTION_NAME, request.getConstitutionName(), MASTER_NAME_MAX_LENGTH);
-        validateFormat(CONSTITUTION_NAME, request.getConstitutionName(), GENERIC_TEXT_REGEX);
-    }
-
-    private void validateCountry(CountryDTO request) {
-        validateMandatoryFields(
-                COUNTRY_CODE, request.getCountryCode(),
-                COUNTRY_NAME, request.getCountryName());
-        validateLeadingTrailing(
-                COUNTRY_CODE, request.getCountryCode(),
-                COUNTRY_NAME, request.getCountryName());
-        validateMaxLength(
-                COUNTRY_CODE, request.getCountryCode(), COUNTRY_CODE_MAX_LENGTH,
-                COUNTRY_NAME, request.getCountryName(), MASTER_NAME_MAX_LENGTH);
-        validateFormat(COUNTRY_CODE, request.getCountryCode(), ALPHANUMERIC_REGEX);
-        validateFormat(COUNTRY_NAME, request.getCountryName(), COUNTRY_OR_STATE_NAME_REGEX);
-    }
-
-    private void validateCountryCurrency(CountryCurrencyDTO request) {
-        validateMandatoryFields(
-                COUNTRY_CODE, request.getCountryCode(),
-                CURRENCY_CODE, request.getCurrencyCode(),
-                CURRENCY_NAME, request.getCurrencyName());
-        validateLeadingTrailing(
-                COUNTRY_CODE, request.getCountryCode(),
-                CURRENCY_CODE, request.getCurrencyCode(),
-                CURRENCY_NAME, request.getCurrencyName());
-        validateMaxLength(
-                COUNTRY_CODE, request.getCountryCode(), COUNTRY_CODE_MAX_LENGTH,
-                CURRENCY_CODE, request.getCurrencyCode(), CURRENCY_CODE_MAX_LENGTH,
-                CURRENCY_NAME, request.getCurrencyName(), MASTER_NAME_MAX_LENGTH);
-        validateFormat(COUNTRY_CODE, request.getCountryCode(), ALPHANUMERIC_REGEX);
-        validateFormat(CURRENCY_CODE, request.getCurrencyCode(), ALPHA_ONLY_REGEX);
-        validateFormat(CURRENCY_NAME, request.getCurrencyName(), NAME_REGEX);
-    }
-
-    private void validateState(StateDto request) {
-        validateMandatoryFields(STATE_NAME, request.getStateName());
-        validateLeadingTrailing(STATE_NAME, request.getStateName());
-        validateMaxLength(STATE_NAME, request.getStateName(), MASTER_NAME_MAX_LENGTH);
-        validateFormat(STATE_NAME, request.getStateName(), COUNTRY_OR_STATE_NAME_REGEX);
-    }
-
-    private void validateCityAreaPincode(CityAreaPincodeDto request) {
-        validateMandatoryFields(
-                CITY_AREA_NAME, request.getCityAreaName(),
-                STATE_NAME, request.getStateName(),
-                PIN_CODE, request.getPinCode());
-        validateLeadingTrailing(
-                CITY_AREA_NAME, request.getCityAreaName(),
-                STATE_NAME, request.getStateName(),
-                PIN_CODE, request.getPinCode());
-        validateMaxLength(
-                CITY_AREA_NAME, request.getCityAreaName(), MASTER_NAME_MAX_LENGTH,
-                STATE_NAME, request.getStateName(), MASTER_NAME_MAX_LENGTH,
-                PIN_CODE, request.getPinCode(), PIN_CODE_MAX_LENGTH);
-        validateFormat(CITY_AREA_NAME, request.getCityAreaName(), GENERIC_TEXT_REGEX);
-        validateFormat(STATE_NAME, request.getStateName(), COUNTRY_OR_STATE_NAME_REGEX);
-        validateFormat(PIN_CODE, request.getPinCode(), PINCODE_REGEX);
-    }
-
-    private void validateNatureOfBusiness(NatureOfBusinessDto request) {
-        validateMandatoryFields(NATURE_OF_BUSINESS_NAME, request.getNatureOfBusinessName());
-        validateLeadingTrailing(NATURE_OF_BUSINESS_NAME, request.getNatureOfBusinessName());
-        validateMaxLength(NATURE_OF_BUSINESS_NAME, request.getNatureOfBusinessName(), MASTER_NAME_MAX_LENGTH);
-        validateFormat(NATURE_OF_BUSINESS_NAME, request.getNatureOfBusinessName(), GENERIC_TEXT_REGEX);
-    }
-
-    private void validateMandatoryFields(Object... fields) {
-        for (int index = 0; index < fields.length; index += 2) {
-            checkMandatoryField((String) fields[index + 1], (String) fields[index]);
+    protected void validateFieldMinLength(String value, int minLength, String fieldName) {
+        if (StringUtils.isNotEmpty(value) && value.length() < minLength) {
+            addError(MIN_MAX_ALLOWED_LENGTH_ERROR_CODE, MIN_ALLOWED_LENGTH_ERROR_MESSAGE, fieldName, minLength);
         }
-        throwIfErrors();
     }
-
-    private void validateLeadingTrailing(Object... fields) {
-        for (int index = 0; index < fields.length; index += 2) {
-            checkForLeadingTrailingAndSingleSpace((String) fields[index + 1], (String) fields[index]);
+    protected void validateDateFieldForPastDate(Long date, String fieldName) {
+        if (date < MerchantConstant.MIN_TIMESTAMP || getCurrentTimeInMills() < date) {
+            addError(INVALID_ERROR_CODE, INVALID_ERROR_MESSAGE, fieldName, MerchantConstant.GREATER_THEN_CURRENT_DATE_OR_NOT_HAVING_FORMAT);
         }
-        throwIfErrors();
     }
 
-    private void validateMaxLength(Object... fields) {
-        for (int index = 0; index < fields.length; index += 3) {
-            validateFieldLength((String) fields[index + 1], (int) fields[index + 2], (String) fields[index]);
+    protected void validateDateFieldForFutureDate(Long date, String fieldName) {
+        if (date > MerchantConstant.MAX_TIMESTAMP || getCurrentTimeInMills() > date) {
+            addError(INVALID_ERROR_CODE, INVALID_ERROR_MESSAGE, fieldName, MerchantConstant.LESS_THEN_CURRENT_DATE_OR_NOT_HAVING_FORMAT);
         }
-        throwIfErrors();
     }
 
-    private void validateFormat(String fieldName, String value, String regex) {
-        validateFieldWithRegexAndEmpty(value, regex, fieldName, INCORRECT_FORMAT);
-        throwIfErrors();
-    }
-
-    private void validateApprovalOrRejectionRequest(MasterApprovalRequest request, boolean remarkRequired) {
-        errorDtoList = new ArrayList<>();
-        checkMandatoryField(request, REQUEST);
-        throwIfErrors();
-
-        checkMandatoryField(request.getRecords(), RECORDS);
-        throwIfErrors();
-
-        Set<UUID> uniqueMasterIds = new HashSet<>();
-        for (MasterApprovalRequest.ApprovalItem record : request.getRecords()) {
-            checkMandatoryField(record, RECORDS);
-            if (record == null) {
-                continue;
-            }
-            checkMandatoryField(record.getMasterId(), MASTER_ID);
-            if (remarkRequired) {
-                checkMandatoryField(record.getRemark(), REMARK);
-            }
+    protected void validateFieldWithRegex(String value, int maxLength, String regex, String fieldName, String message) {
+        if (StringUtils.isNotEmpty(value) && (value.length() > maxLength || validate(value, regex))) {
+            addError(fieldName, INVALID_FORMAT_OR_MAX_LEN_ERROR_CODE, message + " " + maxLength);
         }
-        throwIfErrors();
+    }
 
-        for (MasterApprovalRequest.ApprovalItem record : request.getRecords()) {
-            if (!uniqueMasterIds.add(record.getMasterId())) {
-                addError(INVALID_ERROR_CODE, INVALID_ERROR_MESSAGE, (Object) MASTER_ID, DUPLICATE_VALUE);
-            }
-            if (record.getRemark() != null) {
-                checkForLeadingTrailingAndSingleSpace(record.getRemark(), REMARK);
-                validateFieldLength(record.getRemark(), REMARK_LENGTH, REMARK);
-            }
+    protected void validateFieldWithRegex(String value, String regex, String fieldName, String reason) {
+        if (StringUtils.isNotEmpty(value) && validate(value, regex)) {
+            addError(fieldName, INVALID_ERROR_CODE, MessageFormat.format(INVALID_ERROR_MESSAGE, fieldName, reason));
         }
-        throwIfErrors();
     }
 
-    private void validateMasterIds(Iterable<UUID> masterIds, String fieldName) {
-        Set<UUID> uniqueMasterIds = new HashSet<>();
-        for (UUID masterId : masterIds) {
-            checkMandatoryField(masterId, MASTER_ID);
-            if (masterId != null && !uniqueMasterIds.add(masterId)) {
-                addError(INVALID_ERROR_CODE, INVALID_ERROR_MESSAGE, (Object) fieldName, DUPLICATE_VALUE);
-            }
+    protected void validateFieldValue(String value, String validValue, String fieldName) {
+        if (!validValue.equalsIgnoreCase(value)) {
+            addError(fieldName, INVALID_ENUM_ERROR_CODE, INVALID_ENUM_ERROR_MESSAGE);
         }
-        throwIfErrors();
     }
-}
-----------------------------------
-// CountryDTO.java
-package com.epay.admin.portal.master.dto.request;
 
-import lombok.Data;
-
-@Data
-public class CountryDTO {
-
-    private String countryCode;
-
-    private String countryName;
-}
-----------------------------------------
-package com.epay.admin.portal.master.dto.request;
-
-import lombok.Data;
-
-@Data
-public class CityAreaPincodeDto {
-
-    private String cityAreaName;
-
-    private String stateName;
-
-    private String pinCode;
-}
-------------------------------
-// ConstitutionDTO.java
-package com.epay.admin.portal.master.dto.request;
-
-import lombok.Data;
-
-@Data
-public class ConstitutionDTO {
-
-    private String constitutionName;
-}
------------------------
-// CountryCurrencyDTO.java
-package com.epay.admin.portal.master.dto.request;
-
-import lombok.Data;
-
-@Data
-public class CountryCurrencyDTO {
-
-    private String countryCode;
-
-    private String currencyCode;
-
-    private String currencyName;
-
-}
------------------------
-// CountryDTO.java
-package com.epay.admin.portal.master.dto.request;
-
-import lombok.Data;
-
-@Data
-public class CountryDTO {
-
-    private String countryCode;
-
-    private String countryName;
-}
---------------------------
-// MasterApprovalRequest.java
-package com.epay.admin.portal.master.dto.request;
-
-import lombok.Data;
-import java.util.List;
-import java.util.UUID;
-
-@Data
-public class MasterApprovalRequest {
-
-    private List<ApprovalItem> records;
-
-    @Data
-    public static class ApprovalItem {
-
-        private UUID masterId;
-
-        // Optional remark — required only for checker reject
-        private String remark;
-    }
-}
-----------------------------
-// MasterInactivationRequest.java
-package com.epay.admin.portal.master.dto.request;
-
-import lombok.Data;
-import java.util.List;
-import java.util.UUID;
-
-@Data
-public class MasterInactivationRequest {
-
-    private List<UUID> masterIds;
-
-    private String remark;
-}
---------------------------
-package com.epay.admin.portal.master.dto.request;
-
-import lombok.Data;
-
-@Data
-public class NatureOfBusinessDto {
-
-    private String natureOfBusinessName;
-}
---------------------------
-package com.epay.admin.portal.master.dto.request;
-
-import lombok.Data;
-
-@Data
-public class StateDto {
-
-    private String stateName;
-}
----------------------------------
-package com.epay.admin.portal.master.entity;
-
-import jakarta.persistence.Column;
-import jakarta.persistence.Entity;
-import jakarta.persistence.GeneratedValue;
-import jakarta.persistence.GenerationType;
-import jakarta.persistence.Id;
-import jakarta.persistence.Table;
-import lombok.AllArgsConstructor;
-import lombok.Builder;
-import lombok.Data;
-import lombok.EqualsAndHashCode;
-import lombok.NoArgsConstructor;
-
-import java.util.UUID;
-
-@Entity
-@Table(name = "CITY_AREA_PINCODE")
-@Data
-@Builder
-@NoArgsConstructor
-@AllArgsConstructor
-@EqualsAndHashCode(callSuper = false)
-public class CityAreaPincode extends MasterDependent {
-
-    @Id
-    @GeneratedValue(strategy = GenerationType.UUID)
-    private UUID id;
-
-    @Column(name = "STATE_ID")
-    private UUID stateId;
-
-    @Column(name = "CITY_AREA_NAME")
-    private String cityAreaName;
-
-    @Column(name = "PIN_CODE")
-    private String pinCode;
-
-}
------------------------------
-// Constitution.java
-package com.epay.admin.portal.master.entity;
-
-import jakarta.persistence.*;
-import lombok.*;
-import java.util.UUID;
-
-@Entity
-@Table(name = "CONSTITUTION")
-@Data
-@Builder
-@NoArgsConstructor
-@AllArgsConstructor
-@EqualsAndHashCode(callSuper = false)
-public class Constitution extends MasterStandalone {
-
-    @Id
-    @GeneratedValue(strategy = GenerationType.UUID)
-    private UUID id;
-
-    @Column(name = "CONSTITUTION_NAME")
-    private String constitutionName;
-
-    @Column(name = "CONSTITUTION_CODE")
-    private String constitutionCode;
-}
--------------------------------
-// Country.java
-package com.epay.admin.portal.master.entity;
-
-import jakarta.persistence.*;
-import lombok.*;
-import java.util.UUID;
-
-@Entity
-@Table(name = "COUNTRY")
-@Data
-@Builder
-@NoArgsConstructor
-@AllArgsConstructor
-@EqualsAndHashCode(callSuper = false)
-public class Country extends MasterStandalone {
-
-    @Id
-    @GeneratedValue(strategy = GenerationType.UUID)
-    private UUID id;
-
-    @Column(name = "COUNTRY_CODE")
-    private String countryCode;
-
-    @Column(name = "COUNTRY_NAME")
-    private String countryName;
-}
--------------------------------
-package com.epay.admin.portal.master.entity;
-
-import jakarta.persistence.*;
-import lombok.*;
-import java.util.UUID;
-
-@Entity
-@Table(name = "COUNTRY_CURRENCY")
-@Data
-@Builder
-@NoArgsConstructor
-@AllArgsConstructor
-@EqualsAndHashCode(callSuper = false)
-public class CountryCurrency extends MasterDependent {
-
-    @Id
-    @GeneratedValue(strategy = GenerationType.UUID)
-    private UUID id;
-
-    @Column(name = "COUNTRY_ID")
-    private UUID countryId;
-
-    @Column(name = "CURRENCY_CODE")
-    private String currencyCode;
-
-    @Column(name = "CURRENCY_NAME")
-    private String currencyName;
-}
-------------------------
-// MasterFileUpload.java
-package com.epay.admin.portal.master.entity;
-
-import com.epay.admin.portal.entity.AuditEntity;
-import com.epay.admin.portal.master.util.ENUM.BulkUploadFileStatus;
-import com.epay.admin.portal.master.util.ENUM.MasterType;
-import jakarta.persistence.*;
-import lombok.*;
-import java.util.UUID;
-
-@Entity
-@Table(name = "MASTER_FILE_UPLOAD")
-@Data
-@Builder
-@NoArgsConstructor
-@AllArgsConstructor
-@EqualsAndHashCode(callSuper = false)
-public class MasterFileUpload extends AuditEntity {
-
-    @Id
-    @GeneratedValue(strategy = GenerationType.UUID)
-    private UUID id;
-
-    @Enumerated(EnumType.STRING)
-    @Column(name = "MASTER_TYPE")
-    private MasterType masterType;
-
-    @Column(name = "S3_FILE_PATH")
-    private String s3FilePath;
-
-    @Column(name = "TOTAL_RECORD")
-    private int totalRecord;
-
-    @Column(name = "SUCCESS_RECORD")
-    private int successRecord;
-
-    @Column(name = "FAILED_RECORD")
-    private int failedRecord;
-
-    @Column(name = "FILE_CHECKSUM")
-    private String fileChecksum;
-
-    @Enumerated(EnumType.STRING)
-    @Column(name = "STATUS")
-    private BulkUploadFileStatus status;
-
-    @Column(name = "ERROR_MESSAGE")
-    private String errorMessage;
-
-    @Column(name = "REMARK")
-    private String remark;
-}
---------------------------------
-// MasterFileUploadDtls.java
-package com.epay.admin.portal.master.entity;
-
-import com.epay.admin.portal.entity.AuditEntity;
-import com.epay.admin.portal.master.util.ENUM.BulkUploadRecordStatus;
-import jakarta.persistence.*;
-import lombok.*;
-import java.util.UUID;
-
-@Entity
-@Table(name = "MASTER_FILE_UPLOAD_DTLS")
-@Data
-@Builder
-@NoArgsConstructor
-@AllArgsConstructor
-@EqualsAndHashCode(callSuper = false)
-public class MasterFileUploadDtls extends AuditEntity {
-
-    @Id
-    @GeneratedValue(strategy = GenerationType.UUID)
-    private UUID id;
-
-    @Column(name = "MASTER_FILE_UPLOAD_ID")
-    private UUID masterFileUpload;
-
-    @Lob
-    @Column(name = "RECORD_JSON")
-    private String recordJson;
-
-    @Enumerated(EnumType.STRING)
-    @Column(name = "STATUS")
-    private BulkUploadRecordStatus status;
-
-    @Column(name = "ERROR_MESSAGE")
-    private String errorMessage;
-
-    @Column(name = "REMARK")
-    private String remark;
-}
------------------------------
-// MasterStandalone.java
-package com.epay.admin.portal.master.entity;
-
-import com.epay.admin.portal.entity.AuditEntity;
-import jakarta.persistence.Column;
-import jakarta.persistence.MappedSuperclass;
-import jakarta.persistence.Version;
-import lombok.Getter;
-import lombok.Setter;
-import org.hibernate.envers.Audited;
-
-/**
- * Base for all standalone (no-parent) master entities.
- */
-@Getter
-@Setter
-@Audited
-@MappedSuperclass
-public abstract class MasterStandalone extends AuditEntity {
-    @Column(name = "STATUS")
-    private String status;
-
-    @Version
-    private int version;
-}
---------------------------------------
-// MasterTable.java
-package com.epay.admin.portal.master.entity;
-
-import com.epay.admin.portal.master.util.ENUM.MasterType;
-import jakarta.persistence.*;
-import lombok.*;
-import org.springframework.data.annotation.CreatedBy;
-import org.springframework.data.annotation.CreatedDate;
-import org.springframework.data.jpa.domain.support.AuditingEntityListener;
-import java.util.UUID;
-
-@Entity
-@Table(name = "MASTER_TABLE")
-@Data
-@Builder
-@NoArgsConstructor
-@AllArgsConstructor
-@EntityListeners(AuditingEntityListener.class)
-public class MasterTable {
-
-    @Id
-    @GeneratedValue(strategy = GenerationType.UUID)
-    private UUID id;
-
-    @Enumerated(EnumType.STRING)
-    @Column(name = "MASTER_TYPE")
-    private MasterType masterType;
-
-    @Column(name = "NAME")
-    private String name;
-
-    @Column(name = "IS_BULK_ALLOWED")
-    private Boolean bulkAllowed;
-
-    @Column(name = "IS_MAKER_CHECKER_ENABLED")
-    private Boolean makerCheckerEnabled;
-
-    @Column(name = "IS_HEADER_PRESENT")
-    private Boolean headerPresent;
-
-    @Column(name = "FILE_EXTENSION")
-    private String fileExtension;
-
-    @Lob
-    @Column(name = "FILE_FORMAT_CONFIG")
-    private String fileFormatConfig;
-
-    @Column(name = "FILE_CHECK_SUM")
-    private String fileCheckSum;
-
-    @Column(name = "STATUS")
-    private String status;
-
-    @Column(name = "DESCRIPTION")
-    private String description;
-
-    @CreatedDate
-    private Long createdAt;
-
-    @CreatedBy
-    private String createdBy;
-}
----------------------------------
-package com.epay.admin.portal.master.entity;
-
-import com.epay.admin.portal.master.util.ENUM.MasterType;
-import com.epay.admin.portal.master.util.ENUM.WorkflowStatus;
-import jakarta.persistence.*;
-import lombok.*;
-import org.springframework.data.annotation.CreatedDate;
-import org.springframework.data.annotation.LastModifiedDate;
-import org.springframework.data.jpa.domain.support.AuditingEntityListener;
-import java.util.UUID;
-
-@Entity
-@Table(name = "MASTER_WORKFLOW")
-@Data
-@Builder
-@NoArgsConstructor
-@AllArgsConstructor
-@EntityListeners(AuditingEntityListener.class)
-public class MasterWorkflow {
-
-    @Id
-    @GeneratedValue(strategy = GenerationType.UUID)
-    private UUID id;
-
-    @Enumerated(EnumType.STRING)
-    @Column(name = "MASTER_TYPE")
-    private MasterType masterType;
-
-    @Column(name = "MASTER_CODE")
-    private String masterCode;
-
-    @Column(name = "RECORD_ID")
-    private UUID recordId;
-
-    @Column(name = "ACTION_TYPE")
-    private String actionType;
-
-    @Lob
-    @Column(name = "OLD_VALUE")
-    private String oldValue;
-
-    @Lob
-    @Column(name = "NEW_VALUE")
-    private String newValue;
-
-    @Enumerated(EnumType.STRING)
-    @Column(name = "STATUS")
-    private WorkflowStatus status;
-
-    @Column(name = "MAKER_ID")
-    private String makerId;
-
-    @Column(name = "CHECKER_ID")
-    private String checkerId;
-
-    @Column(name = "REMARK")
-    private String remark;
-
-    @CreatedDate
-    private Long createdAt;
-
-    @LastModifiedDate
-    private Long updatedAt;
-}
---------------------------------
-package com.epay.admin.portal.master.entity;
-
-import jakarta.persistence.Column;
-import jakarta.persistence.Entity;
-import jakarta.persistence.GeneratedValue;
-import jakarta.persistence.GenerationType;
-import jakarta.persistence.Id;
-import jakarta.persistence.Table;
-import jakarta.persistence.Version;
-import lombok.AllArgsConstructor;
-import lombok.Builder;
-import lombok.Data;
-import lombok.EqualsAndHashCode;
-import lombok.NoArgsConstructor;
-
-import java.util.UUID;
-
-@Entity
-@Table(name = "NATURE_OF_BUSINESS")
-@Data
-@Builder
-@NoArgsConstructor
-@AllArgsConstructor
-@EqualsAndHashCode(callSuper = false)
-public class NatureOfBusiness extends MasterStandalone {
-
-    @Id
-    @GeneratedValue(strategy = GenerationType.UUID)
-    private UUID id;
-
-    @Column(name = "NATURE_OF_BUSINESS_NAME")
-    private String natureOfBusinessName;
-
-    @Column(name = "NATURE_OF_BUSINESS_CODE")
-    private String natureOfBusinessCode;
-}
--------------------------------
-package com.epay.admin.portal.master.entity;
-
-import jakarta.persistence.Column;
-import jakarta.persistence.Entity;
-import jakarta.persistence.GeneratedValue;
-import jakarta.persistence.GenerationType;
-import jakarta.persistence.Id;
-import jakarta.persistence.Table;
-import jakarta.persistence.Version;
-import lombok.AllArgsConstructor;
-import lombok.Builder;
-import lombok.Data;
-import lombok.EqualsAndHashCode;
-import lombok.NoArgsConstructor;
-
-import java.util.UUID;
-
-@Entity
-@Table(name = "STATE")
-@Data
-@Builder
-@NoArgsConstructor
-@AllArgsConstructor
-@EqualsAndHashCode(callSuper = false)
-public class State extends MasterStandalone {
-
-    @Id
-    @GeneratedValue(strategy = GenerationType.UUID)
-    private UUID id;
-
-    @Column(name = "STATE_NAME")
-    private String stateName;
-
-    @Column(name = "STATE_CODE")
-    private String stateCode;
-}
------------------------------
---liquibase formatted sql
---changeset Saurabh :1777
-
-CREATE TABLE MASTER_WORKFLOW (
-     ID RAW(16) DEFAULT SYS_GUID() PRIMARY KEY NOT NULL,
-     MASTER_TYPE VARCHAR2(100 CHAR) NOT NULL,
-     MASTER_CODE VARCHAR2(100 CHAR),
-     RECORD_ID RAW(16) NOT NULL,
-     ACTION_TYPE VARCHAR2(50 CHAR) NOT NULL,
-     OLD_VALUE CLOB,
-     NEW_VALUE CLOB,
-     STATUS VARCHAR2(50 CHAR) NOT NULL,
-     MAKER_ID VARCHAR2(100 CHAR) NOT NULL,
-     CHECKER_ID VARCHAR2(100 CHAR),
-     REMARK VARCHAR2(1000 CHAR),
-     CREATED_AT NUMBER NOT NULL,
-     UPDATED_AT NUMBER NOT NULL
-);
-
-CREATE INDEX IDX_MASTER_WORKFLOW_TYPE_STATUS ON MASTER_WORKFLOW (MASTER_TYPE, STATUS);
-CREATE INDEX IDX_MASTER_WORKFLOW_RECORD_ID ON MASTER_WORKFLOW (RECORD_ID);
----------------------------------
---liquibase formatted sql
---changeset saurabh:1778000006
-
-CREATE TABLE CITY_AREA_PINCODE (
-    ID RAW(16) DEFAULT SYS_GUID() PRIMARY KEY NOT NULL,
-    STATE_ID RAW(16) NOT NULL,
-    CITY_AREA_NAME VARCHAR2(255 CHAR) NOT NULL,
-    PIN_CODE VARCHAR2(20 CHAR) NOT NULL,
-    STATUS VARCHAR2(50 CHAR) NOT NULL,
-    VERSION NUMBER(10) DEFAULT 0 NOT NULL,
-    CREATED_BY VARCHAR2(100 CHAR) NOT NULL,
-    CREATED_AT NUMBER NOT NULL,
-    UPDATED_BY VARCHAR2(100 CHAR) NOT NULL,
-    UPDATED_AT NUMBER NOT NULL,
-    CONSTRAINT UQ_CITY_AREA_PINCODE UNIQUE (STATE_ID, CITY_AREA_NAME, PIN_CODE),
-    CONSTRAINT FK_CITY_AREA_PINCODE_STATE FOREIGN KEY (STATE_ID) REFERENCES STATE (ID)
-);
-
-CREATE INDEX IDX_CITY_AREA_PINCODE_STATE ON CITY_AREA_PINCODE (STATE_ID);
-CREATE INDEX IDX_CITY_AREA_PINCODE_STATUS ON CITY_AREA_PINCODE (STATUS);
-
---changeset saurabh:1778000006_1
-
-INSERT INTO MASTER_TABLE (
-    MASTER_TYPE,
-    NAME,
-    IS_BULK_ALLOWED,
-    IS_MAKER_CHECKER_ENABLED,
-    IS_HEADER_PRESENT,
-    FILE_EXTENSION,
-    FILE_FORMAT_CONFIG,
-    FILE_CHECK_SUM,
-    STATUS,
-    DESCRIPTION,
-    CREATED_BY,
-    CREATED_AT
-) VALUES (
-    'CITY_AREA_PINCODE',
-    'City Area Pincode',
-    1,
-    1,
-    1,
-    'csv',
-    TO_CLOB(q'~{
-      "delimiter": ",",
-      "charset": "UTF-8",
-      "columns": [
-        {
-          "fieldName": "cityAreaName",
-          "headerName": "CityAreaName",
-          "required": true
-        },
-        {
-          "fieldName": "stateName",
-          "headerName": "StateName",
-          "required": true
-        },
-        {
-          "fieldName": "pinCode",
-          "headerName": "PinCode",
-          "required": true
+    protected void validateFieldValue(String value, List<String> validValues, String fieldName) {
+        if(StringUtils.isNotEmpty(value) && validValues.stream().noneMatch(validValue -> validValue.equals(value))) {
+                addError(fieldName, INVALID_ENUM_ERROR_CODE, INVALID_ENUM_ERROR_MESSAGE);
         }
-      ]
-    }~'),
-    NULL,
-    'ACTIVE',
-    'Bulk upload configuration for City Area Pincode master. Expected CSV header: CityAreaName,StateName,PinCode',
-    'SYSTEM',
-    1778000006
-);
------------------------------------
-package admin.validator;
-
-import com.epay.admin.portal.exceptions.ValidationException;
-import com.epay.admin.portal.master.dto.request.CityAreaPincodeDto;
-import com.epay.admin.portal.master.dto.request.ConstitutionDTO;
-import com.epay.admin.portal.master.dto.request.CountryCurrencyDTO;
-import com.epay.admin.portal.master.dto.request.CountryDTO;
-import com.epay.admin.portal.master.dto.request.MasterApprovalRequest;
-import com.epay.admin.portal.master.dto.request.MasterInactivationRequest;
-import com.epay.admin.portal.master.dto.request.StateDto;
-import com.epay.admin.portal.master.util.ENUM.MasterType;
-import com.epay.admin.portal.validator.MasterRequestValidator;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
-
-import java.util.List;
-import java.util.UUID;
-
-import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
-import static org.junit.jupiter.api.Assertions.assertThrows;
-import static org.junit.jupiter.api.Assertions.assertTrue;
-
-class MasterRequestValidatorTest {
-
-    private MasterRequestValidator validator;
-
-    @BeforeEach
-    void setUp() {
-        validator = new MasterRequestValidator();
     }
 
-    @Test
-    void validateCreateRequest_shouldPass_whenCountryRequestIsValid() {
-        CountryDTO request = new CountryDTO();
-        request.setCountryCode("IN");
-        request.setCountryName("India");
-
-        assertDoesNotThrow(() -> validator.validateCreateRequest(MasterType.COUNTRY, request));
+    protected <E extends Enum<E>> void validateFieldValue(Enum<E> value, String fieldName, Class<E> enumName) {
+        if (Objects.isNull(value)) {
+            addError(INVALID_ERROR_CODE, INVALID_ERROR_MESSAGE, fieldName, "Valid values are " + EnumUtils.getEnumList(enumName));
+        }
     }
 
-    @Test
-    void validateCreateRequest_shouldThrow_whenMandatoryFieldIsMissing() {
-        ConstitutionDTO request = new ConstitutionDTO();
-
-        ValidationException exception = assertThrows(
-                ValidationException.class,
-                () -> validator.validateCreateRequest(MasterType.CONSTITUTION, request));
-
-        assertTrue(exception.getErrorMessages().getFirst().getErrorMessage().contains("constitutionName"));
+    protected void addError(String fieldName, String errorCode, String errorMessage) {
+        errorDtoList.add(ErrorDto.builder().errorCode(errorCode).errorMessage(MessageFormat.format(errorMessage, fieldName)).build());
     }
 
-    @Test
-    void validateCreateRequest_shouldThrow_whenLeadingOrTrailingSpaceExists() {
-        StateDto request = new StateDto();
-        request.setStateName(" Maharashtra ");
-
-        ValidationException exception = assertThrows(
-                ValidationException.class,
-                () -> validator.validateCreateRequest(MasterType.STATE, request));
-
-        assertTrue(exception.getErrorMessages().getFirst().getErrorMessage().contains("stateName"));
+    protected void addError(String errorCode, String errorMessage, Object... fieldNames) {
+        errorDtoList.add(ErrorDto.builder().errorCode(errorCode).errorMessage(MessageFormat.format(errorMessage, fieldNames)).build());
     }
 
-    @Test
-    void validateCreateRequest_shouldThrow_whenFieldExceedsMaxLength() {
-        CountryCurrencyDTO request = new CountryCurrencyDTO();
-        request.setCountryCode("IN");
-        request.setCurrencyCode("TOO_LONG_CODE");
-        request.setCurrencyName("Indian Rupee");
-
-        ValidationException exception = assertThrows(
-                ValidationException.class,
-                () -> validator.validateCreateRequest(MasterType.COUNTRY_CURRENCY, request));
-
-        assertTrue(exception.getErrorMessages().getFirst().getErrorMessage().contains("currencyCode"));
+    protected void throwIfErrors() {
+        if (CollectionUtils.isNotEmpty(errorDtoList)) {
+            throw new ValidationException(errorDtoList);
+        }
     }
 
-    @Test
-    void validateCreateRequest_shouldThrow_whenPincodeFormatIsInvalid() {
-        CityAreaPincodeDto request = new CityAreaPincodeDto();
-        request.setCityAreaName("Mumbai");
-        request.setStateName("Maharashtra");
-        request.setPinCode("ABC123");
-
-        ValidationException exception = assertThrows(
-                ValidationException.class,
-                () -> validator.validateCreateRequest(MasterType.CITY_AREA_PINCODE, request));
-
-        assertTrue(exception.getErrorMessages().getFirst().getErrorMessage().contains("pinCode"));
+    protected boolean validate(String value, String regex) {
+        return !Pattern.matches(regex, value);
     }
 
-    @Test
-    void validateCreateRequest_shouldThrow_whenRequestBodyIsNull() {
-        ValidationException exception = assertThrows(
-                ValidationException.class,
-                () -> validator.validateCreateRequest(MasterType.NATURE_OF_BUSINESS, null));
-
-        assertTrue(exception.getErrorMessages().getFirst().getErrorMessage().contains("request"));
+    /***
+     * Description : checkForLeadingTrailingAndSingleSpace method are being used for checking input
+     * parameter having any leading trailing space in it or not and returns error message if
+     * input parameter has any leading or trailing space in it.
+     * @param value String
+     * @param fieldName String
+     */
+    protected void checkForLeadingTrailingAndSingleSpace(String value, String fieldName) {
+        if (StringUtils.isNotEmpty(value) && !value.equals(value.trim())) {
+            addError(fieldName, WHITESPACE_ERROR_CODE, WHITESPACE_ERROR_MESSAGE);
+        }
     }
 
-    @Test
-    void validateInactivationRequest_shouldPass_whenRequestIsValid() {
-        MasterInactivationRequest request = new MasterInactivationRequest();
-        request.setMasterIds(List.of(UUID.randomUUID()));
-        request.setRemark("No longer required");
-
-        assertDoesNotThrow(() -> validator.validateInactivationRequest(request));
+    /**
+     * Validate if field value length is not equal to required length.
+     * @param value String
+     * @param maxLength int
+     * @param fieldName String
+     */
+    protected void validateFixedFieldLength(String value, int maxLength, String fieldName) {
+        if (StringUtils.isNotEmpty(value) && value.length() != maxLength) {
+            addError(FIXED_LENGTH_ERROR_CODE, FIXED_LENGTH_ERROR_MESSAGE, fieldName, maxLength);
+        }
     }
 
-    @Test
-    void validateInactivationRequest_shouldThrow_whenMasterIdsAreMissing() {
-        MasterInactivationRequest request = new MasterInactivationRequest();
-        request.setRemark("No longer required");
+    protected void validateDuplicateValue(List values, String fieldName, String reason) {
+        Set uniqueValues = new HashSet<>();
+        if (!values.isEmpty() && values.stream().anyMatch(v -> !uniqueValues.add(v))) {
+            addError(INVALID_ERROR_CODE, INVALID_ERROR_MESSAGE, fieldName, reason);
 
-        ValidationException exception = assertThrows(
-                ValidationException.class,
-                () -> validator.validateInactivationRequest(request));
-
-        assertTrue(exception.getErrorMessages().getFirst().getErrorMessage().contains("masterIds"));
+        }
     }
 
-    @Test
-    void validateApprovalRequest_shouldPass_whenRequestIsValid() {
-        MasterApprovalRequest request = approvalRequest(UUID.randomUUID(), null);
-
-        assertDoesNotThrow(() -> validator.validateApprovalRequest(request));
+    /**
+     * Helper method to validates field values in the Pageable.
+     * @param pageable Pageable
+     * @param maxSize int
+     * @param defaultSortField String
+     * @return {pageable}
+     */
+    protected Pageable validateAndSanitizePageable(Pageable pageable, int maxSize, String defaultSortField,Set<String> sortList) {
+        // Validate page size
+        if (pageable.getPageSize() > maxSize) {
+            addError(MIN_MAX_ALLOWED_LENGTH_ERROR_CODE, MAX_ALLOWED_LENGTH_ERROR_MESSAGE, MerchantConstant.PAGE_SIZE, maxSize);
+        }
+        // Get allowed fields from class
+        boolean hasInvalidSort = pageable.getSort().stream().anyMatch(order -> !sortList.contains(order.getProperty()));
+        // If any invalid sort field, craete to default
+        if (pageable.getSort().isUnsorted() || hasInvalidSort) {
+            return PageRequest.of(pageable.getPageNumber(), pageable.getPageSize(), Sort.by(Sort.Direction.DESC, defaultSortField));
+        }
+        return pageable;
     }
 
-    @Test
-    void validateApprovalRequest_shouldThrow_whenMasterIdIsMissing() {
-        MasterApprovalRequest request = approvalRequest(null, null);
 
-        ValidationException exception = assertThrows(
-                ValidationException.class,
-                () -> validator.validateApprovalRequest(request));
-
-        assertTrue(exception.getErrorMessages().getFirst().getErrorMessage().contains("masterId"));
-    }
-
-    @Test
-    void validateApprovalRequest_shouldThrow_whenDuplicateMasterIdIsProvided() {
-        UUID masterId = UUID.randomUUID();
-        MasterApprovalRequest request = new MasterApprovalRequest();
-        request.setRecords(List.of(approvalItem(masterId, null), approvalItem(masterId, null)));
-
-        ValidationException exception = assertThrows(
-                ValidationException.class,
-                () -> validator.validateApprovalRequest(request));
-
-        assertTrue(exception.getErrorMessages().getFirst().getErrorMessage().contains("masterId"));
-    }
-
-    @Test
-    void validateRejectionRequest_shouldThrow_whenRemarkIsMissing() {
-        MasterApprovalRequest request = approvalRequest(UUID.randomUUID(), null);
-
-        ValidationException exception = assertThrows(
-                ValidationException.class,
-                () -> validator.validateRejectionRequest(request));
-
-        assertTrue(exception.getErrorMessages().getFirst().getErrorMessage().contains("remark"));
-    }
-
-    @Test
-    void validateRejectionRequest_shouldThrow_whenRemarkHasLeadingSpace() {
-        MasterApprovalRequest request = approvalRequest(UUID.randomUUID(), " Invalid data");
-
-        ValidationException exception = assertThrows(
-                ValidationException.class,
-                () -> validator.validateRejectionRequest(request));
-
-        assertTrue(exception.getErrorMessages().getFirst().getErrorMessage().contains("remark"));
-    }
-
-    private MasterApprovalRequest approvalRequest(UUID masterId, String remark) {
-        MasterApprovalRequest request = new MasterApprovalRequest();
-        request.setRecords(List.of(approvalItem(masterId, remark)));
-        return request;
-    }
-
-    private MasterApprovalRequest.ApprovalItem approvalItem(UUID masterId, String remark) {
-        MasterApprovalRequest.ApprovalItem item = new MasterApprovalRequest.ApprovalItem();
-        item.setMasterId(masterId);
-        item.setRemark(remark);
-        return item;
-    }
 }
-----------------------------------------------------------------
