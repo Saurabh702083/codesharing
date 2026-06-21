@@ -1,3 +1,115 @@
+--liquibase formatted sql
+--changeset Hariom:3
+
+
+CREATE TABLE CONSENT_CAPTURE_INFO (
+  ID                  RAW(16) DEFAULT SYS_GUID() ,
+  CONSENT_CODE        VARCHAR2(100) UNIQUE,
+  TOUCHPOINT_CODE     VARCHAR2(100),
+  PURPOSE_CODE        VARCHAR2(100),
+  REQUEST             CLOB,
+  RESPONSE            CLOB,
+  SYNC_STATUS         VARCHAR2(50),
+  CONSENT_STATUS      VARCHAR2(20),
+  RETRY_COUNT         NUMBER          DEFAULT 0,
+  CREATED_AT          NUMBER          NOT NULL,
+  UPDATED_AT          NUMBER,
+  CONSTRAINT  PK_CONST_CAPTURE_INFO PRIMARY KEY(ID)
+)  PCTFREE 30  INITRANS 100;
+
+
+
+ public CommunicationResponse<String> consentSave(ConsentSaveRequest consentSaveRequest) {
+        // Step-1: Validate consent white request
+        logger.info("Validating consentSave request body.");
+        consentValidator.validateConsentRequest(consentSaveRequest);
+
+        // Step-2: Set the consent write request and insert in DB
+        logger.info("Saving consent request in DB.");
+        String consentRequestString = null;
+        try {
+            consentRequestString = objectMapper.writeValueAsString(consentSaveRequest);
+        } catch (JsonProcessingException e) {
+            logger.error("Parse exception during converting request object to string.", e.getMessage());
+        }
+        ConsentCaptureInfo consentInfo = ConsentCaptureInfo.builder().purposeCode(consentSaveRequest.getPurposeSetId()).touchpointCode(consentSaveRequest.getTouchPointId()).consentCode(consentSaveRequest.getNtbId()).request(consentRequestString).syncStatus(SyncStatus.PENDING).build();
+        ConsentCaptureInfo savedConsentInfo = consentDao.checkConsentWritten(consentInfo);
+        try {
+            // Step-3: Call EIS write method and get the response
+            ConsentRequest consentRequest = buildConsentWriteRequest(consentSaveRequest);
+            EisWriteResponse eisResponse = eisWriteConsent(consentRequest);
+            EisApiHistoryDto eisApiHistoryDto = buildEISWriteApiRequest(consentRequest, eisResponse);
+            consentDao.saveEisHistory(eisApiHistoryDto);
+            String consentResponse = objectMapper.writeValueAsString(eisResponse.getEisResponse().getBody());
+            // Step-4: Set the response to entity and update in DB
+            savedConsentInfo.setResponse(consentResponse);
+            SyncStatus syncStatus = ObjectUtils.isEmpty(eisResponse.getEisResponse().getBody().getConsentId()) ? SyncStatus.PENDING : SyncStatus.SUCCESS;
+            savedConsentInfo.setSyncStatus(syncStatus);
+            savedConsentInfo.setConsentStatus(ConsentStatus.ACTIVE);
+            consentDao.saveConsent(savedConsentInfo);
+            return  CommunicationResponse.<String>builder().status(RESPONSE_SUCCESS).data(List.of("Consent saved successfully.")).build();
+        } catch (JsonProcessingException e) {
+            logger.error("Parse exception during converting response object to string.", e.getMessage());
+            return CommunicationResponse.<String>builder().status(RESPONSE_SUCCESS).data(List.of("Failed to save the consent.")).build();
+        } catch (Exception e) {
+            logger.error("CommunicationException or other Exception during calling eis writeConsent method.", e.getMessage());
+            return CommunicationResponse.<String>builder().status(RESPONSE_SUCCESS).data(List.of("Failed to save the consent.")).build();
+        }
+    }
+
+
+
+    public ConsentCaptureInfo checkConsentWritten(ConsentCaptureInfo consentCaptureInfo){
+        logger.info("Check if consent is present for ntbId :{}",consentCaptureInfo.getConsentStatus());
+       return consentCaptureInfoRepository.findByConsentCode(consentCaptureInfo.getConsentCode()).map(existing->updateFields(existing,consentCaptureInfo)).orElse(consentCaptureInfo);
+    }
+
+    private ConsentCaptureInfo updateFields(ConsentCaptureInfo existing, ConsentCaptureInfo incoming){
+        existing.setTouchpointCode(incoming.getTouchpointCode());
+        existing.setPurposeCode(incoming.getPurposeCode());
+        existing.setRequest(incoming.getRequest());
+        existing.setSyncStatus(incoming.getSyncStatus());
+        return existing;
+    }
+
+
+@Repository
+public interface ConsentCaptureInfoRepository extends JpaRepository<ConsentCaptureInfo, UUID> {
+    Optional<ConsentCaptureInfo> findByConsentCodeAndTouchpointCodeAndPurposeCode(String cifId, String touchPointId, String purposeCode);
+
+    Optional<ConsentCaptureInfo> findByConsentCode(String consentCode);
+
+    @Query("SELECT c FROM ConsentCaptureInfo c WHERE c.syncStatus = 'PENDING'")
+    List<ConsentCaptureInfo> findBySyncStatusPending();
+
+}
+
+---------------------------------------------------------------------
+
+Hibernate: 
+    select
+        cci1_0.id,
+        cci1_0.consent_code,
+        cci1_0.consent_status,
+        cci1_0.created_at,
+        cci1_0.purpose_code,
+        cci1_0.request,
+        cci1_0.response,
+        cci1_0.retry_count,
+        cci1_0.sync_status,
+        cci1_0.touchpoint_code,
+        cci1_0.updated_at 
+    from
+        consent_capture_info cci1_0 
+    where
+        cci1_0.consent_code=?
+2026-06-21 05:07:31.804 WARN | com.epay.cs.dao.ConsentDao:95 | principal= | scenario=/api/communication/v1/consent/save | operation=POST | correlation=026d70e7-fab6-486a-ad4d-f16a5bf5026c | checkConsentWritten | SQL Error: 604, SQLState: 60000
+2026-06-21 05:07:31.805 ERROR | com.epay.cs.dao.ConsentDao:95 | principal= | scenario=/api/communication/v1/consent/save | operation=POST | correlation=026d70e7-fab6-486a-ad4d-f16a5bf5026c | checkConsentWritten | ORA-00604: error occurred at recursive SQL level 1
+ORA-01157: cannot identify/lock data file 10 - see DBWR trace file
+ORA-01110: data file 10: '/oracle19c/app/oracle/product/19.3.0/db_home1/dbs/ +PAYAGGS_DATA'
+
+--------------------------------
+
 if (consentReadApiResponse.getData().getFirst().getConsentAvailable()) {
             log.info("Consent is already available for userName :{}, mId :{}",userName, mId);
             log.debug("checking consent sync status for ntbid: {}", consentReadApiResponse.getData().getFirst().getNtbId());
