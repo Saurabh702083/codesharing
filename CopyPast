@@ -1,3 +1,129 @@
+ public void validateConsentRequest(ConsentWriteRequest consentWriteRequest){
+        errorDtoList = new ArrayList<>();
+        logger.debug("Validation start for requestType {}",consentWriteRequest.getRequestType() );
+        RequestType requestType=RequestType.getRequestType(consentWriteRequest.getRequestType());
+        checkMandatoryField(consentWriteRequest.getRequestType(),REQUEST_TYPE);
+        checkMandatoryField(consentWriteRequest.getRequestId(),REQUEST_ID);
+        checkMandatoryField(consentWriteRequest.getConsents().getFirst().getPurposeCode(),PURPOSE_CODE);
+        checkMandatoryField(consentWriteRequest.getConsents().getFirst().getPurposeVersion(),PURPOSE_VERSION);
+        checkMandatoryField(consentWriteRequest.getConsents(), CONSENT);
+        if(RequestType.PROFILE_CONTACT_EDIT.equals(requestType)){
+            checkMandatoryField(consentWriteRequest.getNewEmail(),EMAIL);
+            checkMandatoryField(consentWriteRequest.getNewMobileNumber(),MOBILE_PHONE);
+            throwIfErrors();
+            validateMid(consentWriteRequest.getMId());
+        }
+        throwIfErrors();
+        checkForLeadingTrailingAndSingleSpace(consentWriteRequest.getRequestId(),REQUEST_ID);
+        checkForLeadingTrailingAndSingleSpace(consentWriteRequest.getRequestType(),REQUEST_TYPE);
+        checkForLeadingTrailingAndSingleSpace(consentWriteRequest.getNewEmail(),EMAIL);
+        checkForLeadingTrailingAndSingleSpace(consentWriteRequest.getNewMobileNumber(),MOBILE_PHONE);
+        checkForLeadingTrailingAndSingleSpace(consentWriteRequest.getConsents().getFirst().getPurposeCode(),PURPOSE_CODE);
+        checkForLeadingTrailingAndSingleSpace(consentWriteRequest.getConsents().getFirst().getPurposeVersion(),PURPOSE_VERSION);
+        throwIfErrors();
+        validateFields(consentWriteRequest);
+        throwIfErrors();
+        for (Consent consent : consentWriteRequest.getConsents()) {
+            checkMandatoryField(consent.getPurposeCode(), PURPOSE_CODE);
+            checkMandatoryField(consent.getPurposeVersion(), PURPOSE_VERSION);
+            checkMandatoryField(consent.getConsented(), CONSENTED);
+            throwIfErrors();
+            checkForLeadingTrailingAndSingleSpace(consent.getPurposeCode(), PURPOSE_CODE);
+            checkForLeadingTrailingAndSingleSpace(consent.getPurposeVersion(), PURPOSE_VERSION);
+            throwIfErrors();
+            validateFieldLength(consent.getPurposeCode(), MAX_NAME_LENGTH, PURPOSE_CODE);
+            throwIfErrors();
+            validateFieldWithRegex(consent.getPurposeCode(), NO_SPACE_INBETWEEN_STRING, PURPOSE_CODE, INCORRECT_FORMAT);
+            validateFieldWithRegex(consent.getPurposeVersion(), ONLY_NUMRIC_REGEX, PURPOSE_VERSION, INCORRECT_FORMAT);
+            throwIfErrors();
+            if (consent.getConsentedProducts() != null) {
+                Arrays.stream(consent.getConsentedProducts())
+                        .forEach(product -> validateFieldLength(product, MAX_NAME_LENGTH, CONSENTED_PRODUCT));
+            }
+            if (consent.getNotConsentedProducts() != null) {
+                Arrays.stream(consent.getNotConsentedProducts())
+                        .forEach(product -> validateFieldLength(product, MAX_NAME_LENGTH, NOT_CONSENT_PRODUCT));
+            }
+            throwIfErrors();
+        }
+    }
+
+
+    public void validateMidConsentRequest(MidConsentRequest midConsentRequest) {
+        errorDtoList = new ArrayList<>();
+        logger.debug("Validation start for mid {}",midConsentRequest.getMId());
+        validateMid(midConsentRequest.getMId());
+        throwIfErrors();
+        for (Consent consent : midConsentRequest.getConsents()) {
+            checkMandatoryField(consent.getPurposeCode(), PURPOSE_CODE);
+            checkMandatoryField(consent.getPurposeVersion(), PURPOSE_VERSION);
+            checkMandatoryField(consent.getConsented(), CONSENTED);
+            throwIfErrors();
+            checkForLeadingTrailingAndSingleSpace(consent.getPurposeCode(), PURPOSE_CODE);
+            checkForLeadingTrailingAndSingleSpace(consent.getPurposeVersion(), PURPOSE_VERSION);
+            throwIfErrors();
+            validateFieldLength(consent.getPurposeCode(), MAX_NAME_LENGTH, PURPOSE_CODE);
+            throwIfErrors();
+            validateFieldWithRegex(consent.getPurposeCode(), NO_SPACE_INBETWEEN_STRING, PURPOSE_CODE, INCORRECT_FORMAT);
+            validateFieldWithRegex(consent.getPurposeVersion(), ONLY_NUMRIC_REGEX, PURPOSE_VERSION, INCORRECT_FORMAT);
+            throwIfErrors();
+            if (consent.getConsentedProducts() != null) {
+                Arrays.stream(consent.getConsentedProducts())
+                        .forEach(product -> validateFieldLength(product, MAX_NAME_LENGTH, CONSENTED_PRODUCT));
+            }
+            if (consent.getNotConsentedProducts() != null) {
+                Arrays.stream(consent.getNotConsentedProducts())
+                        .forEach(product -> validateFieldLength(product, MAX_NAME_LENGTH, NOT_CONSENT_PRODUCT));
+            }
+            throwIfErrors();
+        }
+    }
+
+
+
+
+
+@Data
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
+public class ConsentWriteRequest {
+    private String newMobileNumber;
+    private String newEmail;
+    @JsonProperty("mId")
+    private String mId;
+    private String requestId;
+    private String requestType;
+    private List<Consent> consents;
+}
+
+@Data
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
+public class MidConsentRequest {
+    @JsonProperty("mId")
+    private String mId;
+    private List<Consent> consents;
+}
+
+
+@Data
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
+public class Consent {
+    private String purposeCode;
+    private String purposeVersion;
+    private Boolean consented;
+    private String[] consentedProducts;
+    private String[] notConsentedProducts;
+}
+---------------------------------
+
+
+
+
 
 public void validateMidConsentRequest(MidConsentRequest midConsentRequest) {
     errorDtoList = new ArrayList<>();
