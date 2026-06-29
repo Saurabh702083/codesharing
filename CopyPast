@@ -1,4 +1,42 @@
- public void validateConsentRequest(ConsentWriteRequest consentWriteRequest){
+   /**
+     * Validates the token to ensure it is valid. This method can be used for ensuring that
+     * a token is still active and not expired during operations that require authentication.
+     *
+     * @return A TransactionResponse with a status indicating success or failure of token validation.
+     */
+    @GetMapping("/access/validate")
+    @PreAuthorize("hasAnyRole('ACCESS')")
+    @Operation(summary = "Access token validation", description = "Validates the access token provided in the authorization header.")
+    public TransactionResponse<String> validateToken(){
+        logger.info("Received request for Access Token Validation");
+        return TransactionResponse.<String>builder().status(RESPONSE_SUCCESS).data(List.of("Access Token validated successfully for mId ."+ EPayIdentityUtil.getUserPrincipal().getUsername())).build();
+    }
+
+@NoArgsConstructor(access = AccessLevel.PRIVATE)
+public final class EPayIdentityUtil {
+
+    public static EPayPrincipal getUserPrincipal() {
+        return (EPayPrincipal) SecurityContextHolder.getContext().getAuthentication().getPrincipal();
+    }
+
+}
+
+
+    protected <T> ResponseDto<T> get(String urlPath, ParameterizedTypeReference<ResponseDto<T>> typeReference) {
+        URI uri = URI.create(getBaseUrl() + urlPath);
+        logger.info("Calling uri: {}", uri);
+        try {
+            ResponseDto<T> transactionResponse = getWebClient().get().uri(uri).headers(httpHeaders -> httpHeaders.addAll(prepareHttpHeaders())).exchangeToMono(response -> response.bodyToMono(typeReference)).block();
+            return validateAndReturnResponse(transactionResponse);
+        } catch (NestedRuntimeException e) {
+            logger.error("Got exception while calling url: {}", e.getMessage(), uri);
+            throw new IntegrationException(EXTERNAL_SERVICE_ERROR_CODE, MessageFormat.format(EXTERNAL_SERVICE_ERROR_MESSAGE, getServiceName()));
+        }
+    }
+
+
+------------------------------------------------
+public void validateConsentRequest(ConsentWriteRequest consentWriteRequest){
         errorDtoList = new ArrayList<>();
         logger.debug("Validation start for requestType {}",consentWriteRequest.getRequestType() );
         RequestType requestType=RequestType.getRequestType(consentWriteRequest.getRequestType());
