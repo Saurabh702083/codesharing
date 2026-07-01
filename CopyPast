@@ -1,489 +1,413 @@
-   /**
-     * Validates the token to ensure it is valid. This method can be used for ensuring that
-     * a token is still active and not expired during operations that require authentication.
-     *
-     * @return A TransactionResponse with a status indicating success or failure of token validation.
-     */
-    @GetMapping("/access/validate")
-    @PreAuthorize("hasAnyRole('ACCESS')")
-    @Operation(summary = "Access token validation", description = "Validates the access token provided in the authorization header.")
-    public TransactionResponse<String> validateToken(){
-        logger.info("Received request for Access Token Validation");
-        return TransactionResponse.<String>builder().status(RESPONSE_SUCCESS).data(List.of("Access Token validated successfully for mId ."+ EPayIdentityUtil.getUserPrincipal().getUsername())).build();
-    }
-
-@NoArgsConstructor(access = AccessLevel.PRIVATE)
-public final class EPayIdentityUtil {
-
-    public static EPayPrincipal getUserPrincipal() {
-        return (EPayPrincipal) SecurityContextHolder.getContext().getAuthentication().getPrincipal();
-    }
-
-}
+package com.epay.transaction.dao;
 
 
-    protected <T> ResponseDto<T> get(String urlPath, ParameterizedTypeReference<ResponseDto<T>> typeReference) {
-        URI uri = URI.create(getBaseUrl() + urlPath);
-        logger.info("Calling uri: {}", uri);
-        try {
-            ResponseDto<T> transactionResponse = getWebClient().get().uri(uri).headers(httpHeaders -> httpHeaders.addAll(prepareHttpHeaders())).exchangeToMono(response -> response.bodyToMono(typeReference)).block();
-            return validateAndReturnResponse(transactionResponse);
-        } catch (NestedRuntimeException e) {
-            logger.error("Got exception while calling url: {}", e.getMessage(), uri);
-            throw new IntegrationException(EXTERNAL_SERVICE_ERROR_CODE, MessageFormat.format(EXTERNAL_SERVICE_ERROR_MESSAGE, getServiceName()));
-        }
-    }
+import com.epay.transaction.config.TransactionConfig;
+import com.epay.transaction.dto.CallBackFinalResponseDto;
+import com.epay.transaction.exceptions.TransactionException;
+import com.epay.transaction.externalservice.KmsServicesClient;
+import com.epay.transaction.externalservice.PaymentCallBackServicesClient;
+import com.epay.transaction.externalservice.request.payment.*;
 
+import com.epay.transaction.externalservice.response.kms.KMSEncryptionKeysResponse;
+import com.epay.transaction.externalservice.response.payment.RupaySeamlessResponse;
 
-------------------------------------------------
-public void validateConsentRequest(ConsentWriteRequest consentWriteRequest){
-        errorDtoList = new ArrayList<>();
-        logger.debug("Validation start for requestType {}",consentWriteRequest.getRequestType() );
-        RequestType requestType=RequestType.getRequestType(consentWriteRequest.getRequestType());
-        checkMandatoryField(consentWriteRequest.getRequestType(),REQUEST_TYPE);
-        checkMandatoryField(consentWriteRequest.getRequestId(),REQUEST_ID);
-        checkMandatoryField(consentWriteRequest.getConsents().getFirst().getPurposeCode(),PURPOSE_CODE);
-        checkMandatoryField(consentWriteRequest.getConsents().getFirst().getPurposeVersion(),PURPOSE_VERSION);
-        checkMandatoryField(consentWriteRequest.getConsents(), CONSENT);
-        if(RequestType.PROFILE_CONTACT_EDIT.equals(requestType)){
-            checkMandatoryField(consentWriteRequest.getNewEmail(),EMAIL);
-            checkMandatoryField(consentWriteRequest.getNewMobileNumber(),MOBILE_PHONE);
-            throwIfErrors();
-            validateMid(consentWriteRequest.getMId());
-        }
-        throwIfErrors();
-        checkForLeadingTrailingAndSingleSpace(consentWriteRequest.getRequestId(),REQUEST_ID);
-        checkForLeadingTrailingAndSingleSpace(consentWriteRequest.getRequestType(),REQUEST_TYPE);
-        checkForLeadingTrailingAndSingleSpace(consentWriteRequest.getNewEmail(),EMAIL);
-        checkForLeadingTrailingAndSingleSpace(consentWriteRequest.getNewMobileNumber(),MOBILE_PHONE);
-        checkForLeadingTrailingAndSingleSpace(consentWriteRequest.getConsents().getFirst().getPurposeCode(),PURPOSE_CODE);
-        checkForLeadingTrailingAndSingleSpace(consentWriteRequest.getConsents().getFirst().getPurposeVersion(),PURPOSE_VERSION);
-        throwIfErrors();
-        validateFields(consentWriteRequest);
-        throwIfErrors();
-        for (Consent consent : consentWriteRequest.getConsents()) {
-            checkMandatoryField(consent.getPurposeCode(), PURPOSE_CODE);
-            checkMandatoryField(consent.getPurposeVersion(), PURPOSE_VERSION);
-            checkMandatoryField(consent.getConsented(), CONSENTED);
-            throwIfErrors();
-            checkForLeadingTrailingAndSingleSpace(consent.getPurposeCode(), PURPOSE_CODE);
-            checkForLeadingTrailingAndSingleSpace(consent.getPurposeVersion(), PURPOSE_VERSION);
-            throwIfErrors();
-            validateFieldLength(consent.getPurposeCode(), MAX_NAME_LENGTH, PURPOSE_CODE);
-            throwIfErrors();
-            validateFieldWithRegex(consent.getPurposeCode(), NO_SPACE_INBETWEEN_STRING, PURPOSE_CODE, INCORRECT_FORMAT);
-            validateFieldWithRegex(consent.getPurposeVersion(), ONLY_NUMRIC_REGEX, PURPOSE_VERSION, INCORRECT_FORMAT);
-            throwIfErrors();
-            if (consent.getConsentedProducts() != null) {
-                Arrays.stream(consent.getConsentedProducts())
-                        .forEach(product -> validateFieldLength(product, MAX_NAME_LENGTH, CONSENTED_PRODUCT));
-            }
-            if (consent.getNotConsentedProducts() != null) {
-                Arrays.stream(consent.getNotConsentedProducts())
-                        .forEach(product -> validateFieldLength(product, MAX_NAME_LENGTH, NOT_CONSENT_PRODUCT));
-            }
-            throwIfErrors();
-        }
-    }
-
-
-    public void validateMidConsentRequest(MidConsentRequest midConsentRequest) {
-        errorDtoList = new ArrayList<>();
-        logger.debug("Validation start for mid {}",midConsentRequest.getMId());
-        validateMid(midConsentRequest.getMId());
-        throwIfErrors();
-        for (Consent consent : midConsentRequest.getConsents()) {
-            checkMandatoryField(consent.getPurposeCode(), PURPOSE_CODE);
-            checkMandatoryField(consent.getPurposeVersion(), PURPOSE_VERSION);
-            checkMandatoryField(consent.getConsented(), CONSENTED);
-            throwIfErrors();
-            checkForLeadingTrailingAndSingleSpace(consent.getPurposeCode(), PURPOSE_CODE);
-            checkForLeadingTrailingAndSingleSpace(consent.getPurposeVersion(), PURPOSE_VERSION);
-            throwIfErrors();
-            validateFieldLength(consent.getPurposeCode(), MAX_NAME_LENGTH, PURPOSE_CODE);
-            throwIfErrors();
-            validateFieldWithRegex(consent.getPurposeCode(), NO_SPACE_INBETWEEN_STRING, PURPOSE_CODE, INCORRECT_FORMAT);
-            validateFieldWithRegex(consent.getPurposeVersion(), ONLY_NUMRIC_REGEX, PURPOSE_VERSION, INCORRECT_FORMAT);
-            throwIfErrors();
-            if (consent.getConsentedProducts() != null) {
-                Arrays.stream(consent.getConsentedProducts())
-                        .forEach(product -> validateFieldLength(product, MAX_NAME_LENGTH, CONSENTED_PRODUCT));
-            }
-            if (consent.getNotConsentedProducts() != null) {
-                Arrays.stream(consent.getNotConsentedProducts())
-                        .forEach(product -> validateFieldLength(product, MAX_NAME_LENGTH, NOT_CONSENT_PRODUCT));
-            }
-            throwIfErrors();
-        }
-    }
-
-
-
-
-
-@Data
-@Builder
-@NoArgsConstructor
-@AllArgsConstructor
-public class ConsentWriteRequest {
-    private String newMobileNumber;
-    private String newEmail;
-    @JsonProperty("mId")
-    private String mId;
-    private String requestId;
-    private String requestType;
-    private List<Consent> consents;
-}
-
-@Data
-@Builder
-@NoArgsConstructor
-@AllArgsConstructor
-public class MidConsentRequest {
-    @JsonProperty("mId")
-    private String mId;
-    private List<Consent> consents;
-}
-
-
-@Data
-@Builder
-@NoArgsConstructor
-@AllArgsConstructor
-public class Consent {
-    private String purposeCode;
-    private String purposeVersion;
-    private Boolean consented;
-    private String[] consentedProducts;
-    private String[] notConsentedProducts;
-}
----------------------------------
-
-
-
-
-
-public void validateMidConsentRequest(MidConsentRequest midConsentRequest) {
-    errorDtoList = new ArrayList<>();
-    logger.debug("Validation start for mid {}", midConsentRequest.getMId());
-    validateMid(midConsentRequest.getMId());
-    throwIfErrors();
-    for (Consent consent : midConsentRequest.getConsents()) {
-        checkMandatoryField(consent.getPurposeCode(), PURPOSE_CODE);
-        checkMandatoryField(consent.getPurposeVersion(), PURPOSE_VERSION);
-        checkMandatoryField(consent.getConsented(), CONSENTED);
-        throwIfErrors();
-        checkForLeadingTrailingAndSingleSpace(consent.getPurposeCode(), PURPOSE_CODE);
-        checkForLeadingTrailingAndSingleSpace(consent.getPurposeVersion(), PURPOSE_VERSION);
-        throwIfErrors();
-        validateFieldLength(consent.getPurposeCode(), MAX_NAME_LENGTH, PURPOSE_CODE);
-        throwIfErrors();
-        validateFieldWithRegex(consent.getPurposeCode(), "^\\S+$", PURPOSE_CODE, "Format is incorrect.");
-        validateFieldWithRegex(consent.getPurposeVersion(), "\\d+", PURPOSE_VERSION, "Format is incorrect.");
-        throwIfErrors();
-
-        // Validate consentedProducts string lengths
-        if (consent.getConsentedProducts() != null) {
-            Arrays.stream(consent.getConsentedProducts())
-                    .forEach(product -> validateFieldLength(product, MAX_PRODUCT_NAME_LENGTH, CONSENTED_PRODUCTS));
-        }
-
-        // Validate notConsentedProducts string lengths
-        if (consent.getNotConsentedProducts() != null) {
-            Arrays.stream(consent.getNotConsentedProducts())
-                    .forEach(product -> validateFieldLength(product, MAX_PRODUCT_NAME_LENGTH, NOT_CONSENTED_PRODUCTS));
-        }
-        throwIfErrors();
-    }
-}
-
-----------
-
-
-
-
-
-
-
-@Data
-@Builder
-@NoArgsConstructor
-@AllArgsConstructor
-public class MidConsentRequest {
-    @JsonProperty("mId")
-    private String mId;
-    private List<Consent> consents;
-}
-
-@Data
-@Builder
-@NoArgsConstructor
-@AllArgsConstructor
-public class Consent {
-    private String purposeCode;
-    private String purposeVersion;
-    private Boolean consented;
-    private String[] consentedProducts;
-    private String[] notConsentedProducts;
-}
-
-
-
-    public void validateMidConsentRequest(MidConsentRequest midConsentRequest) {
-        errorDtoList = new ArrayList<>();
-        logger.debug("Validation start for mid {}",midConsentRequest.getMId());
-        validateMid(midConsentRequest.getMId());
-        throwIfErrors();
-        for (Consent consent : midConsentRequest.getConsents()) {
-            checkMandatoryField(consent.getPurposeCode(), PURPOSE_CODE);
-            checkMandatoryField(consent.getPurposeVersion(), PURPOSE_VERSION);
-            checkMandatoryField(consent.getConsented(), CONSENTED);
-            throwIfErrors();
-            checkForLeadingTrailingAndSingleSpace(consent.getPurposeCode(), PURPOSE_CODE);
-            checkForLeadingTrailingAndSingleSpace(consent.getPurposeVersion(), PURPOSE_VERSION);
-            throwIfErrors();
-            validateFieldLength(consent.getPurposeCode(), MAX_NAME_LENGTH, PURPOSE_CODE);
-            throwIfErrors();
-            validateFieldWithRegex(consent.getPurposeCode(), "^\\S+$", PURPOSE_CODE, "Format is incorrect.");
-            validateFieldWithRegex(consent.getPurposeVersion(), "\\d+", PURPOSE_VERSION, "Format is incorrect.");
-            throwIfErrors();
-            Arrays.stream(consent.getConsentedProducts()).map()
-        }
-    }
-
-
-package com.epay.merchant.validator;
-
-import com.epay.merchant.dto.ErrorDto;
-import com.epay.merchant.exception.ValidationException;
-import com.epay.merchant.util.MerchantConstant;
+import com.epay.transaction.model.request.PaymentCallBackRequest;
+import com.epay.transaction.model.response.EncryptedResponse;
+import com.epay.transaction.model.response.TransactionResponse;
+import com.epay.transaction.repository.MerchantOrderPaymentRepository;
+import com.epay.transaction.util.EPayIdentityUtil;
+import com.epay.transaction.util.TransactionConstant;
+import com.epay.transaction.util.TransactionErrorConstants;
+import com.epay.transaction.util.enums.EntityType;
+import com.sbi.epay.authentication.providers.EPayTokenProvider;
+import com.sbi.epay.logging.utility.LoggerFactoryUtility;
+import com.sbi.epay.logging.utility.LoggerUtility;
+import lombok.RequiredArgsConstructor;
 import org.apache.commons.collections4.CollectionUtils;
-import org.apache.commons.lang3.EnumUtils;
-import org.apache.commons.lang3.ObjectUtils;
-import org.apache.commons.lang3.StringUtils;
-import org.springframework.data.domain.PageRequest;
-import org.springframework.data.domain.Pageable;
-import org.springframework.data.domain.Sort;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Component;
+
 import java.text.MessageFormat;
-import java.util.*;
-import java.util.regex.Pattern;
-import static com.epay.merchant.util.DateTimeUtils.getCurrentTimeInMills;
-import static com.epay.merchant.util.ErrorConstants.*;
-/**
- * Class Name:BaseValidator
- * *
- * Description: BaseValidator is a base class for all validators, providing common functionality
- * for storing and managing validation errors.
- * *
- * Author: Bhoopendra Rajput
- * <p>
- * Copyright (c) 2024 [State Bank of India]
- * All right reserved
- * *
- * Version:1.0
- */
-public class BaseValidator {
+import java.util.List;
 
-    List<ErrorDto> errorDtoList;
+import static com.epay.transaction.util.EncryptionDecryptionUtil.decryptValue;
+import static com.epay.transaction.util.EncryptionDecryptionUtil.encryptValue;
+import static com.epay.transaction.util.TransactionErrorConstants.*;
+import static com.epay.transaction.util.TransactionUtil.toJson;
+
+
+@Component
+@RequiredArgsConstructor
+public class PaymentCallbackForwardDao {
+    private final TokenDao tokenDao;
+    private final EPayTokenProvider ePayTokenProvider;
+    private final PaymentCallBackServicesClient paymentCallBackServicesClient;
+    private final LoggerUtility logger = LoggerFactoryUtility.getLogger(this.getClass());
+    private final KmsServicesClient kmsServicesClient;
+    private final TransactionConfig transactionConfig;
+    private final MerchantOrderPaymentRepository merchantOrderPaymentRepository;
+    private final ErrorLogDao errorLogDao;
 
     /**
-     * Check mandatory field
+     * Method name : getEncryptedAESKey
+     * Description :  Fetching AES Key
      *
-     * @param value     String
-     * @param fieldName String
+     * @return String of AES Key
      */
-    protected void checkMandatoryField(String value, String fieldName) {
-        if (StringUtils.isEmpty(StringUtils.strip(value)) || StringUtils.equalsAnyIgnoreCase(value, "null")) {
-            addError(fieldName, MANDATORY_ERROR_CODE, MANDATORY_ERROR_MESSAGE);
-        }
+    public String getEncryptedAESKey() {
+        logger.info("Fetching AES key from Token Table");
+        return tokenDao.getEncryptionAESKey(ePayTokenProvider.getToken());
     }
 
     /**
-     * Checks if a given object is null or empty, and adds an error if it is.
-     *
-     * @param value     - The object to check
-     * @param fieldName - The name of the field to include in the error message
+     * @param mid:String
+     * @return String
      */
-    void checkMandatoryField(Object value, String fieldName) {
-        if (ObjectUtils.isEmpty(value)) {
-            addError(fieldName, MANDATORY_ERROR_CODE, MANDATORY_ERROR_MESSAGE);
-        }
+    public String getMerchantMekKey(String mid) {
+        KMSEncryptionKeysResponse encryptionKeysResponse = getMekByMid(mid);
+        String kek = decryptValue(encryptionKeysResponse.getAek(), encryptionKeysResponse.getKek());
+        return decryptValue(kek, encryptionKeysResponse.getMek());
     }
 
     /**
-     * Check mandatory field
-     *
-     * @param value     UUID
-     * @param fieldName String
+     * @param mId:String
+     * @return String
      */
-    protected void checkMandatoryField(UUID value, String fieldName) {
-        if (ObjectUtils.isEmpty(value)) {
-            addError(fieldName, MANDATORY_ERROR_CODE, MANDATORY_ERROR_MESSAGE);
+    private KMSEncryptionKeysResponse getMekByMid(String mId) {
+        TransactionResponse<KMSEncryptionKeysResponse> kmsResponse = kmsServicesClient.getEncryptionKeys(mId);
+        if (TransactionConstant.RESPONSE_SUCCESS == kmsResponse.getStatus() && CollectionUtils.isNotEmpty(kmsResponse.getData())) {
+            KMSEncryptionKeysResponse encryptionKeyResponse = kmsResponse.getData().getFirst();
+            encryptionKeyResponse.setAek(transactionConfig.getAek());
+            return encryptionKeyResponse;
+        } else if (CollectionUtils.isNotEmpty(kmsResponse.getErrors())) {
+            throw new TransactionException(kmsResponse.getErrors());
+        }
+        throw new TransactionException(TransactionErrorConstants.NOT_FOUND_ERROR_CODE, MessageFormat.format(TransactionErrorConstants.NOT_FOUND_ERROR_MESSAGE, "Merchant Encryption Keys"));
+    }
+
+
+    public EncryptedResponse processRupayCardResendOtp(PaymentRequestResendCard paymentRequestResendCard, String key) {
+        logger.info("Payment callBack process Started");
+        TransactionResponse<RupaySeamlessResponse> rupayCardCallBackResentOtpResponse = paymentCallBackServicesClient.getRupayCardCallBackResentOtpResponse(paymentRequestResendCard);
+        return handleCallBackResponse(rupayCardCallBackResentOtpResponse, key, "rupayRecentOtp");
+    }
+
+
+    public EncryptedResponse processRupayCardVerifyOtp(PaymentRequestVerifyCard paymentRequestResendCard, String key) {
+        logger.info("Payment callBack process Started");
+        TransactionResponse<RupaySeamlessResponse> rupayCardCallBackVerifyOtpResponse = paymentCallBackServicesClient.getRupayCardCallBackVerifyOtpResponse(paymentRequestResendCard);
+        return handleCallBackResponse(rupayCardCallBackVerifyOtpResponse, key, "rupayVerifyOtp");
+    }
+
+
+    private <T> EncryptedResponse handleCallBackResponse(TransactionResponse<T> response, String key, String callBackType) {
+        logger.info("Handling response for payment type: {}", callBackType);
+        if (TransactionConstant.RESPONSE_SUCCESS == response.getStatus() && CollectionUtils.isNotEmpty(response.getData())) {
+            String encryptionResponse = encryptValue(key, toJson(response.getData().getFirst()));
+            return EncryptedResponse.builder().encryptedResponse(encryptionResponse).build();
+        } else if (TransactionConstant.RESPONSE_FAILURE == response.getStatus() && CollectionUtils.isNotEmpty(response.getData())) {
+            logger.info("Handling failure response payment type: {}", callBackType);
+            String encryptionResponse = encryptValue(key, toJson(response.getData().getFirst()));
+            return EncryptedResponse.builder().encryptedResponse(encryptionResponse).build();
+        } else if (TransactionConstant.RESPONSE_FAILURE == response.getStatus() && CollectionUtils.isNotEmpty(response.getErrors())) {
+            throw new TransactionException(response.getErrors());
+        }
+        errorLogDao.logBusinessError(EPayIdentityUtil.getUserPrincipal().getMId(), EntityType.PAYMENT,null,null,null,null, NOT_FOUND_ERROR_CODE, MessageFormat.format(TransactionErrorConstants.PAYMENT_ERROR_MESSAGE, callBackType));
+        throw new TransactionException(TransactionErrorConstants.PAYMENT_ERROR_CODE, MessageFormat.format(TransactionErrorConstants.PAYMENT_ERROR_MESSAGE, callBackType));
+    }
+
+
+
+
+    public void validateByAtrnMidAndOrderRefNumber(String mId, String sbiOrderRefNumber, String atrn) {
+        logger.info("Validating Mid, Atrn And OrderRefNumber");
+        if (!merchantOrderPaymentRepository.existsBymIdAndSbiOrderRefNumberAndAtrnNumber(mId, sbiOrderRefNumber, atrn)) {
+            throw new TransactionException(TransactionErrorConstants.INVALID_ERROR_CODE, MessageFormat.format(TransactionErrorConstants.INVALID_ERROR_MESSAGE, ATRN, ATRN_INVALID));
         }
     }
-
-    /**
-     * Check mandatory collection
-     *
-     * @param collection Collection
-     * @param fieldName  String
-     */
-    protected void checkMandatoryCollection(Collection<?> collection, String fieldName) {
-        if (CollectionUtils.isEmpty(collection)) {
-            addError(fieldName, MANDATORY_ERROR_CODE, MANDATORY_ERROR_MESSAGE);
-        }
-    }
-
-    /**
-     * Check mandatory fields
-     *
-     * @param fieldName String
-     * @param values    String...
-     */
-    protected void checkMandatoryFields(String fieldName, String... values) {
-        boolean allEmpty = Arrays.stream(values).allMatch(StringUtils::isEmpty);
-        if (allEmpty) {
-            addError(fieldName, MANDATORY_ERROR_CODE, MANDATORY_ERROR_MESSAGE);
-        }
-    }
-
-    /**
-     * Check mandatary date field
-     *
-     * @param date      Long
-     * @param fieldName String
-     */
-    protected void checkMandatoryDateField(Long date, String fieldName) {
-        if (ObjectUtils.isEmpty(date) || date < 0) {
-            addError(fieldName, MANDATORY_ERROR_CODE, MANDATORY_ERROR_MESSAGE);
-        }
-    }
-
-    protected void validateFieldLength(String value, int maxLength, String fieldName) {
-        if (StringUtils.isNotEmpty(value) && value.length() > maxLength) {
-            addError(MIN_MAX_ALLOWED_LENGTH_ERROR_CODE, MAX_ALLOWED_LENGTH_ERROR_MESSAGE, fieldName, maxLength);
-        }
-    }
-
-
-    protected void validateFieldMinLength(String value, int minLength, String fieldName) {
-        if (StringUtils.isNotEmpty(value) && value.length() < minLength) {
-            addError(MIN_MAX_ALLOWED_LENGTH_ERROR_CODE, MIN_ALLOWED_LENGTH_ERROR_MESSAGE, fieldName, minLength);
-        }
-    }
-    protected void validateDateFieldForPastDate(Long date, String fieldName) {
-        if (date < MerchantConstant.MIN_TIMESTAMP || getCurrentTimeInMills() < date) {
-            addError(INVALID_ERROR_CODE, INVALID_ERROR_MESSAGE, fieldName, MerchantConstant.GREATER_THEN_CURRENT_DATE_OR_NOT_HAVING_FORMAT);
-        }
-    }
-
-    protected void validateDateFieldForFutureDate(Long date, String fieldName) {
-        if (date > MerchantConstant.MAX_TIMESTAMP || getCurrentTimeInMills() > date) {
-            addError(INVALID_ERROR_CODE, INVALID_ERROR_MESSAGE, fieldName, MerchantConstant.LESS_THEN_CURRENT_DATE_OR_NOT_HAVING_FORMAT);
-        }
-    }
-
-    protected void validateFieldWithRegex(String value, int maxLength, String regex, String fieldName, String message) {
-        if (StringUtils.isNotEmpty(value) && (value.length() > maxLength || validate(value, regex))) {
-            addError(fieldName, INVALID_FORMAT_OR_MAX_LEN_ERROR_CODE, message + " " + maxLength);
-        }
-    }
-
-    protected void validateFieldWithRegex(String value, String regex, String fieldName, String reason) {
-        if (StringUtils.isNotEmpty(value) && validate(value, regex)) {
-            addError(fieldName, INVALID_ERROR_CODE, MessageFormat.format(INVALID_ERROR_MESSAGE, fieldName, reason));
-        }
-    }
-
-    protected void validateFieldValue(String value, String validValue, String fieldName) {
-        if (!validValue.equalsIgnoreCase(value)) {
-            addError(fieldName, INVALID_ENUM_ERROR_CODE, INVALID_ENUM_ERROR_MESSAGE);
-        }
-    }
-
-    protected void validateFieldValue(String value, List<String> validValues, String fieldName) {
-        if(StringUtils.isNotEmpty(value) && validValues.stream().noneMatch(validValue -> validValue.equals(value))) {
-                addError(fieldName, INVALID_ENUM_ERROR_CODE, INVALID_ENUM_ERROR_MESSAGE);
-        }
-    }
-
-    protected <E extends Enum<E>> void validateFieldValue(Enum<E> value, String fieldName, Class<E> enumName) {
-        if (Objects.isNull(value)) {
-            addError(INVALID_ERROR_CODE, INVALID_ERROR_MESSAGE, fieldName, "Valid values are " + EnumUtils.getEnumList(enumName));
-        }
-    }
-
-    protected void addError(String fieldName, String errorCode, String errorMessage) {
-        errorDtoList.add(ErrorDto.builder().errorCode(errorCode).errorMessage(MessageFormat.format(errorMessage, fieldName)).build());
-    }
-
-    protected void addError(String errorCode, String errorMessage, Object... fieldNames) {
-        errorDtoList.add(ErrorDto.builder().errorCode(errorCode).errorMessage(MessageFormat.format(errorMessage, fieldNames)).build());
-    }
-
-    protected void throwIfErrors() {
-        if (CollectionUtils.isNotEmpty(errorDtoList)) {
-            throw new ValidationException(errorDtoList);
-        }
-    }
-
-    protected boolean validate(String value, String regex) {
-        return !Pattern.matches(regex, value);
-    }
-
-    /***
-     * Description : checkForLeadingTrailingAndSingleSpace method are being used for checking input
-     * parameter having any leading trailing space in it or not and returns error message if
-     * input parameter has any leading or trailing space in it.
-     * @param value String
-     * @param fieldName String
-     */
-    protected void checkForLeadingTrailingAndSingleSpace(String value, String fieldName) {
-        if (StringUtils.isNotEmpty(value) && !value.equals(value.trim())) {
-            addError(fieldName, WHITESPACE_ERROR_CODE, WHITESPACE_ERROR_MESSAGE);
-        }
-    }
-
-    /**
-     * Validate if field value length is not equal to required length.
-     * @param value String
-     * @param maxLength int
-     * @param fieldName String
-     */
-    protected void validateFixedFieldLength(String value, int maxLength, String fieldName) {
-        if (StringUtils.isNotEmpty(value) && value.length() != maxLength) {
-            addError(FIXED_LENGTH_ERROR_CODE, FIXED_LENGTH_ERROR_MESSAGE, fieldName, maxLength);
-        }
-    }
-
-    protected void validateDuplicateValue(List values, String fieldName, String reason) {
-        Set uniqueValues = new HashSet<>();
-        if (!values.isEmpty() && values.stream().anyMatch(v -> !uniqueValues.add(v))) {
-            addError(INVALID_ERROR_CODE, INVALID_ERROR_MESSAGE, fieldName, reason);
-
-        }
-    }
-
-    /**
-     * Helper method to validates field values in the Pageable.
-     * @param pageable Pageable
-     * @param maxSize int
-     * @param defaultSortField String
-     * @return {pageable}
-     */
-    protected Pageable validateAndSanitizePageable(Pageable pageable, int maxSize, String defaultSortField,Set<String> sortList) {
-        // Validate page size
-        if (pageable.getPageSize() > maxSize) {
-            addError(MIN_MAX_ALLOWED_LENGTH_ERROR_CODE, MAX_ALLOWED_LENGTH_ERROR_MESSAGE, MerchantConstant.PAGE_SIZE, maxSize);
-        }
-        // Get allowed fields from class
-        boolean hasInvalidSort = pageable.getSort().stream().anyMatch(order -> !sortList.contains(order.getProperty()));
-        // If any invalid sort field, craete to default
-        if (pageable.getSort().isUnsorted() || hasInvalidSort) {
-            return PageRequest.of(pageable.getPageNumber(), pageable.getPageSize(), Sort.by(Sort.Direction.DESC, defaultSortField));
-        }
-        return pageable;
-    }
-
-
 }
+
+
+package com.epay.transaction.dao;
+
+
+import com.epay.transaction.config.TransactionConfig;
+import com.epay.transaction.dto.CallBackFinalResponseDto;
+import com.epay.transaction.exceptions.TransactionException;
+import com.epay.transaction.externalservice.KmsServicesClient;
+import com.epay.transaction.externalservice.PaymentCallBackServicesClient;
+import com.epay.transaction.externalservice.request.payment.*;
+
+import com.epay.transaction.externalservice.response.kms.KMSEncryptionKeysResponse;
+import com.epay.transaction.externalservice.response.payment.RupaySeamlessResponse;
+
+import com.epay.transaction.model.request.PaymentCallBackRequest;
+import com.epay.transaction.model.response.EncryptedResponse;
+import com.epay.transaction.model.response.TransactionResponse;
+import com.epay.transaction.repository.MerchantOrderPaymentRepository;
+import com.epay.transaction.util.EPayIdentityUtil;
+import com.epay.transaction.util.TransactionConstant;
+import com.epay.transaction.util.TransactionErrorConstants;
+import com.epay.transaction.util.enums.EntityType;
+import com.sbi.epay.authentication.providers.EPayTokenProvider;
+import com.sbi.epay.logging.utility.LoggerFactoryUtility;
+import com.sbi.epay.logging.utility.LoggerUtility;
+import lombok.RequiredArgsConstructor;
+import org.apache.commons.collections4.CollectionUtils;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Component;
+
+import java.text.MessageFormat;
+import java.util.List;
+
+import static com.epay.transaction.util.EncryptionDecryptionUtil.decryptValue;
+import static com.epay.transaction.util.EncryptionDecryptionUtil.encryptValue;
+import static com.epay.transaction.util.TransactionErrorConstants.*;
+import static com.epay.transaction.util.TransactionUtil.toJson;
+
+
+@Component
+@RequiredArgsConstructor
+public class PaymentCallbackForwardDao {
+    private final TokenDao tokenDao;
+    private final EPayTokenProvider ePayTokenProvider;
+    private final PaymentCallBackServicesClient paymentCallBackServicesClient;
+    private final LoggerUtility logger = LoggerFactoryUtility.getLogger(this.getClass());
+    private final KmsServicesClient kmsServicesClient;
+    private final TransactionConfig transactionConfig;
+    private final MerchantOrderPaymentRepository merchantOrderPaymentRepository;
+    private final ErrorLogDao errorLogDao;
+
+    /**
+     * Method name : getEncryptedAESKey
+     * Description :  Fetching AES Key
+     *
+     * @return String of AES Key
+     */
+    public String getEncryptedAESKey() {
+        logger.info("Fetching AES key from Token Table");
+        return tokenDao.getEncryptionAESKey(ePayTokenProvider.getToken());
+    }
+
+    /**
+     * @param mid:String
+     * @return String
+     */
+    public String getMerchantMekKey(String mid) {
+        KMSEncryptionKeysResponse encryptionKeysResponse = getMekByMid(mid);
+        String kek = decryptValue(encryptionKeysResponse.getAek(), encryptionKeysResponse.getKek());
+        return decryptValue(kek, encryptionKeysResponse.getMek());
+    }
+
+    /**
+     * @param mId:String
+     * @return String
+     */
+    private KMSEncryptionKeysResponse getMekByMid(String mId) {
+        TransactionResponse<KMSEncryptionKeysResponse> kmsResponse = kmsServicesClient.getEncryptionKeys(mId);
+        if (TransactionConstant.RESPONSE_SUCCESS == kmsResponse.getStatus() && CollectionUtils.isNotEmpty(kmsResponse.getData())) {
+            KMSEncryptionKeysResponse encryptionKeyResponse = kmsResponse.getData().getFirst();
+            encryptionKeyResponse.setAek(transactionConfig.getAek());
+            return encryptionKeyResponse;
+        } else if (CollectionUtils.isNotEmpty(kmsResponse.getErrors())) {
+            throw new TransactionException(kmsResponse.getErrors());
+        }
+        throw new TransactionException(TransactionErrorConstants.NOT_FOUND_ERROR_CODE, MessageFormat.format(TransactionErrorConstants.NOT_FOUND_ERROR_MESSAGE, "Merchant Encryption Keys"));
+    }
+
+
+    public EncryptedResponse processRupayCardResendOtp(PaymentRequestResendCard paymentRequestResendCard, String key) {
+        logger.info("Payment callBack process Started");
+        TransactionResponse<RupaySeamlessResponse> rupayCardCallBackResentOtpResponse = paymentCallBackServicesClient.getRupayCardCallBackResentOtpResponse(paymentRequestResendCard);
+        return handleCallBackResponse(rupayCardCallBackResentOtpResponse, key, "rupayRecentOtp");
+    }
+
+
+    public EncryptedResponse processRupayCardVerifyOtp(PaymentRequestVerifyCard paymentRequestResendCard, String key) {
+        logger.info("Payment callBack process Started");
+        TransactionResponse<RupaySeamlessResponse> rupayCardCallBackVerifyOtpResponse = paymentCallBackServicesClient.getRupayCardCallBackVerifyOtpResponse(paymentRequestResendCard);
+        return handleCallBackResponse(rupayCardCallBackVerifyOtpResponse, key, "rupayVerifyOtp");
+    }
+
+
+    private <T> EncryptedResponse handleCallBackResponse(TransactionResponse<T> response, String key, String callBackType) {
+        logger.info("Handling response for payment type: {}", callBackType);
+        if (TransactionConstant.RESPONSE_SUCCESS == response.getStatus() && CollectionUtils.isNotEmpty(response.getData())) {
+            String encryptionResponse = encryptValue(key, toJson(response.getData().getFirst()));
+            return EncryptedResponse.builder().encryptedResponse(encryptionResponse).build();
+        } else if (TransactionConstant.RESPONSE_FAILURE == response.getStatus() && CollectionUtils.isNotEmpty(response.getData())) {
+            logger.info("Handling failure response payment type: {}", callBackType);
+            String encryptionResponse = encryptValue(key, toJson(response.getData().getFirst()));
+            return EncryptedResponse.builder().encryptedResponse(encryptionResponse).build();
+        } else if (TransactionConstant.RESPONSE_FAILURE == response.getStatus() && CollectionUtils.isNotEmpty(response.getErrors())) {
+            throw new TransactionException(response.getErrors());
+        }
+        errorLogDao.logBusinessError(EPayIdentityUtil.getUserPrincipal().getMId(), EntityType.PAYMENT,null,null,null,null, NOT_FOUND_ERROR_CODE, MessageFormat.format(TransactionErrorConstants.PAYMENT_ERROR_MESSAGE, callBackType));
+        throw new TransactionException(TransactionErrorConstants.PAYMENT_ERROR_CODE, MessageFormat.format(TransactionErrorConstants.PAYMENT_ERROR_MESSAGE, callBackType));
+    }
+
+
+
+
+    public void validateByAtrnMidAndOrderRefNumber(String mId, String sbiOrderRefNumber, String atrn) {
+        logger.info("Validating Mid, Atrn And OrderRefNumber");
+        if (!merchantOrderPaymentRepository.existsBymIdAndSbiOrderRefNumberAndAtrnNumber(mId, sbiOrderRefNumber, atrn)) {
+            throw new TransactionException(TransactionErrorConstants.INVALID_ERROR_CODE, MessageFormat.format(TransactionErrorConstants.INVALID_ERROR_MESSAGE, ATRN, ATRN_INVALID));
+        }
+    }
+}
+
+
+above is my code for for Otp validation and otp regeneration. 
+i wanted to use processRupayCardResendOtp and processRupayCardVerifyOtp method in my below code but problem is that i am not passing key to these method as i will dont have these key in my requrement . i want to use the oble same 
+code without affecting its original flow.
+i want to do mini change in obove code and it should work in my new method as well how to achive this 
+
+
+package com.epay.transaction.service.mhiService;
+
+import com.epay.transaction.dao.AdminDao;
+import com.epay.transaction.dao.KmsDao;
+import com.epay.transaction.dao.PaymentCallbackForwardDao;
+import com.epay.transaction.dto.MerchantFeeDto;
+import com.epay.transaction.externalservice.request.payment.PaymentRequestResendCard;
+import com.epay.transaction.externalservice.request.payment.PaymentRequestVerifyCard;
+import com.epay.transaction.externalservice.request.payment.PaymentUPIVpaRequest;
+import com.epay.transaction.externalservice.response.admin.BinCheckResponse;
+import com.epay.transaction.externalservice.response.eis.ecom.EisEcomFinalResponse;
+import com.epay.transaction.model.request.CardVerificationRequest;
+import com.epay.transaction.model.request.EncryptedRequest;
+import com.epay.transaction.model.request.GstInVerificationRequest;
+import com.epay.transaction.model.request.MerchantPricingRequest;
+import com.epay.transaction.model.response.EncryptedResponse;
+import com.epay.transaction.model.response.TransactionResponse;
+import com.epay.transaction.service.MerchantPricingService;
+import com.epay.transaction.util.EPayIdentityUtil;
+import com.epay.transaction.util.TransactionConstant;
+import com.epay.transaction.util.TransactionUtil;
+import com.epay.transaction.util.enums.ContextType;
+import com.epay.transaction.validator.mhiValidator.PaymentBookingValidator;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.sbi.epay.logging.utility.LoggerFactoryUtility;
+import com.sbi.epay.logging.utility.LoggerUtility;
+import lombok.RequiredArgsConstructor;
+import org.springframework.stereotype.Service;
+
+import java.util.List;
+
+import static com.epay.transaction.util.TransactionConstant.RESPONSE_SUCCESS;
+import static com.epay.transaction.util.TransactionUtil.convertJsonObjectToDto;
+import static com.epay.transaction.util.enums.ContextType.getContextType;
+
+/**
+ * Class Name: ContextService
+ * <p>
+ * Description: service is responsible for validation.
+ * </p>
+ * <p>Author: V1019439 (RAHUL YADAV)</p>
+ * <p>Copyright (c) 2025 [State Bank of India]. All rights reserved.</p>
+ * <p>Version: 2.0</p>
+ */
+@RequiredArgsConstructor
+@Service
+public class ContextService {
+    private final LoggerUtility logger = LoggerFactoryUtility.getLogger(this.getClass());
+    private final PaymentBookingValidator paymentBookingValidator;
+    private final MerchantPricingService merchantPricingService;
+    private final KmsDao kmsDao;
+    private final AdminDao adminDao;
+    private final PaymentCallbackForwardDao paymentCallbackForwardDao;
+    private static final ObjectMapper objectMapper = new ObjectMapper();
+
+
+    public TransactionResponse<?> validateRequest(JsonNode requestObject, String ContextType)  {
+        logger.info("Receive request for validation : {}", ContextType);
+        ContextType ContextTypeEnum = getContextType(ContextType);
+        switch (ContextTypeEnum) {
+            case GSTIN -> validateGSTRequest( requestObject);
+            case CARD_BIN -> {
+                return validateCardBinRequest( requestObject);
+            }
+            case ECOM -> {
+                return validateEComRequest( requestObject);
+            }
+            case UPI -> validateVpaRequest(requestObject);
+            case CHARGES -> {
+                return getTransactionCharges( requestObject);
+            }
+            case PAYMODES -> {
+                return getMerchantValidPayModes();
+            }
+//            case GENERATE_OTP -> {
+//                return ;
+//            }
+//            case VERIFY_OTP -> {
+//                return ;
+//            }
+        }
+        logger.info("Receive success response for validation : {}", ContextType);
+        return TransactionResponse.<String>builder().data(List.of("Request Validated Successfully")).status(TransactionConstant.RESPONSE_SUCCESS).build();
+    }
+
+    private void validateGSTRequest(JsonNode requestObject) {
+        GstInVerificationRequest gstInVerificationRequest =  convertJsonObjectToDto(requestObject, GstInVerificationRequest.class );
+        logger.info("Receive validateGST request for gstInVerificationRequest : {}", gstInVerificationRequest);
+        paymentBookingValidator.validateGstIn(gstInVerificationRequest);
+    }
+
+    private TransactionResponse<BinCheckResponse> validateCardBinRequest(JsonNode requestObject) {
+        CardVerificationRequest cardVerificationRequest = convertJsonObjectToDto(requestObject, CardVerificationRequest.class);
+        logger.info("Receive validateCard request for cardVerificationRequest : {}", cardVerificationRequest);
+        return paymentBookingValidator.validateCardBin(cardVerificationRequest);
+    }
+
+    private TransactionResponse<EisEcomFinalResponse> validateEComRequest(JsonNode requestObject) {
+        CardVerificationRequest cardVerificationRequest = convertJsonObjectToDto(requestObject, CardVerificationRequest.class);
+        logger.info("Receive validateCard request for cardVerificationRequest : {}", cardVerificationRequest);
+        return paymentBookingValidator.validateEComRequest(cardVerificationRequest);
+    }
+
+    private void validateVpaRequest(JsonNode requestObject) {
+        PaymentUPIVpaRequest paymentUPIVpaRequest = convertJsonObjectToDto(requestObject, PaymentUPIVpaRequest.class);
+        logger.info("Receive validateVPA request for paymentUPIVpaRequest : {}", paymentUPIVpaRequest);
+        paymentBookingValidator.validateVpa(paymentUPIVpaRequest);
+    }
+
+    private TransactionResponse<MerchantFeeDto> getTransactionCharges(JsonNode requestObject) {
+        MerchantPricingRequest merchantPricingRequest = convertJsonObjectToDto(requestObject, MerchantPricingRequest.class);
+        logger.info("Receive Charges request for MerchantPricingRequest : {}", merchantPricingRequest);
+        MerchantFeeDto merchantFeeDto = merchantPricingService.getMerchantFeeDto(merchantPricingRequest);
+        logger.info("Receive TransactionCharges response for merchantFeeDto : {}", merchantFeeDto);
+        return TransactionResponse.<MerchantFeeDto>builder().data(List.of(merchantFeeDto)).status(TransactionConstant.RESPONSE_SUCCESS).build();
+    }
+
+    private TransactionResponse<JsonNode> getMerchantValidPayModes() {
+        String mId = EPayIdentityUtil.getUserPrincipal().getMId();
+        logger.info("Receive PayMode request for mId : {}", mId);
+        JsonNode merchantAllowedPayModes = adminDao.getMerchantAllowedPayModes(mId);
+        logger.info("Receive MerchantValidPayModes response for merchantAllowedPayModes : {}", merchantAllowedPayModes);
+        return TransactionResponse.<JsonNode>builder().data(List.of(merchantAllowedPayModes)).status(TransactionConstant.RESPONSE_SUCCESS).build();
+    }
+
+    /**
+     * @param encryptedRequest:String
+     * @return EncryptedResponse
+     */
+    public TransactionResponse<EncryptedResponse> processCardRupayOtpResponsePayload(JsonNode requestObject) {
+        PaymentRequestVerifyCard paymentRequestVerifyCard = convertJsonObjectToDto(requestObject, PaymentRequestVerifyCard.class);
+        EncryptedResponse encryptedResponse = paymentCallbackForwardDao.processRupayCardVerifyOtp(paymentRequestVerifyCard, aesKey);
+        return TransactionResponse.<EncryptedResponse>builder().status(RESPONSE_SUCCESS).data(List.of(encryptedResponse)).count(1L).build();
+    }
+
+    /**
+     * @param encryptedRequest:String
+     * @return EncryptedResponse
+     */
+    public TransactionResponse<EncryptedResponse> getRupayCardCallBackResentOtpResponse(JsonNode requestObject) {
+        PaymentRequestResendCard paymentRequestResendCard = convertJsonObjectToDto(requestObject, PaymentRequestResendCard.class);
+        EncryptedResponse encryptedResponse = paymentCallbackForwardDao.processRupayCardResendOtp(paymentRequestResendCard, aesKey);
+        return TransactionResponse.<EncryptedResponse>builder().status(RESPONSE_SUCCESS).data(List.of(encryptedResponse)).count(1L).build();
+    }
+}
+
