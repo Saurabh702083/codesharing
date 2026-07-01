@@ -1,3 +1,63 @@
+// ---- existing public methods (unchanged behavior, kept for backward compatibility) ----
+public EncryptedResponse processRupayCardResendOtp(PaymentRequestResendCard paymentRequestResendCard, String key) {
+    logger.info("Payment callBack process Started");
+    TransactionResponse<RupaySeamlessResponse> response =
+            paymentCallBackServicesClient.getRupayCardCallBackResentOtpResponse(paymentRequestResendCard);
+    return encryptCallBackData(response, key, "rupayRecentOtp");
+}
+
+public EncryptedResponse processRupayCardVerifyOtp(PaymentRequestVerifyCard paymentRequestVerifyCard, String key) {
+    logger.info("Payment callBack process Started");
+    TransactionResponse<RupaySeamlessResponse> response =
+            paymentCallBackServicesClient.getRupayCardCallBackVerifyOtpResponse(paymentRequestVerifyCard);
+    return encryptCallBackData(response, key, "rupayVerifyOtp");
+}
+
+// ---- new overloads: no key required, return the plain object ----
+public RupaySeamlessResponse processRupayCardResendOtp(PaymentRequestResendCard paymentRequestResendCard) {
+    logger.info("Payment callBack process Started (no key)");
+    TransactionResponse<RupaySeamlessResponse> response =
+            paymentCallBackServicesClient.getRupayCardCallBackResentOtpResponse(paymentRequestResendCard);
+    return extractCallBackData(response, "rupayRecentOtp");
+}
+
+public RupaySeamlessResponse processRupayCardVerifyOtp(PaymentRequestVerifyCard paymentRequestVerifyCard) {
+    logger.info("Payment callBack process Started (no key)");
+    TransactionResponse<RupaySeamlessResponse> response =
+            paymentCallBackServicesClient.getRupayCardCallBackVerifyOtpResponse(paymentRequestVerifyCard);
+    return extractCallBackData(response, "rupayVerifyOtp");
+}
+
+// ---- shared logic, extracted from your original handleCallBackResponse ----
+private <T> T extractCallBackData(TransactionResponse<T> response, String callBackType) {
+    logger.info("Handling response for payment type: {}", callBackType);
+    if ((TransactionConstant.RESPONSE_SUCCESS == response.getStatus()
+            || TransactionConstant.RESPONSE_FAILURE == response.getStatus())
+            && CollectionUtils.isNotEmpty(response.getData())) {
+        if (TransactionConstant.RESPONSE_FAILURE == response.getStatus()) {
+            logger.info("Handling failure response payment type: {}", callBackType);
+        }
+        return response.getData().getFirst();
+    } else if (TransactionConstant.RESPONSE_FAILURE == response.getStatus()
+            && CollectionUtils.isNotEmpty(response.getErrors())) {
+        throw new TransactionException(response.getErrors());
+    }
+    errorLogDao.logBusinessError(EPayIdentityUtil.getUserPrincipal().getMId(), EntityType.PAYMENT,
+            null, null, null, null, NOT_FOUND_ERROR_CODE,
+            MessageFormat.format(TransactionErrorConstants.PAYMENT_ERROR_MESSAGE, callBackType));
+    throw new TransactionException(TransactionErrorConstants.PAYMENT_ERROR_CODE,
+            MessageFormat.format(TransactionErrorConstants.PAYMENT_ERROR_MESSAGE, callBackType));
+}
+
+private <T> EncryptedResponse encryptCallBackData(TransactionResponse<T> response, String key, String callBackType) {
+    T data = extractCallBackData(response, callBackType);
+    String encryptionResponse = encryptValue(key, toJson(data));
+    return EncryptedResponse.builder().encryptedResponse(encryptionResponse).build();
+}
+
+
+
+---------------
 package com.epay.transaction.dao;
 
 
