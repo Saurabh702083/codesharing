@@ -394,20 +394,20 @@ public class ContextService {
      * @param encryptedRequest:String
      * @return EncryptedResponse
      */
-    public TransactionResponse<EncryptedResponse> processCardRupayOtpResponsePayload(JsonNode requestObject) {
+    public TransactionResponse<?> processCardRupayOtpResponsePayload(JsonNode requestObject) {
         PaymentRequestVerifyCard paymentRequestVerifyCard = convertJsonObjectToDto(requestObject, PaymentRequestVerifyCard.class);
-        EncryptedResponse encryptedResponse = paymentCallbackForwardDao.processRupayCardVerifyOtp(paymentRequestVerifyCard, aesKey);
-        return TransactionResponse.<EncryptedResponse>builder().status(RESPONSE_SUCCESS).data(List.of(encryptedResponse)).count(1L).build();
+        paymentCallbackForwardDao.processRupayCardVerifyOtp(paymentRequestVerifyCard, aesKey);
+        return TransactionResponse.<?>builder().status(RESPONSE_SUCCESS).data(List.of()).count(1L).build();
     }
 
     /**
      * @param encryptedRequest:String
      * @return EncryptedResponse
      */
-    public TransactionResponse<EncryptedResponse> getRupayCardCallBackResentOtpResponse(JsonNode requestObject) {
+    public TransactionResponse<?> getRupayCardCallBackResentOtpResponse(JsonNode requestObject) {
         PaymentRequestResendCard paymentRequestResendCard = convertJsonObjectToDto(requestObject, PaymentRequestResendCard.class);
-        EncryptedResponse encryptedResponse = paymentCallbackForwardDao.processRupayCardResendOtp(paymentRequestResendCard, aesKey);
-        return TransactionResponse.<EncryptedResponse>builder().status(RESPONSE_SUCCESS).data(List.of(encryptedResponse)).count(1L).build();
+         paymentCallbackForwardDao.processRupayCardResendOtp(paymentRequestResendCard);
+        return TransactionResponse.<?>builder().status(RESPONSE_SUCCESS).data(List.of()).count(1L).build();
     }
 }
 
