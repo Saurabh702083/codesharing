@@ -1,473 +1,1472 @@
-// ---- existing public methods (unchanged behavior, kept for backward compatibility) ----
-public EncryptedResponse processRupayCardResendOtp(PaymentRequestResendCard paymentRequestResendCard, String key) {
-    logger.info("Payment callBack process Started");
-    TransactionResponse<RupaySeamlessResponse> response =
-            paymentCallBackServicesClient.getRupayCardCallBackResentOtpResponse(paymentRequestResendCard);
-    return encryptCallBackData(response, key, "rupayRecentOtp");
+this is my api which will be trigger by integration service.
+from integration service in paymentbookingRequest they are passing limited field only like :
+@Data
+@NoArgsConstructor
+@AllArgsConstructor
+public class PaymentInitiationRequest {
+    private String payProcId;
+
+    private String gtwMapsId;
+
+    private String upiAddress;
+
+    private String channelBank;
+
+    private String altNumber;
+
+    private String expiryMonth;
+
+    private String expiryYear;
+
+    private String cvv;
+
+    private String cardHolderName;
+
 }
 
-public EncryptedResponse processRupayCardVerifyOtp(PaymentRequestVerifyCard paymentRequestVerifyCard, String key) {
-    logger.info("Payment callBack process Started");
-    TransactionResponse<RupaySeamlessResponse> response =
-            paymentCallBackServicesClient.getRupayCardCallBackVerifyOtpResponse(paymentRequestVerifyCard);
-    return encryptCallBackData(response, key, "rupayVerifyOtp");
-}
+in transaction service they where alreay using PaymentInitiationRequest so i have not created new request again in transaction service i am using the old one only.
+i am just setting selected value that that i am geting from integration sevice. 
+now i need operating mode that will be DOM for fix in our case and PayProcType that we need to get based upon GtwMapsId and PayProcId that i will get from response from bookingDao.getMerchantPayModes(orderDto.getMId())
 
-// ---- new overloads: no key required, return the plain object ----
-public RupaySeamlessResponse processRupayCardResendOtp(PaymentRequestResendCard paymentRequestResendCard) {
-    logger.info("Payment callBack process Started (no key)");
-    TransactionResponse<RupaySeamlessResponse> response =
-            paymentCallBackServicesClient.getRupayCardCallBackResentOtpResponse(paymentRequestResendCard);
-    return extractCallBackData(response, "rupayRecentOtp");
-}
 
-public RupaySeamlessResponse processRupayCardVerifyOtp(PaymentRequestVerifyCard paymentRequestVerifyCard) {
-    logger.info("Payment callBack process Started (no key)");
-    TransactionResponse<RupaySeamlessResponse> response =
-            paymentCallBackServicesClient.getRupayCardCallBackVerifyOtpResponse(paymentRequestVerifyCard);
-    return extractCallBackData(response, "rupayVerifyOtp");
-}
+@RestController
+@RequiredArgsConstructor
+@RequestMapping("/payment/booking")
+@Validated
+public class PaymentBookingController {
+    private final PaymentBookingService paymentBookingService;
 
-// ---- shared logic, extracted from your original handleCallBackResponse ----
-private <T> T extractCallBackData(TransactionResponse<T> response, String callBackType) {
-    logger.info("Handling response for payment type: {}", callBackType);
-    if ((TransactionConstant.RESPONSE_SUCCESS == response.getStatus()
-            || TransactionConstant.RESPONSE_FAILURE == response.getStatus())
-            && CollectionUtils.isNotEmpty(response.getData())) {
-        if (TransactionConstant.RESPONSE_FAILURE == response.getStatus()) {
-            logger.info("Handling failure response payment type: {}", callBackType);
-        }
-        return response.getData().getFirst();
-    } else if (TransactionConstant.RESPONSE_FAILURE == response.getStatus()
-            && CollectionUtils.isNotEmpty(response.getErrors())) {
-        throw new TransactionException(response.getErrors());
+    private final LoggerUtility logger = LoggerFactoryUtility.getLogger(this.getClass());
+
+    @PostMapping
+    @Operation(summary = "Payment Booking for given order")
+    public TransactionResponse<PaymentBookingResponse> initiatePaymentBooking(@RequestBody PaymentBookingRequest paymentBookingRequest) {
+        logger.info("Start: Create order booking and transaction booking.");
+        return paymentBookingService.initiatePaymentBooking(paymentBookingRequest);
     }
-    errorLogDao.logBusinessError(EPayIdentityUtil.getUserPrincipal().getMId(), EntityType.PAYMENT,
-            null, null, null, null, NOT_FOUND_ERROR_CODE,
-            MessageFormat.format(TransactionErrorConstants.PAYMENT_ERROR_MESSAGE, callBackType));
-    throw new TransactionException(TransactionErrorConstants.PAYMENT_ERROR_CODE,
-            MessageFormat.format(TransactionErrorConstants.PAYMENT_ERROR_MESSAGE, callBackType));
+}
+@Service
+@RequiredArgsConstructor
+public class PaymentBookingService {
+    private final LoggerUtility logger = LoggerFactoryUtility.getLogger(this.getClass());
+    private final OrderService orderService;
+    private final BookingService bookingService;
+    private final PaymentInitiationValidator paymentInitiationValidator;
+    private final PaymentBookingDao paymentBookingDao;
+    private final BookingDao bookingDao;
+
+ 
+    public TransactionResponse<PaymentBookingResponse> initiatePaymentBooking(PaymentBookingRequest paymentBookingRequest) {
+        // Validate and create Order request.
+        OrderDto orderDto = orderService.createMerchantOrder(paymentBookingRequest.getOrderDto(),paymentBookingRequest.getMId());
+        logger.info("Created order for mid :{}", orderDto.getMId());
+
+        //TODO validate merchantHosted request.
+
+        //Book Transaction
+        bookingService.initiateOrderBooking(paymentBookingRequest.getOrderDto(), TransactionTokenType.PAYMENT);
+        logger.info("Book transaction done for mid: {}", orderDto.getMId());
+
+        JsonNode merchantPayModes = bookingDao.getMerchantPayModes(orderDto.getMId());
+
+        // Validate payment Initiation
+        paymentInitiationValidator.validatePaymentRequest(paymentBookingRequest.getPaymentInitiationRequest(), orderDto, paymentBookingRequest.getPayMode());
+        logger.info("Payment initiation request validated successfully.");
+
+        //Save Order, payment request in DB.
+        paymentBookingDao.savePaymentBookingDetails(orderDto, paymentBookingRequest.getPaymentInitiationRequest(), paymentBookingRequest.getPayMode());
+        PaymentBookingResponse paymentBookingResponse = buildPaymentBookingResponse(orderDto);
+        return TransactionResponse.<PaymentBookingResponse>builder().status(TransactionConstant.RESPONSE_SUCCESS).data(List.of(paymentBookingResponse)).build();
+
+    }
+
+    private PaymentBookingResponse buildPaymentBookingResponse(OrderDto orderDto) {
+        return PaymentBookingResponse.builder().paymentMode(orderDto.getPayMode()).transactionUrl(orderDto.getTransactionUrl()).orderHash(orderDto.getOrderHash()).orderRefNumber(orderDto.getOrderRefNumber()).sbiOrderRefNumber(orderDto.getSbiOrderRefNumber()).orderRetryCount(orderDto.getOrderRetryCount()).expiry(orderDto.getExpiry()).build();
+    }
+}
+----------------------
+@AllArgsConstructor
+@NoArgsConstructor
+@Data
+@Builder
+@JsonInclude(JsonInclude.Include.NON_NULL)
+public class PaymentBookingRequest {
+    private OrderDto orderDto;
+    private PaymentInitiationRequest paymentInitiationRequest;
+    private GstInVerificationRequest gstInVerificationRequest;
+    private String payMode;
+    private String mId;
 }
 
-private <T> EncryptedResponse encryptCallBackData(TransactionResponse<T> response, String key, String callBackType) {
-    T data = extractCallBackData(response, callBackType);
-    String encryptionResponse = encryptValue(key, toJson(data));
-    return EncryptedResponse.builder().encryptedResponse(encryptionResponse).build();
+@Setter
+@Getter
+@AllArgsConstructor
+@NoArgsConstructor
+@ToString
+@JsonIgnoreProperties({"createdBy","updatedBy","createdDate","updatedDate"})
+@JsonInclude(JsonInclude.Include.NON_NULL)
+public class OrderDto extends BaseDto {
+    @JsonProperty("mId")
+    private String mId;
+    private String customerId;
+    private String currencyCode;
+    private BigDecimal orderAmount;
+    private String orderRefNumber;
+    private String sbiOrderRefNumber;
+    private OrderStatus status;
+    private JsonNode otherDetails;
+    private Long expiry;
+    private JsonNode multiAccounts;
+    private String payMode;
+    private String orderHash;
+    private String returnUrl;
+    private String transactionUrl;
+    private Integer orderRetryCount;
+    private JsonNode thirdPartyDetails;
+    private String pushResponse;
+
 }
 
+@Data
+public class PaymentInitiationRequest {
 
+    private String operatingMode;
 
+    private String payProcId;
+
+    private String payProcType;
+
+    private String gtwMapsId;
+
+    private String pgBankCode;
+
+    private BigDecimal merchPostedAmount;
+
+    private BigDecimal transactionAmount;
+
+    private String upiAddress;
+
+    @NotBlank(message = CHANNEL_BANK_IS_REQUIRED)
+    private String channelBank;
+
+    private String altNumber;
+
+    private String expiryMonth;
+
+    private String expiryYear;
+
+    private String cvv;
+
+    private String cardHolderName;
+
+}
+
+@Data
+public class GstInVerificationRequest {
+    private String gstInNumber;
+    private String email;
+}
+----------------
+@Component
+@RequiredArgsConstructor
+public class BookingDao {
+
+    private final OrderDao orderDao;
+    private final CustomerDao customerDao;
+    private final AdminDao adminDao;
+    private final TokenDao tokenDao;
+    private final MerchantDao merchantDao;
+    private final EPayTokenProvider ePayTokenProvider;
+    private final LoggerUtility logger = LoggerFactoryUtility.getLogger(this.getClass());
+
+    public JsonNode getMerchantPayModes(String mId) {
+        return adminDao.getMerchantPayModes(mId);
+    }
+--------------
+@Component
+@RequiredArgsConstructor
+public class AdminDao {
+    private final LoggerUtility logger = LoggerFactoryUtility.getLogger(this.getClass());
+    private final AdminServicesClient adminServicesClient;
+    private final ErrorLogDao errorLogDao;
+    private final PricingMapper pricingMapper;
+
+    public JsonNode getMerchantPayModes(String mId) {
+        logger.info("Fetching pay modes for mId: {}", mId);
+        TransactionResponse<JsonNode> response = adminServicesClient.getMerchantPayModeInfo(mId);
+        if (TransactionConstant.RESPONSE_SUCCESS == response.getStatus() && CollectionUtils.isNotEmpty(response.getData())) {
+            logger.info("Successfully retrieved pay modes for mId: {}", mId);
+            return response.getData().getFirst().get("payModes");
+        }else if(CollectionUtils.isNotEmpty(response.getErrors())){
+            throw new TransactionException(response.getErrors());
+        }
+        logger.error("Error in getMerchantPayModes {} - Errors: {}", mId, response.getErrors());
+        errorLogDao.logCustomerError(
+                mId,
+                EntityType.BOOKING,null,null,null,null,
+                NOT_FOUND_ERROR_CODE,
+                MessageFormat.format(NOT_FOUND_ERROR_MESSAGE, "MerchantRFCDetails"));
+        throw new TransactionException(NOT_FOUND_ERROR_CODE, MessageFormat.format(NOT_FOUND_ERROR_MESSAGE, "MerchantRFCDetails"));
+    }
+--------
+ public TransactionResponse<JsonNode> getMerchantPayModeInfo(String mId) {
+        logger.info("Fetching pay mode info for mId: {}", mId);
+        return post(MERCHANT_PAYMODE_ENDPOINT + mId, mId, new ParameterizedTypeReference<>() {
+        });
+    }
+
+    protected <T, R> TransactionResponse<R> post(String urlPath, T requestBody, ParameterizedTypeReference<TransactionResponse<R>> typeReference) {
+        URI uri = URI.create(getBaseUrl() + urlPath);
+        logger.info("Calling uri: {}", uri);
+        try {
+            TransactionResponse<R> transactionResponse = getWebClient().post().uri(uri).headers(httpHeaders -> httpHeaders.addAll(prepareHttpHeaders())).contentType(MediaType.APPLICATION_JSON).bodyValue(requestBody).exchangeToMono(response -> response.bodyToMono(typeReference)).block();
+            return validateAndReturnResponse(transactionResponse);
+        } catch (NestedRuntimeException e) {
+            logger.error("Got exception while calling url: {}", e.getMessage(), uri);
+            throw new TransactionException(EXTERNAL_SERVICE_ERROR_CODE, MessageFormat.format(EXTERNAL_SERVICE_ERROR_MESSAGE, getServiceName()));
+        }
+    }
 ---------------
-package com.epay.transaction.dao;
-
-
-import com.epay.transaction.config.TransactionConfig;
-import com.epay.transaction.dto.CallBackFinalResponseDto;
-import com.epay.transaction.exceptions.TransactionException;
-import com.epay.transaction.externalservice.KmsServicesClient;
-import com.epay.transaction.externalservice.PaymentCallBackServicesClient;
-import com.epay.transaction.externalservice.request.payment.*;
-
-import com.epay.transaction.externalservice.response.kms.KMSEncryptionKeysResponse;
-import com.epay.transaction.externalservice.response.payment.RupaySeamlessResponse;
-
-import com.epay.transaction.model.request.PaymentCallBackRequest;
-import com.epay.transaction.model.response.EncryptedResponse;
-import com.epay.transaction.model.response.TransactionResponse;
-import com.epay.transaction.repository.MerchantOrderPaymentRepository;
-import com.epay.transaction.util.EPayIdentityUtil;
-import com.epay.transaction.util.TransactionConstant;
-import com.epay.transaction.util.TransactionErrorConstants;
-import com.epay.transaction.util.enums.EntityType;
-import com.sbi.epay.authentication.providers.EPayTokenProvider;
-import com.sbi.epay.logging.utility.LoggerFactoryUtility;
-import com.sbi.epay.logging.utility.LoggerUtility;
-import lombok.RequiredArgsConstructor;
-import org.apache.commons.collections4.CollectionUtils;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.stereotype.Component;
-
-import java.text.MessageFormat;
-import java.util.List;
-
-import static com.epay.transaction.util.EncryptionDecryptionUtil.decryptValue;
-import static com.epay.transaction.util.EncryptionDecryptionUtil.encryptValue;
-import static com.epay.transaction.util.TransactionErrorConstants.*;
-import static com.epay.transaction.util.TransactionUtil.toJson;
-
-
 @Component
 @RequiredArgsConstructor
-public class PaymentCallbackForwardDao {
-    private final TokenDao tokenDao;
-    private final EPayTokenProvider ePayTokenProvider;
-    private final PaymentCallBackServicesClient paymentCallBackServicesClient;
+public class PaymentInitiationValidator extends BaseValidator {
+
     private final LoggerUtility logger = LoggerFactoryUtility.getLogger(this.getClass());
-    private final KmsServicesClient kmsServicesClient;
-    private final TransactionConfig transactionConfig;
-    private final MerchantOrderPaymentRepository merchantOrderPaymentRepository;
-    private final ErrorLogDao errorLogDao;
+    private final PaymentInitiationDao paymentInitiationDao;
+    private final AdminDao adminDao;
+    private final MerchantOrderPaymentDao merchantOrderPaymentDao;
 
-    /**
-     * Method name : getEncryptedAESKey
-     * Description :  Fetching AES Key
-     *
-     * @return String of AES Key
-     */
-    public String getEncryptedAESKey() {
-        logger.info("Fetching AES key from Token Table");
-        return tokenDao.getEncryptionAESKey(ePayTokenProvider.getToken());
+public void validatePaymentRequest(PaymentInitiationRequest paymentInitiationRequest, OrderDto orderDto, String payMode) {
+        errorDtoList = new ArrayList<>();
+        logger.info("Payment Initiation Validation Started");
+        validateMerchantOrder(orderDto);
+        validateMandatoryFields(paymentInitiationRequest);
+        validateLeadingTrailingAndSingleSpace(paymentInitiationRequest);
+        validatedFieldLength(paymentInitiationRequest);
+        validateFieldValue(paymentInitiationRequest);
+        validateTransactionAmount(orderDto.getOrderAmount(),paymentInitiationRequest.getTransactionAmount());
+        validateGatewayMap(orderDto.getMId(), paymentInitiationRequest.getGtwMapsId(),payMode);
+        validateMandatoryFieldForPaymentRequest(payMode, paymentInitiationRequest);
+        validateVvlAndRfc(payMode, orderDto, paymentInitiationRequest);
+        logger.info("Payment Initiation Validation Completed");
     }
-
-    /**
-     * @param mid:String
-     * @return String
-     */
-    public String getMerchantMekKey(String mid) {
-        KMSEncryptionKeysResponse encryptionKeysResponse = getMekByMid(mid);
-        String kek = decryptValue(encryptionKeysResponse.getAek(), encryptionKeysResponse.getKek());
-        return decryptValue(kek, encryptionKeysResponse.getMek());
-    }
-
-    /**
-     * @param mId:String
-     * @return String
-     */
-    private KMSEncryptionKeysResponse getMekByMid(String mId) {
-        TransactionResponse<KMSEncryptionKeysResponse> kmsResponse = kmsServicesClient.getEncryptionKeys(mId);
-        if (TransactionConstant.RESPONSE_SUCCESS == kmsResponse.getStatus() && CollectionUtils.isNotEmpty(kmsResponse.getData())) {
-            KMSEncryptionKeysResponse encryptionKeyResponse = kmsResponse.getData().getFirst();
-            encryptionKeyResponse.setAek(transactionConfig.getAek());
-            return encryptionKeyResponse;
-        } else if (CollectionUtils.isNotEmpty(kmsResponse.getErrors())) {
-            throw new TransactionException(kmsResponse.getErrors());
-        }
-        throw new TransactionException(TransactionErrorConstants.NOT_FOUND_ERROR_CODE, MessageFormat.format(TransactionErrorConstants.NOT_FOUND_ERROR_MESSAGE, "Merchant Encryption Keys"));
-    }
-
-
-    public EncryptedResponse processRupayCardResendOtp(PaymentRequestResendCard paymentRequestResendCard, String key) {
-        logger.info("Payment callBack process Started");
-        TransactionResponse<RupaySeamlessResponse> rupayCardCallBackResentOtpResponse = paymentCallBackServicesClient.getRupayCardCallBackResentOtpResponse(paymentRequestResendCard);
-        return handleCallBackResponse(rupayCardCallBackResentOtpResponse, key, "rupayRecentOtp");
-    }
-
-
-    public EncryptedResponse processRupayCardVerifyOtp(PaymentRequestVerifyCard paymentRequestResendCard, String key) {
-        logger.info("Payment callBack process Started");
-        TransactionResponse<RupaySeamlessResponse> rupayCardCallBackVerifyOtpResponse = paymentCallBackServicesClient.getRupayCardCallBackVerifyOtpResponse(paymentRequestResendCard);
-        return handleCallBackResponse(rupayCardCallBackVerifyOtpResponse, key, "rupayVerifyOtp");
-    }
-
-
-    private <T> EncryptedResponse handleCallBackResponse(TransactionResponse<T> response, String key, String callBackType) {
-        logger.info("Handling response for payment type: {}", callBackType);
-        if (TransactionConstant.RESPONSE_SUCCESS == response.getStatus() && CollectionUtils.isNotEmpty(response.getData())) {
-            String encryptionResponse = encryptValue(key, toJson(response.getData().getFirst()));
-            return EncryptedResponse.builder().encryptedResponse(encryptionResponse).build();
-        } else if (TransactionConstant.RESPONSE_FAILURE == response.getStatus() && CollectionUtils.isNotEmpty(response.getData())) {
-            logger.info("Handling failure response payment type: {}", callBackType);
-            String encryptionResponse = encryptValue(key, toJson(response.getData().getFirst()));
-            return EncryptedResponse.builder().encryptedResponse(encryptionResponse).build();
-        } else if (TransactionConstant.RESPONSE_FAILURE == response.getStatus() && CollectionUtils.isNotEmpty(response.getErrors())) {
-            throw new TransactionException(response.getErrors());
-        }
-        errorLogDao.logBusinessError(EPayIdentityUtil.getUserPrincipal().getMId(), EntityType.PAYMENT,null,null,null,null, NOT_FOUND_ERROR_CODE, MessageFormat.format(TransactionErrorConstants.PAYMENT_ERROR_MESSAGE, callBackType));
-        throw new TransactionException(TransactionErrorConstants.PAYMENT_ERROR_CODE, MessageFormat.format(TransactionErrorConstants.PAYMENT_ERROR_MESSAGE, callBackType));
-    }
-
-
-
-
-    public void validateByAtrnMidAndOrderRefNumber(String mId, String sbiOrderRefNumber, String atrn) {
-        logger.info("Validating Mid, Atrn And OrderRefNumber");
-        if (!merchantOrderPaymentRepository.existsBymIdAndSbiOrderRefNumberAndAtrnNumber(mId, sbiOrderRefNumber, atrn)) {
-            throw new TransactionException(TransactionErrorConstants.INVALID_ERROR_CODE, MessageFormat.format(TransactionErrorConstants.INVALID_ERROR_MESSAGE, ATRN, ATRN_INVALID));
-        }
-    }
-}
-
-
-package com.epay.transaction.dao;
-
-
-import com.epay.transaction.config.TransactionConfig;
-import com.epay.transaction.dto.CallBackFinalResponseDto;
-import com.epay.transaction.exceptions.TransactionException;
-import com.epay.transaction.externalservice.KmsServicesClient;
-import com.epay.transaction.externalservice.PaymentCallBackServicesClient;
-import com.epay.transaction.externalservice.request.payment.*;
-
-import com.epay.transaction.externalservice.response.kms.KMSEncryptionKeysResponse;
-import com.epay.transaction.externalservice.response.payment.RupaySeamlessResponse;
-
-import com.epay.transaction.model.request.PaymentCallBackRequest;
-import com.epay.transaction.model.response.EncryptedResponse;
-import com.epay.transaction.model.response.TransactionResponse;
-import com.epay.transaction.repository.MerchantOrderPaymentRepository;
-import com.epay.transaction.util.EPayIdentityUtil;
-import com.epay.transaction.util.TransactionConstant;
-import com.epay.transaction.util.TransactionErrorConstants;
-import com.epay.transaction.util.enums.EntityType;
-import com.sbi.epay.authentication.providers.EPayTokenProvider;
-import com.sbi.epay.logging.utility.LoggerFactoryUtility;
-import com.sbi.epay.logging.utility.LoggerUtility;
-import lombok.RequiredArgsConstructor;
-import org.apache.commons.collections4.CollectionUtils;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.stereotype.Component;
-
-import java.text.MessageFormat;
-import java.util.List;
-
-import static com.epay.transaction.util.EncryptionDecryptionUtil.decryptValue;
-import static com.epay.transaction.util.EncryptionDecryptionUtil.encryptValue;
-import static com.epay.transaction.util.TransactionErrorConstants.*;
-import static com.epay.transaction.util.TransactionUtil.toJson;
-
-
-@Component
-@RequiredArgsConstructor
-public class PaymentCallbackForwardDao {
-    private final TokenDao tokenDao;
-    private final EPayTokenProvider ePayTokenProvider;
-    private final PaymentCallBackServicesClient paymentCallBackServicesClient;
-    private final LoggerUtility logger = LoggerFactoryUtility.getLogger(this.getClass());
-    private final KmsServicesClient kmsServicesClient;
-    private final TransactionConfig transactionConfig;
-    private final MerchantOrderPaymentRepository merchantOrderPaymentRepository;
-    private final ErrorLogDao errorLogDao;
-
-    /**
-     * Method name : getEncryptedAESKey
-     * Description :  Fetching AES Key
-     *
-     * @return String of AES Key
-     */
-    public String getEncryptedAESKey() {
-        logger.info("Fetching AES key from Token Table");
-        return tokenDao.getEncryptionAESKey(ePayTokenProvider.getToken());
-    }
-
-    /**
-     * @param mid:String
-     * @return String
-     */
-    public String getMerchantMekKey(String mid) {
-        KMSEncryptionKeysResponse encryptionKeysResponse = getMekByMid(mid);
-        String kek = decryptValue(encryptionKeysResponse.getAek(), encryptionKeysResponse.getKek());
-        return decryptValue(kek, encryptionKeysResponse.getMek());
-    }
-
-    /**
-     * @param mId:String
-     * @return String
-     */
-    private KMSEncryptionKeysResponse getMekByMid(String mId) {
-        TransactionResponse<KMSEncryptionKeysResponse> kmsResponse = kmsServicesClient.getEncryptionKeys(mId);
-        if (TransactionConstant.RESPONSE_SUCCESS == kmsResponse.getStatus() && CollectionUtils.isNotEmpty(kmsResponse.getData())) {
-            KMSEncryptionKeysResponse encryptionKeyResponse = kmsResponse.getData().getFirst();
-            encryptionKeyResponse.setAek(transactionConfig.getAek());
-            return encryptionKeyResponse;
-        } else if (CollectionUtils.isNotEmpty(kmsResponse.getErrors())) {
-            throw new TransactionException(kmsResponse.getErrors());
-        }
-        throw new TransactionException(TransactionErrorConstants.NOT_FOUND_ERROR_CODE, MessageFormat.format(TransactionErrorConstants.NOT_FOUND_ERROR_MESSAGE, "Merchant Encryption Keys"));
-    }
-
-
-    public EncryptedResponse processRupayCardResendOtp(PaymentRequestResendCard paymentRequestResendCard, String key) {
-        logger.info("Payment callBack process Started");
-        TransactionResponse<RupaySeamlessResponse> rupayCardCallBackResentOtpResponse = paymentCallBackServicesClient.getRupayCardCallBackResentOtpResponse(paymentRequestResendCard);
-        return handleCallBackResponse(rupayCardCallBackResentOtpResponse, key, "rupayRecentOtp");
-    }
-
-
-    public EncryptedResponse processRupayCardVerifyOtp(PaymentRequestVerifyCard paymentRequestResendCard, String key) {
-        logger.info("Payment callBack process Started");
-        TransactionResponse<RupaySeamlessResponse> rupayCardCallBackVerifyOtpResponse = paymentCallBackServicesClient.getRupayCardCallBackVerifyOtpResponse(paymentRequestResendCard);
-        return handleCallBackResponse(rupayCardCallBackVerifyOtpResponse, key, "rupayVerifyOtp");
-    }
-
-
-    private <T> EncryptedResponse handleCallBackResponse(TransactionResponse<T> response, String key, String callBackType) {
-        logger.info("Handling response for payment type: {}", callBackType);
-        if (TransactionConstant.RESPONSE_SUCCESS == response.getStatus() && CollectionUtils.isNotEmpty(response.getData())) {
-            String encryptionResponse = encryptValue(key, toJson(response.getData().getFirst()));
-            return EncryptedResponse.builder().encryptedResponse(encryptionResponse).build();
-        } else if (TransactionConstant.RESPONSE_FAILURE == response.getStatus() && CollectionUtils.isNotEmpty(response.getData())) {
-            logger.info("Handling failure response payment type: {}", callBackType);
-            String encryptionResponse = encryptValue(key, toJson(response.getData().getFirst()));
-            return EncryptedResponse.builder().encryptedResponse(encryptionResponse).build();
-        } else if (TransactionConstant.RESPONSE_FAILURE == response.getStatus() && CollectionUtils.isNotEmpty(response.getErrors())) {
-            throw new TransactionException(response.getErrors());
-        }
-        errorLogDao.logBusinessError(EPayIdentityUtil.getUserPrincipal().getMId(), EntityType.PAYMENT,null,null,null,null, NOT_FOUND_ERROR_CODE, MessageFormat.format(TransactionErrorConstants.PAYMENT_ERROR_MESSAGE, callBackType));
-        throw new TransactionException(TransactionErrorConstants.PAYMENT_ERROR_CODE, MessageFormat.format(TransactionErrorConstants.PAYMENT_ERROR_MESSAGE, callBackType));
-    }
-
-
-
-
-    public void validateByAtrnMidAndOrderRefNumber(String mId, String sbiOrderRefNumber, String atrn) {
-        logger.info("Validating Mid, Atrn And OrderRefNumber");
-        if (!merchantOrderPaymentRepository.existsBymIdAndSbiOrderRefNumberAndAtrnNumber(mId, sbiOrderRefNumber, atrn)) {
-            throw new TransactionException(TransactionErrorConstants.INVALID_ERROR_CODE, MessageFormat.format(TransactionErrorConstants.INVALID_ERROR_MESSAGE, ATRN, ATRN_INVALID));
-        }
-    }
-}
-
-
-above is my code for for Otp validation and otp regeneration. 
-i wanted to use processRupayCardResendOtp and processRupayCardVerifyOtp method in my below code but problem is that i am not passing key to these method as i will dont have these key in my requrement . i want to use the oble same 
-code without affecting its original flow.
-i want to do mini change in obove code and it should work in my new method as well how to achive this 
-
-
-package com.epay.transaction.service.mhiService;
-
-import com.epay.transaction.dao.AdminDao;
-import com.epay.transaction.dao.KmsDao;
-import com.epay.transaction.dao.PaymentCallbackForwardDao;
-import com.epay.transaction.dto.MerchantFeeDto;
-import com.epay.transaction.externalservice.request.payment.PaymentRequestResendCard;
-import com.epay.transaction.externalservice.request.payment.PaymentRequestVerifyCard;
-import com.epay.transaction.externalservice.request.payment.PaymentUPIVpaRequest;
-import com.epay.transaction.externalservice.response.admin.BinCheckResponse;
-import com.epay.transaction.externalservice.response.eis.ecom.EisEcomFinalResponse;
-import com.epay.transaction.model.request.CardVerificationRequest;
-import com.epay.transaction.model.request.EncryptedRequest;
-import com.epay.transaction.model.request.GstInVerificationRequest;
-import com.epay.transaction.model.request.MerchantPricingRequest;
-import com.epay.transaction.model.response.EncryptedResponse;
-import com.epay.transaction.model.response.TransactionResponse;
-import com.epay.transaction.service.MerchantPricingService;
-import com.epay.transaction.util.EPayIdentityUtil;
-import com.epay.transaction.util.TransactionConstant;
-import com.epay.transaction.util.TransactionUtil;
-import com.epay.transaction.util.enums.ContextType;
-import com.epay.transaction.validator.mhiValidator.PaymentBookingValidator;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.sbi.epay.logging.utility.LoggerFactoryUtility;
-import com.sbi.epay.logging.utility.LoggerUtility;
-import lombok.RequiredArgsConstructor;
-import org.springframework.stereotype.Service;
-
-import java.util.List;
-
-import static com.epay.transaction.util.TransactionConstant.RESPONSE_SUCCESS;
-import static com.epay.transaction.util.TransactionUtil.convertJsonObjectToDto;
-import static com.epay.transaction.util.enums.ContextType.getContextType;
 
 /**
- * Class Name: ContextService
- * <p>
- * Description: service is responsible for validation.
- * </p>
- * <p>Author: V1019439 (RAHUL YADAV)</p>
- * <p>Copyright (c) 2025 [State Bank of India]. All rights reserved.</p>
- * <p>Version: 2.0</p>
- */
-@RequiredArgsConstructor
-@Service
-public class ContextService {
-    private final LoggerUtility logger = LoggerFactoryUtility.getLogger(this.getClass());
-    private final PaymentBookingValidator paymentBookingValidator;
-    private final MerchantPricingService merchantPricingService;
-    private final KmsDao kmsDao;
-    private final AdminDao adminDao;
-    private final PaymentCallbackForwardDao paymentCallbackForwardDao;
-    private static final ObjectMapper objectMapper = new ObjectMapper();
-
-
-    public TransactionResponse<?> validateRequest(JsonNode requestObject, String ContextType)  {
-        logger.info("Receive request for validation : {}", ContextType);
-        ContextType ContextTypeEnum = getContextType(ContextType);
-        switch (ContextTypeEnum) {
-            case GSTIN -> validateGSTRequest( requestObject);
-            case CARD_BIN -> {
-                return validateCardBinRequest( requestObject);
-            }
-            case ECOM -> {
-                return validateEComRequest( requestObject);
-            }
-            case UPI -> validateVpaRequest(requestObject);
-            case CHARGES -> {
-                return getTransactionCharges( requestObject);
-            }
-            case PAYMODES -> {
-                return getMerchantValidPayModes();
-            }
-//            case GENERATE_OTP -> {
-//                return ;
-//            }
-//            case VERIFY_OTP -> {
-//                return ;
-//            }
+     * Method name : validateMerchantOrder
+     * Description : Validates merchant order of orderDto
+     * @param orderDto : Object of OrderDto
+     */
+    private void validateMerchantOrder(OrderDto orderDto) {
+        logger.debug("Validating OrderDto {}", orderDto);
+        if (orderDto.getOrderRetryCount() <= 0) {
+            addError(ATTEMPT_EXCEEDED_ERROR_CODE, MessageFormat.format(ATTEMPT_EXCEEDED_ERROR_MESSAGE, "Payment"));
         }
-        logger.info("Receive success response for validation : {}", ContextType);
-        return TransactionResponse.<String>builder().data(List.of("Request Validated Successfully")).status(TransactionConstant.RESPONSE_SUCCESS).build();
+        throwIfErrors();
     }
 
-    private void validateGSTRequest(JsonNode requestObject) {
-        GstInVerificationRequest gstInVerificationRequest =  convertJsonObjectToDto(requestObject, GstInVerificationRequest.class );
-        logger.info("Receive validateGST request for gstInVerificationRequest : {}", gstInVerificationRequest);
-        paymentBookingValidator.validateGstIn(gstInVerificationRequest);
+
+    private void validateMandatoryFields(PaymentInitiationRequest paymentInitiationRequest) {
+        logger.debug("Validating paymentInitiationRequest {}", paymentInitiationRequest);
+        checkMandatoryField(paymentInitiationRequest.getOperatingMode(), "OperatingMode");
+        checkMandatoryField(paymentInitiationRequest.getPayProcType(), "PayProcType");
+        checkMandatoryField(paymentInitiationRequest.getGtwMapsId(), "GtwMapsId");
+        checkMandatoryField(paymentInitiationRequest.getTransactionAmount(), "TransactionAmount");
+//        checkMandatoryField(paymentInitiationRequest.getMerchPostedAmount(), "MerchantPostedAmount");
+        checkMandatoryField(paymentInitiationRequest.getPayProcId(), "PayProcId");
+        throwIfErrors();
     }
 
-    private TransactionResponse<BinCheckResponse> validateCardBinRequest(JsonNode requestObject) {
-        CardVerificationRequest cardVerificationRequest = convertJsonObjectToDto(requestObject, CardVerificationRequest.class);
-        logger.info("Receive validateCard request for cardVerificationRequest : {}", cardVerificationRequest);
-        return paymentBookingValidator.validateCardBin(cardVerificationRequest);
+private void validateLeadingTrailingAndSingleSpace(PaymentInitiationRequest paymentInitiationRequest) {
+        checkForLeadingTrailingAndSingleSpace(paymentInitiationRequest.getOperatingMode(), "OperationMode");
+        checkForLeadingTrailingAndSingleSpace(paymentInitiationRequest.getPayProcType(), "PayProcType");
+        checkForLeadingTrailingAndSingleSpace(paymentInitiationRequest.getGtwMapsId(), "GtwMapsId");
+        checkForLeadingTrailingAndSingleSpace(paymentInitiationRequest.getPayProcId(), "PayProcId");
+        throwIfErrors();
     }
 
-    private TransactionResponse<EisEcomFinalResponse> validateEComRequest(JsonNode requestObject) {
-        CardVerificationRequest cardVerificationRequest = convertJsonObjectToDto(requestObject, CardVerificationRequest.class);
-        logger.info("Receive validateCard request for cardVerificationRequest : {}", cardVerificationRequest);
-        return paymentBookingValidator.validateEComRequest(cardVerificationRequest);
+    private void validatedFieldLength(PaymentInitiationRequest paymentInitiationRequest) {
+        validateFieldLength(paymentInitiationRequest.getPayProcType(), TransactionConstant.PAY_PROC_ID_TYPE_LENGTH, "payProcType");
+        validateFieldLength(paymentInitiationRequest.getChannelBank(), TransactionConstant.CHANNEL_BANK_LENGTH, "channel Bank");
+        validateFieldLength(paymentInitiationRequest.getOperatingMode(), TransactionConstant.OPERATING_MODE, "operatingMode");
+        validateFieldLength(paymentInitiationRequest.getGtwMapsId(), TransactionConstant.GATEWAY_MAP_ID_LENGTH, "gtwMapsId");
+        validateFieldLength(paymentInitiationRequest.getPayProcId(), TransactionConstant.PAY_MODE_CODE_LENGTH, "payProcId");
+
     }
 
-    private void validateVpaRequest(JsonNode requestObject) {
-        PaymentUPIVpaRequest paymentUPIVpaRequest = convertJsonObjectToDto(requestObject, PaymentUPIVpaRequest.class);
-        logger.info("Receive validateVPA request for paymentUPIVpaRequest : {}", paymentUPIVpaRequest);
-        paymentBookingValidator.validateVpa(paymentUPIVpaRequest);
+ private void validateFieldValue(PaymentInitiationRequest paymentInitiationRequest) {
+        logger.debug("Validating Field value paymentInitiationRequest {}", paymentInitiationRequest);
+        validateAmount(paymentInitiationRequest.getTransactionAmount(), "TransactionAmount");
+//        validateAmount(paymentInitiationRequest.getMerchPostedAmount(), "MerchantPostedAmount");
+        validateFieldWithRegex(paymentInitiationRequest.getPayProcId(), TransactionConstant.CAPS_REGEX, "PayProcId", "Please check payprocId format");
+        validateFieldWithRegex(paymentInitiationRequest.getGtwMapsId(), TransactionConstant.GTW_MAPSID_REGEX, "GtwMapsId", "Please check gtwMapsId format");
+        validateFieldValue(paymentInitiationRequest.getOperatingMode(), Arrays.stream(OperatingMode.values()).map(Enum::name).toList(), "OperatingMode","Invalid OperatingMode format");
+        PayProcType.getPayProcType(paymentInitiationRequest.getPayProcType());
+        throwIfErrors();
     }
 
-    private TransactionResponse<MerchantFeeDto> getTransactionCharges(JsonNode requestObject) {
-        MerchantPricingRequest merchantPricingRequest = convertJsonObjectToDto(requestObject, MerchantPricingRequest.class);
-        logger.info("Receive Charges request for MerchantPricingRequest : {}", merchantPricingRequest);
-        MerchantFeeDto merchantFeeDto = merchantPricingService.getMerchantFeeDto(merchantPricingRequest);
-        logger.info("Receive TransactionCharges response for merchantFeeDto : {}", merchantFeeDto);
-        return TransactionResponse.<MerchantFeeDto>builder().data(List.of(merchantFeeDto)).status(TransactionConstant.RESPONSE_SUCCESS).build();
+private void validateTransactionAmount(BigDecimal orderAmount, BigDecimal transactionAmount) {
+        logger.debug("Validating transactionAmount ");
+        if (transactionAmount.compareTo(orderAmount) != 0) {
+            addError(INVALID_ERROR_CODE, TransactionErrorConstants.INVALID_ERROR_MESSAGE, TRANSACTION_AMOUNT_FIELD, TRANSACTION_AMOUNT_FIELD_REASON);
+
+        }
+        throwIfErrors();
+    }
+private void validateGatewayMap(String mId, String gtwMapId,String payMode) {
+        logger.debug("Validating GatewayMap for mId {}", mId);
+        GatewayConfigDetailsResponse gatewayConfigDetailsResponse = adminDao.getGatewayConfigDetails(mId, gtwMapId,payMode);
+        if (StringUtils.isEmpty(gatewayConfigDetailsResponse.getGtwIssueDmeCode())) {
+            addError(INVALID_ERROR_CODE, TransactionErrorConstants.INVALID_ERROR_MESSAGE, "gtwMapId", "channelBank is not found against gtwMapsId");
+        }
+        throwIfErrors();
     }
 
-    private TransactionResponse<JsonNode> getMerchantValidPayModes() {
-        String mId = EPayIdentityUtil.getUserPrincipal().getMId();
-        logger.info("Receive PayMode request for mId : {}", mId);
-        JsonNode merchantAllowedPayModes = adminDao.getMerchantAllowedPayModes(mId);
-        logger.info("Receive MerchantValidPayModes response for merchantAllowedPayModes : {}", merchantAllowedPayModes);
-        return TransactionResponse.<JsonNode>builder().data(List.of(merchantAllowedPayModes)).status(TransactionConstant.RESPONSE_SUCCESS).build();
+ private void validateMandatoryFieldForPaymentRequest(String payMode, PaymentInitiationRequest paymentInitiationRequest) {
+        switch (PayMode.getPayMode(payMode)) {
+            case CC, DC, PC -> validateCardPayMode(paymentInitiationRequest);
+            case NB -> validateNBRequest(paymentInitiationRequest);
+            case UPI -> validateUPIRequest(paymentInitiationRequest);
+            case WALLET -> validateWalletRequest(paymentInitiationRequest);
+            default ->
+                    throw new TransactionException(INVALID_ERROR_CODE, MessageFormat.format(TransactionErrorConstants.INVALID_ERROR_MESSAGE, payMode, "Given PayMode is not configured for Payment"));
+        }
     }
 
-    /**
-     * @param encryptedRequest:String
-     * @return EncryptedResponse
-     */
-    public TransactionResponse<?> processCardRupayOtpResponsePayload(JsonNode requestObject) {
-        PaymentRequestVerifyCard paymentRequestVerifyCard = convertJsonObjectToDto(requestObject, PaymentRequestVerifyCard.class);
-        paymentCallbackForwardDao.processRupayCardVerifyOtp(paymentRequestVerifyCard, aesKey);
-        return TransactionResponse.<?>builder().status(RESPONSE_SUCCESS).data(List.of()).count(1L).build();
+ private void validateVvlAndRfc(String payMode, OrderDto orderDto, PaymentInitiationRequest paymentInitiationRequest) {
+
+        logger.debug("Validating Merchant Volume Velocity for payMode {}", payMode);
+
+        //Step-1 VVL Validation
+        Optional<MerchantVvlResponse> vvlResponse = paymentInitiationDao.getMerchantVVLDetailsByPayMode(orderDto.getMId(), payMode);
+        if (vvlResponse.isPresent()) {
+            MerchantVvlResponse merchantVvlResponse = getMerchantVolumeVelocityResponse(paymentInitiationRequest, vvlResponse.get());
+            List<MerchantOrderSummary> orderSummary = paymentInitiationDao.getMerchantOrderSummaryByPayMode(orderDto.getMId(), payMode);
+            if (CollectionUtils.isNotEmpty(orderSummary)) {
+                validateAggregatedTransactionLimits(paymentInitiationRequest.getMerchPostedAmount(), merchantVvlResponse, orderSummary.getFirst());
+            }
+        }
+
+        //Step2 RFC Validation for cards
+        if (PayMode.CC.name().equalsIgnoreCase(payMode) || PayMode.DC.name().equalsIgnoreCase(payMode) || PayMode.PC.name().equalsIgnoreCase(payMode)) {
+            logger.info("Request for Merchant RFC Details");
+            MerchantRfcResponse merchantRfcDetailsDto = adminDao.getMerchantRFCDetails(orderDto.getMId());
+            logger.info("Request for Card Summary Details");
+            List<BigDecimal[]> cardDetails = merchantOrderPaymentDao.cardPaymentSummary(hashValue(paymentInitiationRequest.getAltNumber()));
+            validateRFCDetailsForCards(merchantRfcDetailsDto, cardDetails, paymentInitiationRequest.getMerchPostedAmount());
+        }
     }
 
-    /**
-     * @param encryptedRequest:String
-     * @return EncryptedResponse
-     */
-    public TransactionResponse<?> getRupayCardCallBackResentOtpResponse(JsonNode requestObject) {
-        PaymentRequestResendCard paymentRequestResendCard = convertJsonObjectToDto(requestObject, PaymentRequestResendCard.class);
-         paymentCallbackForwardDao.processRupayCardResendOtp(paymentRequestResendCard);
-        return TransactionResponse.<?>builder().status(RESPONSE_SUCCESS).data(List.of()).count(1L).build();
-    }
-}
+---------------------------
+This is the response i am geting from adim service form this method "bookingDao.getMerchantPayModes(orderDto.getMId())"
 
+"paymodes": {
+    "preferredOptions": {
+      "upi": {
+        "apps": [],
+        "vpa": false,
+        "drawerIntent": false,
+        "self": null,
+        "BHIMQR": null
+      },
+      "cards": {
+        "cc": [],
+        "dc": [],
+        "pc": []
+      },
+      "inb": [
+        {
+          "bankName": "State Bank of India",
+          "bankId": null,
+          "aggregatorGatewayMapId": null,
+          "payproc": null,
+          "payproctype": null,
+          "cardType": null,
+          "downtime": null,
+          "popular": null
+        }
+      ],
+      "wallet": [
+        {
+          "bankName": null,
+          "payModeCode": "NB",
+          "bankId": null,
+          "aggregatorGatewayMapId": null,
+          "payproc": null,
+          "payproctype": null,
+          "downtime": null,
+          "popular": null
+        }
+      ],
+      "neft": [
+        {
+          "bankName": null,
+          "payModeCode": "NB",
+          "bankId": null,
+          "aggregatorGatewayMapId": null,
+          "payproc": null,
+          "payproctype": null,
+          "downtime": null,
+          "popular": null
+        }
+      ],
+      "cash": [
+        {
+          "bankName": null,
+          "payModeCode": "NB",
+          "bankId": null,
+          "aggregatorGatewayMapId": null,
+          "payproc": null,
+          "payproctype": null,
+          "downtime": null,
+          "popular": null
+        }
+      ]
+    },
+    "otherPaymentOptions": {
+      "upi": {
+        "apps": [
+          "PhonePe",
+          "GPay",
+          "AmazonPay"
+        ],
+        "vpa": true,
+        "drawerIntent": true,
+        "self": {
+          "bankName": "SBIePay Test Bank",
+          "aggregatorGatewayMapId": "133",
+          "payproc": "SELF",
+          "payproctype": "SELF",
+          "downtime": false
+        },
+        "BHIMQR": {
+          "bankName": "SBIePay Test Bank",
+          "aggregatorGatewayMapId": "182",
+          "payproc": "BHIMQR",
+          "payproctype": "BHIMQR",
+          "downtime": false
+        }
+      },
+      "cards": {
+        "cc": [
+          {
+            "bankName": "State Bank of India",
+            "aggregatorGatewayMapId": "1",
+            "payproc": "MASTER",
+            "payproctype": "MASTER",
+            "downtime": false
+          },
+          {
+            "bankName": "State Bank of India",
+            "aggregatorGatewayMapId": "2",
+            "payproc": "VISA",
+            "payproctype": "VISA",
+            "downtime": false
+          },
+          {
+            "bankName": "American Express",
+            "aggregatorGatewayMapId": "44",
+            "payproc": "AMEX",
+            "payproctype": "AMEX",
+            "downtime": false
+          },
+          {
+            "bankName": "State Bank of India New PG",
+            "aggregatorGatewayMapId": "138",
+            "payproc": "MASTER",
+            "payproctype": "MASTER",
+            "downtime": false
+          }
+        ],
+        "dc": [
+          {
+            "bankName": "State Bank of India",
+            "aggregatorGatewayMapId": "3",
+            "payproc": "MAESTRO",
+            "payproctype": "MAESTRO",
+            "downtime": false
+          },
+          {
+            "bankName": "State Bank of India",
+            "aggregatorGatewayMapId": "4",
+            "payproc": "MASTER",
+            "payproctype": "MASTER",
+            "downtime": false
+          },
+          {
+            "bankName": "State Bank of India",
+            "aggregatorGatewayMapId": "228",
+            "payproc": "VISA",
+            "payproctype": "VISA",
+            "downtime": false
+          },
+          {
+            "bankName": "State Bank of India",
+            "aggregatorGatewayMapId": "55",
+            "payproc": "RUPAY",
+            "payproctype": "RUPAY",
+            "downtime": false
+          },
+          {
+            "bankName": "State Bank of India",
+            "aggregatorGatewayMapId": "94",
+            "payproc": "SBIMAESTRO",
+            "payproctype": "SBIMAESTRO",
+            "downtime": false
+          },
+          {
+            "bankName": "State Bank of India New PG",
+            "aggregatorGatewayMapId": "145",
+            "payproc": "RUPAY",
+            "payproctype": "RUPAY",
+            "downtime": false
+          },
+          {
+            "bankName": "State Bank of India New PG",
+            "aggregatorGatewayMapId": "144",
+            "payproc": "MAESTRO",
+            "payproctype": "MAESTRO",
+            "downtime": false
+          },
+          {
+            "bankName": "State Bank of India New PG",
+            "aggregatorGatewayMapId": "140",
+            "payproc": "MASTER",
+            "payproctype": "MASTER",
+            "downtime": false
+          },
+          {
+            "bankName": "State Bank of India New PG",
+            "aggregatorGatewayMapId": "141",
+            "payproc": "VISA",
+            "payproctype": "VISA",
+            "downtime": false
+          }
+        ],
+        "pc": [
+          {
+            "bankName": "State Bank of India New PG",
+            "aggregatorGatewayMapId": "164",
+            "payproc": "VISA",
+            "payproctype": "VISA",
+            "downtime": false
+          },
+          {
+            "bankName": "State Bank of India New PG",
+            "aggregatorGatewayMapId": "172",
+            "payproc": "RUPAY",
+            "payproctype": "RUPAY",
+            "downtime": false
+          }
+        ]
+      },
+      "inb": [
+        {
+          "bankName": "State Bank of Bikaner and Jaipur",
+          "bankId": "3",
+          "aggregatorGatewayMapId": "9",
+          "payproc": "SELF",
+          "payproctype": "SELF",
+          "cardType": null,
+          "downtime": false,
+          "popular": false
+        },
+        {
+          "bankName": "State Bank of India",
+          "bankId": "1",
+          "aggregatorGatewayMapId": "7",
+          "payproc": "SELF",
+          "payproctype": "SELF",
+          "cardType": null,
+          "downtime": false,
+          "popular": false
+        },
+        {
+          "bankName": "Karur Vysya Bank",
+          "bankId": "8",
+          "aggregatorGatewayMapId": "27",
+          "payproc": "SELF",
+          "payproctype": "SELF",
+          "cardType": null,
+          "downtime": false,
+          "popular": false
+        },
+        {
+          "bankName": "IndusInd Bank",
+          "bankId": "32",
+          "aggregatorGatewayMapId": "51",
+          "payproc": "SELF",
+          "payproctype": "SELF",
+          "cardType": null,
+          "downtime": false,
+          "popular": false
+        },
+        {
+          "bankName": "HDFC Retail Bank",
+          "bankId": "37",
+          "aggregatorGatewayMapId": "57",
+          "payproc": "SELF",
+          "payproctype": "SELF",
+          "cardType": null,
+          "downtime": false,
+          "popular": true
+        },
+        {
+          "bankName": "Citi Bank",
+          "bankId": "38",
+          "aggregatorGatewayMapId": "58",
+          "payproc": "SELF",
+          "payproctype": "SELF",
+          "cardType": null,
+          "downtime": false,
+          "popular": false
+        },
+        {
+          "bankName": "Catholic Syrian Bank",
+          "bankId": "13",
+          "aggregatorGatewayMapId": "33",
+          "payproc": "SELF",
+          "payproctype": "SELF",
+          "cardType": null,
+          "downtime": false,
+          "popular": false
+        },
+        {
+          "bankName": "City Union Bank",
+          "bankId": "16",
+          "aggregatorGatewayMapId": "36",
+          "payproc": "SELF",
+          "payproctype": "SELF",
+          "cardType": null,
+          "downtime": false,
+          "popular": false
+        },
+        {
+          "bankName": "Bank of Maharashtra",
+          "bankId": "20",
+          "aggregatorGatewayMapId": "40",
+          "payproc": "SELF",
+          "payproctype": "SELF",
+          "cardType": null,
+          "downtime": false,
+          "popular": false
+        },
+        {
+          "bankName": "Punjab and Sind Bank",
+          "bankId": "26",
+          "aggregatorGatewayMapId": "41",
+          "payproc": "SELF",
+          "payproctype": "SELF",
+          "cardType": null,
+          "downtime": false,
+          "popular": false
+        },
+        {
+          "bankName": "Tamilnad Mercantile Bank",
+          "bankId": "30",
+          "aggregatorGatewayMapId": "45",
+          "payproc": "SELF",
+          "payproctype": "SELF",
+          "cardType": null,
+          "downtime": false,
+          "popular": false
+        },
+        {
+          "bankName": "Federal Bank",
+          "bankId": "12",
+          "aggregatorGatewayMapId": "31",
+          "payproc": "SELF",
+          "payproctype": "SELF",
+          "cardType": null,
+          "downtime": false,
+          "popular": false
+        },
+        {
+          "bankName": "Indian Bank",
+          "bankId": "15",
+          "aggregatorGatewayMapId": "35",
+          "payproc": "SELF",
+          "payproctype": "SELF",
+          "cardType": null,
+          "downtime": false,
+          "popular": false
+        },
+        {
+          "bankName": "Dena Bank",
+          "bankId": "19",
+          "aggregatorGatewayMapId": "39",
+          "payproc": "SELF",
+          "payproctype": "SELF",
+          "cardType": null,
+          "downtime": false,
+          "popular": false
+        },
+        {
+          "bankName": "DCB BANK Personal",
+          "bankId": "27",
+          "aggregatorGatewayMapId": "42",
+          "payproc": "SELF",
+          "payproctype": "SELF",
+          "cardType": null,
+          "downtime": false,
+          "popular": false
+        },
+        {
+          "bankName": "Jammu and Kashmir",
+          "bankId": "18",
+          "aggregatorGatewayMapId": "38",
+          "payproc": "SELF",
+          "payproctype": "SELF",
+          "cardType": null,
+          "downtime": false,
+          "popular": false
+        },
+        {
+          "bankName": "Syndicate Bank",
+          "bankId": "33",
+          "aggregatorGatewayMapId": "52",
+          "payproc": "SELF",
+          "payproctype": "SELF",
+          "cardType": null,
+          "downtime": false,
+          "popular": false
+        },
+        {
+          "bankName": "ICICI DP Bank - Retail",
+          "bankId": "36",
+          "aggregatorGatewayMapId": "56",
+          "payproc": "SELF",
+          "payproctype": "SELF",
+          "cardType": null,
+          "downtime": false,
+          "popular": false
+        },
+        {
+          "bankName": "Deutsche Bank",
+          "bankId": "39",
+          "aggregatorGatewayMapId": "61",
+          "payproc": "SELF",
+          "payproctype": "SELF",
+          "cardType": null,
+          "downtime": false,
+          "popular": false
+        },
+        {
+          "bankName": "Bank of Bahrain and Kuwait",
+          "bankId": "40",
+          "aggregatorGatewayMapId": "68",
+          "payproc": "SELF",
+          "payproctype": "SELF",
+          "cardType": null,
+          "downtime": false,
+          "popular": false
+        },
+        {
+          "bankName": "Karnataka Bank",
+          "bankId": "41",
+          "aggregatorGatewayMapId": "66",
+          "payproc": "SELF",
+          "payproctype": "SELF",
+          "cardType": null,
+          "downtime": false,
+          "popular": false
+        },
+        {
+          "bankName": "Canara Bank",
+          "bankId": "43",
+          "aggregatorGatewayMapId": "60",
+          "payproc": "SELF",
+          "payproctype": "SELF",
+          "cardType": null,
+          "downtime": false,
+          "popular": false
+        },
+        {
+          "bankName": "Central Bank of India",
+          "bankId": "46",
+          "aggregatorGatewayMapId": "64",
+          "payproc": "SELF",
+          "payproctype": "SELF",
+          "cardType": null,
+          "downtime": false,
+          "popular": false
+        },
+        {
+          "bankName": "PNB Bank",
+          "bankId": "47",
+          "aggregatorGatewayMapId": "59",
+          "payproc": "SELF",
+          "payproctype": "SELF",
+          "cardType": null,
+          "downtime": false,
+          "popular": false
+        },
+        {
+          "bankName": "Indian Overseas Bank",
+          "bankId": "48",
+          "aggregatorGatewayMapId": "65",
+          "payproc": "SELF",
+          "payproctype": "SELF",
+          "cardType": null,
+          "downtime": false,
+          "popular": false
+        },
+        {
+          "bankName": "YES Bank",
+          "bankId": "51",
+          "aggregatorGatewayMapId": "69",
+          "payproc": "SELF",
+          "payproctype": "SELF",
+          "cardType": null,
+          "downtime": false,
+          "popular": true
+        },
+        {
+          "bankName": "ING Vysya Bank - now Kotak",
+          "bankId": "9",
+          "aggregatorGatewayMapId": "28",
+          "payproc": "SELF",
+          "payproctype": "SELF",
+          "cardType": null,
+          "downtime": false,
+          "popular": false
+        },
+        {
+          "bankName": "South Indian Bank",
+          "bankId": "28",
+          "aggregatorGatewayMapId": "43",
+          "payproc": "SELF",
+          "payproctype": "SELF",
+          "cardType": null,
+          "downtime": false,
+          "popular": false
+        },
+        {
+          "bankName": "Bank of India",
+          "bankId": "52",
+          "aggregatorGatewayMapId": "71",
+          "payproc": "SELF",
+          "payproctype": "SELF",
+          "cardType": null,
+          "downtime": false,
+          "popular": false
+        },
+        {
+          "bankName": "Janata Sahakari Bank Ltd. Pune",
+          "bankId": "98",
+          "aggregatorGatewayMapId": "98",
+          "payproc": "SELF",
+          "payproctype": "SELF",
+          "cardType": null,
+          "downtime": false,
+          "popular": false
+        },
+        {
+          "bankName": "UCO Bank",
+          "bankId": "61",
+          "aggregatorGatewayMapId": "74",
+          "payproc": "SELF",
+          "payproctype": "SELF",
+          "cardType": null,
+          "downtime": false,
+          "popular": false
+        },
+        {
+          "bankName": "ICICI DP Bank - Corporate",
+          "bankId": "77",
+          "aggregatorGatewayMapId": "88",
+          "payproc": "SELF",
+          "payproctype": "SELF",
+          "cardType": null,
+          "downtime": false,
+          "popular": false
+        },
+        {
+          "bankName": "HDFC Corporate Bank",
+          "bankId": "78",
+          "aggregatorGatewayMapId": "89",
+          "payproc": "SELF",
+          "payproctype": "SELF",
+          "cardType": null,
+          "downtime": false,
+          "popular": false
+        },
+        {
+          "bankName": "Kotak Mahindra Bank",
+          "bankId": "95",
+          "aggregatorGatewayMapId": "95",
+          "payproc": "SELF",
+          "payproctype": "SELF",
+          "cardType": null,
+          "downtime": false,
+          "popular": false
+        },
+        {
+          "bankName": "Axis Bank",
+          "bankId": "97",
+          "aggregatorGatewayMapId": "97",
+          "payproc": "SELF",
+          "payproctype": "SELF",
+          "cardType": null,
+          "downtime": false,
+          "popular": true
+        },
+        {
+          "bankName": "Dhanlaxmi Bank-Corporate",
+          "bankId": "75",
+          "aggregatorGatewayMapId": "77",
+          "payproc": "SELF",
+          "payproctype": "SELF",
+          "cardType": null,
+          "downtime": false,
+          "popular": false
+        },
+        {
+          "bankName": "Saraswat Bank",
+          "bankId": "80",
+          "aggregatorGatewayMapId": "90",
+          "payproc": "SELF",
+          "payproctype": "SELF",
+          "cardType": null,
+          "downtime": false,
+          "popular": false
+        },
+        {
+          "bankName": "Allahabad Bank - Corporate",
+          "bankId": "114",
+          "aggregatorGatewayMapId": "105",
+          "payproc": "SELF",
+          "payproctype": "SELF",
+          "cardType": null,
+          "downtime": false,
+          "popular": false
+        },
+        {
+          "bankName": "Allahabad Bank - Retail",
+          "bankId": "100",
+          "aggregatorGatewayMapId": "100",
+          "payproc": "SELF",
+          "payproctype": "SELF",
+          "cardType": null,
+          "downtime": false,
+          "popular": false
+        },
+        {
+          "bankName": "SVC - CORPORATE",
+          "bankId": "112",
+          "aggregatorGatewayMapId": "103",
+          "payproc": "SELF",
+          "payproctype": "SELF",
+          "cardType": null,
+          "downtime": false,
+          "popular": false
+        },
+        {
+          "bankName": "SVC Co-operative Bank Ltd - Retail",
+          "bankId": "113",
+          "aggregatorGatewayMapId": "104",
+          "payproc": "SELF",
+          "payproctype": "SELF",
+          "cardType": null,
+          "downtime": false,
+          "popular": false
+        },
+        {
+          "bankName": "Mehsana Urban Co. Op. Bank Ltd - Corporate",
+          "bankId": "119",
+          "aggregatorGatewayMapId": "115",
+          "payproc": "SELF",
+          "payproctype": "SELF",
+          "cardType": null,
+          "downtime": false,
+          "popular": false
+        },
+        {
+          "bankName": "Mehsana Urban Co. Op. Bank Ltd - Retail",
+          "bankId": "118",
+          "aggregatorGatewayMapId": "114",
+          "payproc": "SELF",
+          "payproctype": "SELF",
+          "cardType": null,
+          "downtime": false,
+          "popular": false
+        },
+        {
+          "bankName": "Axis Bank - Corporate",
+          "bankId": "139",
+          "aggregatorGatewayMapId": "175",
+          "payproc": "SELF",
+          "payproctype": "SELF",
+          "cardType": null,
+          "downtime": false,
+          "popular": false
+        },
+        {
+          "bankName": "Union Bank of India-Retail",
+          "bankId": "125",
+          "aggregatorGatewayMapId": "127",
+          "payproc": "SELF",
+          "payproctype": "SELF",
+          "cardType": null,
+          "downtime": false,
+          "popular": false
+        },
+        {
+          "bankName": "Union Bank of India-Corporate",
+          "bankId": "126",
+          "aggregatorGatewayMapId": "128",
+          "payproc": "SELF",
+          "payproctype": "SELF",
+          "cardType": null,
+          "downtime": false,
+          "popular": false
+        },
+        {
+          "bankName": "PNB Corporate Bank",
+          "bankId": "129",
+          "aggregatorGatewayMapId": "132",
+          "payproc": "SELF",
+          "payproctype": "SELF",
+          "cardType": null,
+          "downtime": false,
+          "popular": false
+        },
+        {
+          "bankName": "Bharat Bank",
+          "bankId": "134",
+          "aggregatorGatewayMapId": "155",
+          "payproc": "SELF",
+          "payproctype": "SELF",
+          "cardType": null,
+          "downtime": false,
+          "popular": false
+        },
+        {
+          "bankName": "Corporation-Corporate",
+          "bankId": "138",
+          "aggregatorGatewayMapId": "174",
+          "payproc": "SELF",
+          "payproctype": "SELF",
+          "cardType": null,
+          "downtime": false,
+          "popular": false
+        },
+        {
+          "bankName": "State Bank of India New PG",
+          "bankId": "130",
+          "aggregatorGatewayMapId": "142",
+          "payproc": "SELF",
+          "payproctype": "SELF",
+          "cardType": null,
+          "downtime": false,
+          "popular": false
+        },
+        {
+          "bankName": "ICICI Bank",
+          "bankId": "131",
+          "aggregatorGatewayMapId": "147",
+          "payproc": "SELF",
+          "payproctype": "SELF",
+          "cardType": null,
+          "downtime": false,
+          "popular": false
+        },
+        {
+          "bankName": "SBIePay Test Bank - Corporate",
+          "bankId": "124",
+          "aggregatorGatewayMapId": "126",
+          "payproc": "SELF",
+          "payproctype": "SELF",
+          "cardType": null,
+          "downtime": false,
+          "popular": false
+        },
+        {
+          "bankName": "ICICI Corporate Bank",
+          "bankId": "135",
+          "aggregatorGatewayMapId": "156",
+          "payproc": "SELF",
+          "payproctype": "SELF",
+          "cardType": null,
+          "downtime": false,
+          "popular": false
+        },
+        {
+          "bankName": "Central Bank of India-Corporate",
+          "bankId": "137",
+          "aggregatorGatewayMapId": "165",
+          "payproc": "SELF",
+          "payproctype": "SELF",
+          "cardType": null,
+          "downtime": false,
+          "popular": false
+        },
+        {
+          "bankName": "COSMOS BANK - Retail",
+          "bankId": "142",
+          "aggregatorGatewayMapId": "180",
+          "payproc": "SELF",
+          "payproctype": "SELF",
+          "cardType": null,
+          "downtime": false,
+          "popular": false
+        },
+        {
+          "bankName": "Axis Bank-Retail",
+          "bankId": "143",
+          "aggregatorGatewayMapId": "181",
+          "payproc": "SELF",
+          "payproctype": "SELF",
+          "cardType": null,
+          "downtime": false,
+          "popular": false
+        },
+        {
+          "bankName": "IDBI Bank-Corporate",
+          "bankId": "76",
+          "aggregatorGatewayMapId": "87",
+          "payproc": "SELF",
+          "payproctype": "SELF",
+          "cardType": null,
+          "downtime": false,
+          "popular": false
+        },
+        {
+          "bankName": "ESAF-Retail-Bank",
+          "bankId": "150",
+          "aggregatorGatewayMapId": "184",
+          "payproc": "SELF",
+          "payproctype": "SELF",
+          "cardType": null,
+          "downtime": false,
+          "popular": false
+        },
+        {
+          "bankName": "Kotak Mahindra Bank- Corporate",
+          "bankId": "4547",
+          "aggregatorGatewayMapId": "193",
+          "payproc": "SELF",
+          "payproctype": "SELF",
+          "cardType": null,
+          "downtime": false,
+          "popular": false
+        },
+        {
+          "bankName": "HSBC Retail - Billdesk",
+          "bankId": "4550",
+          "aggregatorGatewayMapId": "196",
+          "payproc": "SELF",
+          "payproctype": "SELF",
+          "cardType": null,
+          "downtime": false,
+          "popular": false
+        },
+        {
+          "bankName": "Ratnakar Bank Limited - Corporate",
+          "bankId": "4539",
+          "aggregatorGatewayMapId": "185",
+          "payproc": "SELF",
+          "payproctype": "SELF",
+          "cardType": null,
+          "downtime": false,
+          "popular": false
+        },
+        {
+          "bankName": "Ratnakar Bank Limited - Retail",
+          "bankId": "4538",
+          "aggregatorGatewayMapId": "186",
+          "payproc": "SELF",
+          "payproctype": "SELF",
+          "cardType": null,
+          "downtime": false,
+          "popular": false
+        },
+        {
+          "bankName": "AU Small Finance Bank",
+          "bankId": "4540",
+          "aggregatorGatewayMapId": "187",
+          "payproc": "SELF",
+          "payproctype": "SELF",
+          "cardType": null,
+          "downtime": false,
+          "popular": false
+        },
+        {
+          "bankName": "IDFC Bank",
+          "bankId": "4545",
+          "aggregatorGatewayMapId": "191",
+          "payproc": "SELF",
+          "payproctype": "SELF",
+          "cardType": null,
+          "downtime": false,
+          "popular": false
+        },
+        {
+          "bankName": "Dhanlaxmi Bank-Retail",
+          "bankId": "35",
+          "aggregatorGatewayMapId": "53",
+          "payproc": "SELF",
+          "payproctype": "SELF",
+          "cardType": null,
+          "downtime": false,
+          "popular": false
+        },
+        {
+          "bankName": "Capital Small Finance Bank",
+          "bankId": "4551",
+          "aggregatorGatewayMapId": "200",
+          "payproc": "SELF",
+          "payproctype": "SELF",
+          "cardType": null,
+          "downtime": false,
+          "popular": false
+        },
+        {
+          "bankName": "Corporation Bank",
+          "bankId": "31",
+          "aggregatorGatewayMapId": "50",
+          "payproc": "SELF",
+          "payproctype": "SELF",
+          "cardType": null,
+          "downtime": false,
+          "popular": false
+        },
+        {
+          "bankName": "Ratnakar-DP Bank",
+          "bankId": "44",
+          "aggregatorGatewayMapId": "67",
+          "payproc": "SELF",
+          "payproctype": "SELF",
+          "cardType": null,
+          "downtime": false,
+          "popular": false
+        },
+        {
+          "bankName": "HDFC-DP Bank",
+          "bankId": "116",
+          "aggregatorGatewayMapId": "108",
+          "payproc": "SELF",
+          "payproctype": "SELF",
+          "cardType": null,
+          "downtime": false,
+          "popular": false
+        },
+        {
+          "bankName": "HDFC Retail Bank-NBBL",
+          "bankId": "4562",
+          "aggregatorGatewayMapId": "236",
+          "payproc": "SELF",
+          "payproctype": "SELF",
+          "cardType": null,
+          "downtime": false,
+          "popular": false
+        },
+        {
+          "bankName": "Bandhan Bank - Corporate",
+          "bankId": "4564",
+          "aggregatorGatewayMapId": "246",
+          "payproc": "SELF",
+          "payproctype": "SELF",
+          "cardType": null,
+          "downtime": false,
+          "popular": false
+        },
+        {
+          "bankName": "RRB Bank",
+          "bankId": "4558",
+          "aggregatorGatewayMapId": "231",
+          "payproc": "SELF",
+          "payproctype": "SELF",
+          "cardType": null,
+          "downtime": false,
+          "popular": false
+        },
+        {
+          "bankName": "Karnataka Bank-Corporate",
+          "bankId": "4556",
+          "aggregatorGatewayMapId": "229",
+          "payproc": "SELF",
+          "payproctype": "SELF",
+          "cardType": null,
+          "downtime": false,
+          "popular": false
+        },
+        {
+          "bankName": "Test Two Gateway",
+          "bankId": "50",
+          "aggregatorGatewayMapId": "199",
+          "payproc": "SELF",
+          "payproctype": "SELF",
+          "cardType": null,
+          "downtime": false,
+          "popular": false
+        },
+        {
+          "bankName": "Bank of India - Retail",
+          "bankId": "4568",
+          "aggregatorGatewayMapId": "261",
+          "payproc": "SELF",
+          "payproctype": "SELF",
+          "cardType": null,
+          "downtime": false,
+          "popular": false
+        },
+        {
+          "bankName": "Tamilnad Mercantile Bank TMB",
+          "bankId": "4601",
+          "aggregatorGatewayMapId": "268",
+          "payproc": "SELF",
+          "payproctype": "SELF",
+          "cardType": null,
+          "downtime": false,
+          "popular": false
+        },
+        {
+          "bankName": "CSB - Corporate",
+          "bankId": "4614",
+          "aggregatorGatewayMapId": "303",
+          "payproc": "SELF",
+          "payproctype": "SELF",
+          "cardType": null,
+          "downtime": false,
+          "popular": false
+        },
+        {
+          "bankName": "Central Bank of India - Retail",
+          "bankId": "4600",
+          "aggregatorGatewayMapId": "267",
+          "payproc": "SELF",
+          "payproctype": "SELF",
+          "cardType": null,
+          "downtime": false,
+          "popular": false
+        },
+        {
+          "bankName": "Yes Bank - Corporate",
+          "bankId": "4544",
+          "aggregatorGatewayMapId": "190",
+          "payproc": "SELF",
+          "payproctype": "SELF",
+          "cardType": null,
+          "downtime": false,
+          "popular": false
+        },
+        {
+          "bankName": "Kalupur Bank",
+          "bankId": "4613",
+          "aggregatorGatewayMapId": "298",
+          "payproc": "SELF",
+          "payproctype": "SELF",
+          "cardType": null,
+          "downtime": false,
+          "popular": false
+        },
+        {
+          "bankName": "IDBI Bank-Retail",
+          "bankId": "14",
+          "aggregatorGatewayMapId": "34",
+          "payproc": "SELF",
+          "payproctype": "SELF",
+          "cardType": null,
+          "downtime": false,
+          "popular": false
+        },
+        {
+          "bankName": "SBIePay Test Bank",
+          "bankId": "101",
+          "aggregatorGatewayMapId": "101",
+          "payproc": "SELF",
+          "payproctype": "SELF",
+          "cardType": null,
+          "downtime": false,
+          "popular": true
+        },
+        {
+          "bankName": "Thane Janata Sahakari Bank",
+          "bankId": "4554",
+          "aggregatorGatewayMapId": "225",
+          "payproc": "SELF",
+          "payproctype": "SELF",
+          "cardType": null,
+          "downtime": false,
+          "popular": false
+        },
+        {
+          "bankName": "IndusInd Bank- Corporate",
+          "bankId": "4553",
+          "aggregatorGatewayMapId": "224",
+          "payproc": "SELF",
+          "payproctype": "SELF",
+          "cardType": null,
+          "downtime": false,
+          "popular": false
+        },
+        {
+          "bankName": "JSB - Corporate Bank",
+          "bankId": "4560",
+          "aggregatorGatewayMapId": "232",
+          "payproc": "SELF",
+          "payproctype": "SELF",
+          "cardType": null,
+          "downtime": false,
+          "popular": false
+        },
+        {
+          "bankName": "Bandhan Bank Retail",
+          "bankId": "4557",
+          "aggregatorGatewayMapId": "230",
+          "payproc": "SELF",
+          "payproctype": "SELF",
+          "cardType": null,
+          "downtime": false,
+          "popular": false
+        },
+        {
+          "bankName": "Dhanlaxmi Bank-Retail2026",
+          "bankId": "4615",
+          "aggregatorGatewayMapId": "304",
+          "payproc": "NBBLQR",
+          "payproctype": "NBBLQR",
+          "cardType": null,
+          "downtime": false,
+          "popular": false
+        },
+        {
+          "bankName": "Dhanlaxmi Bank-Retail2026",
+          "bankId": "4615",
+          "aggregatorGatewayMapId": "305",
+          "payproc": "NBINTENT",
+          "payproctype": "NBINTENT",
+          "cardType": null,
+          "downtime": false,
+          "popular": false
+        }
+      ],
+      "wallet": [
+        {
+          "bankName": "Mobikwik Wallet",
+          "payModeCode": "WALLET",
+          "bankId": "140",
+          "aggregatorGatewayMapId": "179",
+          "payproc": "MOBIWALLET",
+          "payproctype": "MOBIWALLET",
+          "downtime": false,
+          "popular": true
+        }
+      ],
+      "neft": [],
+      "cash": [
+        {
+          "bankName": "State Bank of India",
+          "payModeCode": "CASH",
+          "bankId": "1",
+          "aggregatorGatewayMapId": "118",
+          "payproc": "SELF",
+          "payproctype": "SELF",
+          "downtime": false,
+          "popular": false
+        }
+      ]
+    }
+
+in my validatePaymentRequest PayProcType is mandatory.
+so i need to write a logic to get PayProcType from our response from admin and then set it PaymentInitiationRequest 
