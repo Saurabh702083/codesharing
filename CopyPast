@@ -1,3 +1,75 @@
+
+public TransactionResponse<PaymentBookingResponse> initiatePaymentBooking(PaymentBookingRequest paymentBookingRequest) {
+    OrderDto orderDto = orderService.createMerchantOrder(paymentBookingRequest.getOrderDto(), paymentBookingRequest.getMId());
+    bookingService.initiateOrderBooking(paymentBookingRequest.getOrderDto(), TransactionTokenType.PAYMENT);
+
+    JsonNode merchantPayModes = bookingDao.getMerchantPayModes(orderDto.getMId());
+
+    // --- NEW: enrich the request before validation ---
+    PaymentInitiationRequest paymentInitiationRequest = paymentBookingRequest.getPaymentInitiationRequest();
+    paymentInitiationRequest.setOperatingMode(OperatingMode.DOM.name());
+
+    String payProcType = resolvePayProcType(merchantPayModes,
+            paymentInitiationRequest.getGtwMapsId(),
+            paymentInitiationRequest.getPayProcId());
+
+    if (StringUtils.isEmpty(payProcType)) {
+        throw new TransactionException(INVALID_ERROR_CODE,
+                MessageFormat.format(TransactionErrorConstants.INVALID_ERROR_MESSAGE,
+                        "payProcType", "Could not resolve payProcType for given gtwMapsId/payProcId"));
+    }
+    paymentInitiationRequest.setPayProcType(payProcType);
+    // --- end new code ---
+
+    paymentInitiationValidator.validatePaymentRequest(paymentInitiationRequest, orderDto, paymentBookingRequest.getPayMode());
+
+    paymentBookingDao.savePaymentBookingDetails(orderDto, paymentInitiationRequest, paymentBookingRequest.getPayMode());
+    PaymentBookingResponse paymentBookingResponse = buildPaymentBookingResponse(orderDto);
+    return TransactionResponse.<PaymentBookingResponse>builder()
+            .status(TransactionConstant.RESPONSE_SUCCESS)
+            .data(List.of(paymentBookingResponse)).build();
+}
+
+/**
+ * Recursively scans the payModes JsonNode tree for the object whose
+ * aggregatorGatewayMapId == gtwMapsId and payproc == payProcId,
+ * and returns its payproctype.
+ */
+private String resolvePayProcType(JsonNode node, String gtwMapsId, String payProcId) {
+    if (node == null || node.isNull() || gtwMapsId == null || payProcId == null) {
+        return null;
+    }
+
+    if (node.isObject()) {
+        JsonNode gtwNode = node.get("aggregatorGatewayMapId");
+        JsonNode procNode = node.get("payproc");
+        if (gtwNode != null && !gtwNode.isNull()
+                && procNode != null && !procNode.isNull()
+                && gtwMapsId.equals(gtwNode.asText())
+                && payProcId.equalsIgnoreCase(procNode.asText())) {
+            JsonNode typeNode = node.get("payproctype");
+            return (typeNode != null && !typeNode.isNull()) ? typeNode.asText() : null;
+        }
+        Iterator<String> fieldNames = node.fieldNames();
+        while (fieldNames.hasNext()) {
+            String result = resolvePayProcType(node.get(fieldNames.next()), gtwMapsId, payProcId);
+            if (result != null) {
+                return result;
+            }
+        }
+    } else if (node.isArray()) {
+        for (JsonNode element : node) {
+            String result = resolvePayProcType(element, gtwMapsId, payProcId);
+            if (result != null) {
+                return result;
+            }
+        }
+    }
+    return null;
+}
+
+
+
 this is my api which will be trigger by integration service.
 from integration service in paymentbookingRequest they are passing limited field only like :
 @Data
