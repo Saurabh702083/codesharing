@@ -1,3 +1,94 @@
+private static final String ONUS = "ONUS";
+private static final String OFFUS = "OFFUS";
+private static final String STATE_BANK_ISSUER = "State Bank of India New PG";
+
+private void buildPaymentInitiationRequest(PaymentBookingRequest paymentBookingRequest) {
+    PaymentInitiationRequest paymentInitiationRequest = paymentBookingRequest.getPaymentInitiationRequest();
+    PayMode payMode = PayMode.getPayMode(paymentBookingRequest.getPayMode());
+    String payProcType = buildPayProcType(paymentInitiationRequest, payMode, paymentBookingRequest.getMId());
+    paymentInitiationRequest.setPayProcType(payProcType);
+}
+
+private String buildPayProcType(PaymentInitiationRequest request, PayMode payMode, String mId) {
+    return switch (payMode) {
+        case UPI, WALLET -> ONUS;
+        case NB -> resolveNetBankingPayProcType(request, mId);
+        case CC, DC, PC -> resolveCardPayProcType(request);
+        default -> throw new TransactionException(INVALID_ERROR_CODE,
+                MessageFormat.format(TransactionErrorConstants.INVALID_ERROR_MESSAGE,
+                        "payMode", "Unsupported PayMode for payProcType resolution"));
+    };
+}
+
+private String resolveNetBankingPayProcType(PaymentInitiationRequest request, String mId) {
+    request.setOperatingMode(OperatingMode.DOM.name());
+
+    JsonNode merchantPayModes = bookingDao.getMerchantPayModes(mId);
+    String payProcType = findPayProcType(merchantPayModes, request.getGtwMapsId(), request.getPayProcId())
+            .orElseThrow(() -> new TransactionException(INVALID_ERROR_CODE,
+                    MessageFormat.format(TransactionErrorConstants.INVALID_ERROR_MESSAGE,
+                            "payProcType", "Could not resolve payProcType for given gtwMapsId/payProcId")));
+
+    return "SELF".equals(payProcType) ? ONUS : OFFUS;
+}
+
+private String resolveCardPayProcType(PaymentInitiationRequest request) {
+    BinCheckRequest binCheckRequest = BinCheckRequest.builder()
+            .cardBin(StringUtils.left(request.getAltNumber(), CARD_BIN_LENGTH))
+            .build();
+    BinCheckResponse binResponse = cardVerificationDao.validateBin(binCheckRequest);
+    return STATE_BANK_ISSUER.equals(binResponse.getBinIssuerId()) ? ONUS : OFFUS;
+}
+
+/**
+ * Recursively searches the payModes tree for a node whose aggregatorGatewayMapId
+ * and payproc match the given values, returning its payproctype if found.
+ */
+private Optional<String> findPayProcType(JsonNode node, String gtwMapsId, String payProcId) {
+    if (node == null || node.isNull() || node.isMissingNode()) {
+        return Optional.empty();
+    }
+    if (matches(node, gtwMapsId, payProcId)) {
+        return extractPayProcType(node);
+    }
+    if (node.isObject()) {
+        return StreamSupport.stream(Spliterators.spliteratorUnknownSize(node.fields(), 0), false)
+                .map(entry -> findPayProcType(entry.getValue(), gtwMapsId, payProcId))
+                .flatMap(Optional::stream)
+                .findFirst();
+    }
+    if (node.isArray()) {
+        return StreamSupport.stream(node.spliterator(), false)
+                .map(child -> findPayProcType(child, gtwMapsId, payProcId))
+                .flatMap(Optional::stream)
+                .findFirst();
+    }
+    return Optional.empty();
+}
+
+private boolean matches(JsonNode node, String gtwMapsId, String payProcId) {
+    if (!node.isObject()) {
+        return false;
+    }
+    JsonNode gtwNode = node.get("aggregatorGatewayMapId");
+    JsonNode procNode = node.get("payproc");
+    return gtwNode != null && !gtwNode.isNull()
+            && procNode != null && !procNode.isNull()
+            && gtwMapsId.equals(gtwNode.asText())
+            && payProcId.equalsIgnoreCase(procNode.asText());
+}
+
+private Optional<String> extractPayProcType(JsonNode node) {
+    return Optional.ofNullable(node.get("payproctype"))
+            .filter(n -> !n.isNull())
+            .map(JsonNode::asText);
+}
+
+
+------------
+
+
+
 @Service
 @RequiredArgsConstructor
 public class PaymentBookingService {
