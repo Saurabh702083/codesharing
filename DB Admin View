@@ -1,170 +1,523 @@
+package com.yourorg.transaction.dto.admin;
 
-  CREATE OR REPLACE FORCE EDITIONABLE VIEW "EPAYADMINPORTAL"."MV_JOURNEY" ("MERCHANT_ID", "MERCHANT_MIF_ID", "LEGAL_NAME", "BRAND_NAME", "BUSINESS_CATEGORY", "MERCHANT_SPOC", "EMAIL_ID", "PHONE_NUMBER", "MIF_SUBMISSION_DATE", "MIF_STATUS", "IS_DEVIATION", "DEVIATION_END_DATE", "DEVIATION_STATUS", "JOURNEY_INFO") AS 
-  WITH journey_info AS (
-    SELECT
-        mj.merchant_mif_id,
-        JSON_ARRAYAGG(
-            JSON_OBJECT(
-                'journeyId' VALUE mj.id,
-                'journeyType' VALUE most.journey_type,
-                'stageNum' VALUE most.stage_num,
-                'stageCode' VALUE most.stage_code,
-                'status' VALUE mj.status,
-                'remarks' VALUE mj.remark,
-                'updatedAt' VALUE mj.updated_at,
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import com.fasterxml.jackson.annotation.JsonProperty;
 
-                'assignedUserDetails' VALUE (
-                    SELECT JSON_ARRAYAGG(
-                        JSON_OBJECT(
-                            'userId' VALUE mau.user_id,
-                            'userName' VALUE au.first_name,
-                            'actionType' VALUE mau.action_type
-                        )
-                    )
-                    FROM mif_journey_assigned_users mau
-                    JOIN users au ON au.id = mau.user_id
-                    WHERE mau.mif_journey_id = mj.id
-                )
+import java.util.List;
 
-                RETURNING CLOB
-            )
-        ) AS journey_info
-    FROM mif_journey mj
-    LEFT JOIN merchant_onboarding_stages_master most
-           ON most.stage_num = mj.stage_num
-    GROUP BY mj.merchant_mif_id
-)
+public record PayModesResponse(
+        @JsonProperty("preferredOptions") PaymentOptions preferredOptions,
+        @JsonProperty("otherPaymentOptions") PaymentOptions otherPaymentOptions) {
+}
 
-SELECT DISTINCT
-MM.MERCHANT_ID,
-    mm.id                     AS merchant_mif_id,
-    mm.legal_name,
-    mm.brand_name,
-    mbi.nature_of_business    AS business_category,
-    mci.first_name            AS merchant_spoc,
-    mci.email_id,
-    mci.primary_mobile_number AS phone_number,
-    mm.submission_date        AS mif_submission_date,
-    mm.status                 AS mif_status,
+@JsonIgnoreProperties(ignoreUnknown = true)
+public record PaymentOptions(
+        UpiOptions upi,
+        CardOptions cards,
+        List<PayModeEntry> wallet,
+        List<PayModeEntry> inb) {
+}
 
-    CASE
-        WHEN mdi.document_type = 'DEVIATION_APPROVAL'
-        THEN mdi.is_deviation
-    END AS is_deviation,
+@JsonIgnoreProperties(ignoreUnknown = true)
+public record UpiOptions(
+        List<String> apps,
+        boolean vpa,
+        boolean drawerIntent,
+        PayModeEntry self,
+        @JsonProperty("BHIMQR") PayModeEntry bhimQr) {
+}
 
-    CASE
-        WHEN mdi.document_type = 'DEVIATION_APPROVAL'
-        THEN mdi.dev_end_date
-    END AS deviation_end_date,
+@JsonIgnoreProperties(ignoreUnknown = true)
+public record CardOptions(
+        List<PayModeEntry> cc,
+        List<PayModeEntry> dc,
+        List<PayModeEntry> pc) {
+}
 
-    CASE
-        WHEN mdi.document_type = 'DEVIATION_APPROVAL'
-        THEN mdi.status
-    END AS deviation_status,
-
-    jui.journey_info
-
-FROM merchant_mif mm
-JOIN mif_business_info mbi
-     ON mm.id = mbi.merchant_mif_id
-JOIN mif_contact_info mci
-     ON mbi.merchant_mif_id = mci.merchant_mif_id
-JOIN journey_info jui
-     ON jui.merchant_mif_id = mm.id
-LEFT JOIN mif_document_info mdi
-     ON mm.id = mdi.merchant_mif_id;
+@JsonIgnoreProperties(ignoreUnknown = true)
+public record PayModeEntry(
+        String bankName,
+        String bankId,
+        String aggregatorGatewayMapId,
+        String payproc,
+        String payproctype,
+        String payModeCode,
+        String cardType,
+        Boolean downtime,
+        Boolean popular) {
+}
 
 
+@Component
+@RequiredArgsConstructor
+public class BookingDao {
+
+    private final OrderDao orderDao;
+    private final CustomerDao customerDao;
+    private final AdminDao adminDao;
+    private final TokenDao tokenDao;
+    private final MerchantDao merchantDao;
+    private final EPayTokenProvider ePayTokenProvider;
+    private final ObjectMapper objectMapper;
+    private final LoggerUtility logger = LoggerFactoryUtility.getLogger(this.getClass());
+
+    public PayModesResponse getMerchantPayModes(String mId) {
+        JsonNode rawPayModes = adminDao.getMerchantPayModes(mId);
+        try {
+            return objectMapper.treeToValue(rawPayModes, PayModesResponse.class);
+        } catch (JsonProcessingException e) {
+            logger.error("Failed to parse payModes response for mId: {}", mId, e);
+            throw new TransactionException(INVALID_ERROR_CODE,
+                    MessageFormat.format(TransactionErrorConstants.INVALID_ERROR_MESSAGE,
+                            "payModes", "Unable to parse merchant pay modes response"));
+        }
+    }
+}
+
+package com.yourorg.transaction.service;
+
+import com.yourorg.transaction.dto.admin.PayModeEntry;
+import com.yourorg.transaction.dto.admin.PayModesResponse;
+import com.yourorg.transaction.dto.admin.PaymentOptions;
+// ...other existing imports
+
+import java.util.List;
+import java.util.Objects;
+
+@Service
+@RequiredArgsConstructor
+public class PaymentBookingService {
+
+    private static final String ONUS = "ONUS";
+    private static final String OFFUS = "OFFUS";
+    private static final String SELF = "SELF";
+
+    private final LoggerUtility logger = LoggerFactoryUtility.getLogger(this.getClass());
+    private final OrderService orderService;
+    private final BookingService bookingService;
+    private final PaymentInitiationValidator paymentInitiationValidator;
+    private final PaymentBookingDao paymentBookingDao;
+    private final BookingDao bookingDao;
+    private final CardVerificationDao cardVerificationDao;
+    private final PaymentBookingValidator paymentBookingValidator;
+
+    /**
+     * Immutable carrier for the three fields that must be resolved
+     * (gtwMapsId, payProcId, payProcType) before payment-initiation validation runs.
+     */
+    private record PayProcDetails(String gtwMapsId, String payProcId, String payProcType) {}
+
+    /**
+     * Creates order and transaction booking, resolves payProc details based on payMode,
+     * validates, and persists the payment booking.
+     *
+     * @param paymentBookingRequest incoming booking request
+     * @return orderHash and related booking details
+     */
+    public TransactionResponse<PaymentBookingResponse> initiatePaymentBooking(PaymentBookingRequest paymentBookingRequest) {
+        OrderDto orderDto = orderService.createMerchantOrder(paymentBookingRequest.getOrderDto(), paymentBookingRequest.getMId());
+        logger.info("Created order for mid :{}", orderDto.getMId());
+
+        paymentBookingValidator.validateMerchantHostedRequest(paymentBookingRequest);
+
+        bookingService.initiateOrderBooking(paymentBookingRequest.getOrderDto(), TransactionTokenType.PAYMENT);
+        logger.info("Book transaction done for mid: {}", orderDto.getMId());
+
+        buildPaymentInitiationRequest(paymentBookingRequest);
+
+        paymentInitiationValidator.validatePaymentRequest(
+                paymentBookingRequest.getPaymentInitiationRequest(), orderDto, paymentBookingRequest.getPayMode());
+        logger.info("Payment initiation request validated successfully.");
+
+        paymentBookingDao.savePaymentBookingDetails(
+                orderDto, paymentBookingRequest.getPaymentInitiationRequest(), paymentBookingRequest.getPayMode());
+
+        PaymentBookingResponse paymentBookingResponse = buildPaymentBookingResponse(orderDto);
+        return TransactionResponse.<PaymentBookingResponse>builder()
+                .status(TransactionConstant.RESPONSE_SUCCESS)
+                .data(List.of(paymentBookingResponse))
+                .build();
+    }
+
+    /**
+     * Populates operatingMode, gtwMapsId, payProcId and payProcType on the
+     * PaymentInitiationRequest based on payMode-specific resolution rules.
+     */
+    private void buildPaymentInitiationRequest(PaymentBookingRequest paymentBookingRequest) {
+        PaymentInitiationRequest request = paymentBookingRequest.getPaymentInitiationRequest();
+        PayMode payMode = PayMode.getPayMode(paymentBookingRequest.getPayMode());
+        String mId = paymentBookingRequest.getMId();
+
+        request.setOperatingMode(OperatingMode.DOM.name());
+
+        PayProcDetails payProcDetails = resolvePayProcDetails(payMode, request, mId);
+
+        request.setGtwMapsId(payProcDetails.gtwMapsId());
+        request.setPayProcId(payProcDetails.payProcId());
+        request.setPayProcType(payProcDetails.payProcType());
+    }
+
+    private PayProcDetails resolvePayProcDetails(PayMode payMode, PaymentInitiationRequest request, String mId) {
+        return switch (payMode) {
+            case CC, DC, PC -> resolveCardPayProcDetails(request, mId);
+            case NB -> resolveNetBankingPayProcDetails(request, mId);
+            case UPI, WALLET -> resolveUpiOrWalletPayProcDetails(payMode, request, mId);
+            default -> throw new TransactionException(INVALID_ERROR_CODE,
+                    MessageFormat.format(TransactionErrorConstants.INVALID_ERROR_MESSAGE,
+                            "payMode", "Unsupported PayMode for payProc resolution"));
+        };
+    }
+
+    // ---------------------------------------------------------------
+    // CC / DC / PC
+    // ---------------------------------------------------------------
+
+    /**
+     * For card payModes, payProcId and payProcType come from the BIN check response.
+     * gtwMapsId resolution is pending confirmation from Admin-service team - see TODO below.
+     */
+    private PayProcDetails resolveCardPayProcDetails(PaymentInitiationRequest request, String mId) {
+        BinCheckRequest binCheckRequest = BinCheckRequest.builder()
+                .cardBin(StringUtils.left(request.getAltNumber(), CARD_BIN_LENGTH))
+                .build();
+        BinCheckResponse binResponse = cardVerificationDao.validateBin(binCheckRequest);
+
+        String payProcId = binResponse.getCardProcessor();
+        String payProcType = STATE_BANK_NEW_PG.equals(binResponse.getBinIssuerId()) ? ONUS : OFFUS;
+        String gtwMapsId = resolveCardGatewayMapId(binResponse, mId);
+
+        return new PayProcDetails(gtwMapsId, payProcId, payProcType);
+    }
+
+    // TODO: Confirm with Admin-service team how a BinCheckResponse
+    // (binType / cardProcessor / binOpModeId / binIssuerId) maps to an
+    // aggregatorGatewayMapId within PayModesResponse.otherPaymentOptions().cards().
+    // Likely candidate: match PayModeEntry.payproc() == binResponse.getCardProcessor()
+    // within cards().cc()/dc()/pc() depending on payMode - needs confirmation.
+    private String resolveCardGatewayMapId(BinCheckResponse binResponse, String mId) {
+        return null;
+    }
+
+    // ---------------------------------------------------------------
+    // NB
+    // ---------------------------------------------------------------
+
+    /**
+     * gtwMapsId comes from the request. payProcId is looked up in otherPaymentOptions.inb
+     * by matching gtwMapsId. payProcType is ONUS if payProcId is SELF, else OFFUS.
+     */
+    private PayProcDetails resolveNetBankingPayProcDetails(PaymentInitiationRequest request, String mId) {
+        String gtwMapsId = request.getGtwMapsId();
+        List<PayModeEntry> inbOptions = bookingDao.getMerchantPayModes(mId).otherPaymentOptions().inb();
+
+        String payProcId = inbOptions.stream()
+                .filter(entry -> gtwMapsId.equals(entry.aggregatorGatewayMapId()))
+                .findFirst()
+                .map(PayModeEntry::payproc)
+                .orElseThrow(() -> new TransactionException(INVALID_ERROR_CODE,
+                        MessageFormat.format(TransactionErrorConstants.INVALID_ERROR_MESSAGE,
+                                "payProcId", "Could not resolve payProcId for gtwMapsId: " + gtwMapsId)));
+
+        String payProcType = SELF.equalsIgnoreCase(payProcId) ? ONUS : OFFUS;
+        return new PayProcDetails(gtwMapsId, payProcId, payProcType);
+    }
+
+    // ---------------------------------------------------------------
+    // UPI / WALLET
+    // ---------------------------------------------------------------
+
+    /**
+     * payProcId comes from the request. gtwMapsId is looked up in otherPaymentOptions.upi
+     * (self/BHIMQR) or otherPaymentOptions.wallet by matching payProcId.
+     * payProcType is always ONUS for UPI and WALLET.
+     */
+    private PayProcDetails resolveUpiOrWalletPayProcDetails(PayMode payMode, PaymentInitiationRequest request, String mId) {
+        String payProcId = request.getPayProcId();
+        PaymentOptions options = bookingDao.getMerchantPayModes(mId).otherPaymentOptions();
+
+        List<PayModeEntry> candidates = (payMode == PayMode.UPI)
+                ? List.of(options.upi().self(), options.upi().bhimQr())
+                : options.wallet();
+
+        String gtwMapsId = candidates.stream()
+                .filter(Objects::nonNull)
+                .filter(entry -> payProcId.equalsIgnoreCase(entry.payproc()))
+                .findFirst()
+                .map(PayModeEntry::aggregatorGatewayMapId)
+                .orElseThrow(() -> new TransactionException(INVALID_ERROR_CODE,
+                        MessageFormat.format(TransactionErrorConstants.INVALID_ERROR_MESSAGE,
+                                "gtwMapsId", "Could not resolve gtwMapsId for payProcId: " + payProcId)));
+
+        return new PayProcDetails(gtwMapsId, payProcId, ONUS);
+    }
+
+    private PaymentBookingResponse buildPaymentBookingResponse(OrderDto orderDto) {
+        return PaymentBookingResponse.builder()
+                .paymentMode(orderDto.getPayMode())
+                .transactionUrl(orderDto.getTransactionUrl())
+                .orderHash(orderDto.getOrderHash())
+                .orderRefNumber(orderDto.getOrderRefNumber())
+                .sbiOrderRefNumber(orderDto.getSbiOrderRefNumber())
+                .orderRetryCount(orderDto.getOrderRetryCount())
+                .expiry(orderDto.getExpiry())
+                .build();
+    }
+}
+--------------------------------------------------------------------------
+
+package com.yourorg.transaction.dto.admin;
+
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import com.fasterxml.jackson.annotation.JsonProperty;
+import lombok.AllArgsConstructor;
+import lombok.Getter;
+import lombok.NoArgsConstructor;
+import lombok.Setter;
+
+@Getter
+@Setter
+@NoArgsConstructor
+@AllArgsConstructor
+@JsonIgnoreProperties(ignoreUnknown = true)
+public class PayModesResponse {
+
+    @JsonProperty("preferredOptions")
+    private PaymentOptions preferredOptions;
+
+    @JsonProperty("otherPaymentOptions")
+    private PaymentOptions otherPaymentOptions;
+}
+
+package com.yourorg.transaction.dto.admin;
+
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import lombok.AllArgsConstructor;
+import lombok.Getter;
+import lombok.NoArgsConstructor;
+import lombok.Setter;
+
+import java.util.List;
+
+@Getter
+@Setter
+@NoArgsConstructor
+@AllArgsConstructor
+@JsonIgnoreProperties(ignoreUnknown = true)
+public class PaymentOptions {
+
+    private UpiOptions upi;
+
+    private CardOptions cards;
+
+    private List<PayModeEntry> wallet;
+
+    private List<PayModeEntry> inb;
+}
+
+package com.yourorg.transaction.dto.admin;
+
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import com.fasterxml.jackson.annotation.JsonProperty;
+import lombok.AllArgsConstructor;
+import lombok.Getter;
+import lombok.NoArgsConstructor;
+import lombok.Setter;
+
+import java.util.List;
+
+@Getter
+@Setter
+@NoArgsConstructor
+@AllArgsConstructor
+@JsonIgnoreProperties(ignoreUnknown = true)
+public class UpiOptions {
+
+    private List<String> apps;
+
+    private boolean vpa;
+
+    private boolean drawerIntent;
+
+    private PayModeEntry self;
+
+    @JsonProperty("BHIMQR")
+    private PayModeEntry bhimQr;
+}
 
 
--------------------------------------------
+package com.yourorg.transaction.dto.admin;
 
-  CREATE OR REPLACE FORCE EDITIONABLE VIEW "EPAYADMINPORTAL"."MV_USER_INFO" ("USER_ID", "ADID", "FIRST_NAME", "LAST_NAME", "PHONE_NUMBER", "EMAIL_ID", "USER_STATUS", "AUTH_SOURCE", "LAST_SUCCESS_LOGIN", "LAST_FAIL_LOGIN", "LAST_LOGOUT", "ROLE_LIST", "GROUP_LIST", "ROLE_WISE_MENU") AS 
-  WITH role_list AS (
-    SELECT
-        ur.user_id,
-        JSON_ARRAYAGG(
-            JSON_OBJECT
-        ('roleId' VALUE br.id, 'roleName' VALUE br.name, 'roleCode' VALUE br.br_code,'roleType' VALUE br.type,'isPrimary' VALUE ur.Is_Primary RETURNING clob)) AS role_list
-    FROM
-        user_role ur
-        JOIN business_roles_master br ON br.id = ur.role_id
-    WHERE
-        ur.is_active = 1
-    GROUP BY
-        ur.user_id
-), group_list AS (
-    SELECT
-        ur.user_id,
-        JSON_ARRAYAGG(
-            JSON_OBJECT
-        ('groupId' VALUE bg.id, 'groupName' VALUE bg.name, 'groupCode' VALUE bg.bg_code RETURNING clob)) AS group_list
-    FROM
-        user_role ur
-        JOIN business_roles_master  br ON br.id = ur.role_id
-        JOIN business_groups_master bg ON bg.id = br.business_group_id
-    WHERE
-        ur.is_active = 1
-    GROUP BY
-        ur.user_id
-), role_wise_menu AS (
-    SELECT
-        br.id AS role_id,
-        JSON_ARRAYAGG(
-            JSON_OBJECT(
-                'roleId' VALUE br.id,
-                'roleName' VALUE br.name,
-                'menus' VALUE(
-                    SELECT
-                        JSON_ARRAYAGG(
-                            JSON_OBJECT
-                        ('menuid' VALUE mm.id, 'menuName' VALUE mm.name, 'menuCode' VALUE mm.mm_code, 'canView' VALUE mpm.can_view, 'canEdit'
-                        VALUE mpm.can_edit))
-                    FROM
-                        menu_permission_mapping mpm
-                        JOIN menu_master mm ON mm.id = mpm.menu_id
-                    WHERE
-                        mpm.business_role_id = br.id
-                        AND mpm.is_active = 1
-                )
-            )
-        )     AS role_wise_menu
-    FROM
-        business_roles_master br
-    WHERE
-        br.is_active = 1
-    GROUP BY
-        br.id
-)
-SELECT
-    u.id     AS user_id,
-    u.adid,
-    u.first_name,
-    u.last_name,
-    u.phone_number,
-    u.email_id,
-    u.status AS user_status,
-    u.auth_source,
-    u.last_success_login,
-    u.last_fail_login,
-    last_logout,
-    rl.role_list,
-    gl.group_list,
-    rwm.role_wise_menu
-FROM
-    users      u
-    LEFT JOIN role_list  rl ON rl.user_id = u.id
-    LEFT JOIN group_list gl ON gl.user_id = u.id
-    LEFT JOIN (
-        SELECT
-            ur.user_id,
-            JSON_ARRAYAGG(rwm.role_wise_menu) AS role_wise_menu
-        FROM
-            user_role ur
-            JOIN role_wise_menu rwm ON rwm.role_id = ur.role_id
-        GROUP BY
-            ur.user_id
-    )          rwm ON rwm.user_id = u.id
-WHERE
-    u.status = 'ACTIVE';
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import lombok.AllArgsConstructor;
+import lombok.Getter;
+import lombok.NoArgsConstructor;
+import lombok.Setter;
 
+import java.util.List;
+
+@Getter
+@Setter
+@NoArgsConstructor
+@AllArgsConstructor
+@JsonIgnoreProperties(ignoreUnknown = true)
+public class CardOptions {
+
+    private List<PayModeEntry> cc;
+
+    private List<PayModeEntry> dc;
+
+    private List<PayModeEntry> pc;
+}
+
+
+package com.yourorg.transaction.dto.admin;
+
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import lombok.AllArgsConstructor;
+import lombok.Getter;
+import lombok.NoArgsConstructor;
+import lombok.Setter;
+
+@Getter
+@Setter
+@NoArgsConstructor
+@AllArgsConstructor
+@JsonIgnoreProperties(ignoreUnknown = true)
+public class PayModeEntry {
+
+    private String bankName;
+
+    private String bankId;
+
+    private String aggregatorGatewayMapId;
+
+    private String payproc;
+
+    private String payproctype;
+
+    private String payModeCode;
+
+    private String cardType;
+
+    private Boolean downtime;
+
+    private Boolean popular;
+}
+
+package com.yourorg.transaction.dto;
+
+import lombok.AllArgsConstructor;
+import lombok.Getter;
+import lombok.NoArgsConstructor;
+import lombok.Setter;
+
+@Getter
+@Setter
+@NoArgsConstructor
+@AllArgsConstructor
+public class PayProcDetails {
+
+    private String gtwMapsId;
+
+    private String payProcId;
+
+    private String payProcType;
+}
+
+@Component
+@RequiredArgsConstructor
+public class BookingDao {
+
+    private final OrderDao orderDao;
+    private final CustomerDao customerDao;
+    private final AdminDao adminDao;
+    private final TokenDao tokenDao;
+    private final MerchantDao merchantDao;
+    private final EPayTokenProvider ePayTokenProvider;
+    private final ObjectMapper objectMapper;
+
+    private final LoggerUtility logger =
+            LoggerFactoryUtility.getLogger(this.getClass());
+
+    public PayModesResponse getMerchantPayModes(String mId) {
+
+        JsonNode rawPayModes = adminDao.getMerchantPayModes(mId);
+
+        try {
+            return objectMapper.treeToValue(rawPayModes, PayModesResponse.class);
+        } catch (JsonProcessingException e) {
+
+            logger.error("Failed to parse payModes response for mId : {}", mId, e);
+
+            throw new TransactionException(
+                    INVALID_ERROR_CODE,
+                    MessageFormat.format(
+                            TransactionErrorConstants.INVALID_ERROR_MESSAGE,
+                            "payModes",
+                            "Unable to parse merchant pay modes response"));
+        }
+    }
+}
+
+8. Changes in PaymentBookingService
+
+Remove this:
+
+private record PayProcDetails(
+        String gtwMapsId,
+        String payProcId,
+        String payProcType) {
+}
+
+Import the DTO instead.
+
+import com.yourorg.transaction.dto.PayProcDetails;
+
+Then update buildPaymentInitiationRequest().
+
+Old:
+
+request.setGtwMapsId(payProcDetails.gtwMapsId());
+request.setPayProcId(payProcDetails.payProcId());
+request.setPayProcType(payProcDetails.payProcType());
+
+New:
+
+request.setGtwMapsId(payProcDetails.getGtwMapsId());
+request.setPayProcId(payProcDetails.getPayProcId());
+request.setPayProcType(payProcDetails.getPayProcType());
+
+Everything else stays exactly the same because all methods already return
+
+return new PayProcDetails(
+        gtwMapsId,
+        payProcId,
+        payProcType);
+
+which also works for a normal DTO since we've added an all-arguments constructor.
+
+Alternative (Recommended for your project)
+
+Since your project already appears to use Lombok builders extensively (for example, PaymentBookingResponse.builder()), you can make PayProcDetails consistent with the rest of the codebase:
+
+@Getter
+@Setter
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
+public class PayProcDetails {
+
+    private String gtwMapsId;
+    private String payProcId;
+    private String payProcType;
+}
+
+Then you can create instances like:
+
+return PayProcDetails.builder()
+        .gtwMapsId(gtwMapsId)
+        .payProcId(payProcId)
+        .payProcType(payProcType)
+        .build();
+
+This style is commonly used in Spring Boot projects and is more consistent with the rest of your codebase.
