@@ -1,4 +1,111 @@
-https://teams.microsoft.com/meet/42824301330131?p=hc4yk20nIi5mVdUxFL
+@Service
+@RequiredArgsConstructor
+public class PaymentBookingService {
+    private final LoggerUtility logger = LoggerFactoryUtility.getLogger(this.getClass());
+    private final OrderService orderService;
+    private final BookingService bookingService;
+    private final PaymentInitiationValidator paymentInitiationValidator;
+    private final PaymentBookingDao paymentBookingDao;
+    private final BookingDao bookingDao;
+    private final CardVerificationDao cardVerificationDao;
+    private final PaymentBookingValidator paymentBookingValidator;
+
+    /**
+     * This will create order and transaction booking
+     *
+     * @param paymentBookingRequest
+     * @return orderHash
+     */
+    public TransactionResponse<PaymentBookingResponse> initiatePaymentBooking(PaymentBookingRequest paymentBookingRequest) {
+        // Validate and create Order request.
+        OrderDto orderDto = orderService.createMerchantOrder(paymentBookingRequest.getOrderDto(), paymentBookingRequest.getMId());
+        logger.info("Created order for mid :{}", orderDto.getMId());
+
+        paymentBookingValidator.validateMerchantHostedRequest(paymentBookingRequest);
+
+        //Book Transaction
+        bookingService.initiateOrderBooking(paymentBookingRequest.getOrderDto(), TransactionTokenType.PAYMENT);
+        logger.info("Book transaction done for mid: {}", orderDto.getMId());
+
+        buildPaymentInitiationRequest(paymentBookingRequest);
+
+        // Validate payment Initiation
+        paymentInitiationValidator.validatePaymentRequest(paymentBookingRequest.getPaymentInitiationRequest(), orderDto, paymentBookingRequest.getPayMode());
+        logger.info("Payment initiation request validated successfully.");
+
+        //Save Order, payment request in DB.
+        paymentBookingDao.savePaymentBookingDetails(orderDto, paymentBookingRequest.getPaymentInitiationRequest(), paymentBookingRequest.getPayMode());
+        PaymentBookingResponse paymentBookingResponse = buildPaymentBookingResponse(orderDto);
+        return TransactionResponse.<PaymentBookingResponse>builder().status(TransactionConstant.RESPONSE_SUCCESS).data(List.of(paymentBookingResponse)).build();
+
+    }
+
+    private void buildPaymentInitiationRequest(PaymentBookingRequest paymentBookingRequest) {
+        PaymentInitiationRequest paymentInitiationRequest = paymentBookingRequest.getPaymentInitiationRequest();
+        String payProcType = buildPayprocType(paymentInitiationRequest, paymentBookingRequest.getPayMode(), paymentBookingRequest.getMId());
+        paymentInitiationRequest.setPayProcType(payProcType);
+    }
+
+    private PaymentBookingResponse buildPaymentBookingResponse(OrderDto orderDto) {
+        return PaymentBookingResponse.builder().paymentMode(orderDto.getPayMode()).transactionUrl(orderDto.getTransactionUrl()).orderHash(orderDto.getOrderHash()).orderRefNumber(orderDto.getOrderRefNumber()).sbiOrderRefNumber(orderDto.getSbiOrderRefNumber()).orderRetryCount(orderDto.getOrderRetryCount()).expiry(orderDto.getExpiry()).build();
+    }
+
+    private String buildPayprocType(PaymentInitiationRequest paymentInitiationRequest, String payMode, String mId) {
+        switch (payMode) {
+            case UPI, WALLET -> {
+                return "ONUS";
+            }
+            case NB -> {
+                JsonNode merchantPayModes = bookingDao.getMerchantPayModes(mId);
+                paymentInitiationRequest.setOperatingMode(OperatingMode.DOM.name());
+                String payProcType = resolvePayProcType(merchantPayModes, paymentInitiationRequest.getGtwMapsId(), paymentInitiationRequest.getPayProcId());
+                if (StringUtils.isEmpty(payProcType)) {
+                    throw new TransactionException(INVALID_ERROR_CODE, MessageFormat.format(TransactionErrorConstants.INVALID_ERROR_MESSAGE, "payProcType", "Could not resolve payProcType for given gtwMapsId/payProcId"));
+                }
+                if ("SELF".equals(payProcType)) {
+                    return "ONUS";
+                }
+                return "OFFUS";
+            }
+            case CC, DC, PC -> {
+                BinCheckRequest binCheckRequest = BinCheckRequest.builder().cardBin(StringUtils.left(paymentInitiationRequest.getAltNumber(), CARD_BIN_LENGTH)).build();
+                BinCheckResponse binResponse = cardVerificationDao.validateBin(binCheckRequest);
+                if (binResponse.getBinIssuerId().equals("State Bank of India New PG")) {
+                    return "ONUS";
+                }
+                return "OFFUS";
+            }
+        }
+
+    }
+
+    private String resolvePayProcType(JsonNode node, String gtwMapsId, String payProcId) {
+        if (node.isObject()) {
+            JsonNode gtwNode = node.get("aggregatorGatewayMapId");
+            JsonNode procNode = node.get("payproc");
+            if (gtwNode != null && !gtwNode.isNull() && procNode != null && !procNode.isNull() && gtwMapsId.equals(gtwNode.asText()) && payProcId.equalsIgnoreCase(procNode.asText())) {
+                JsonNode typeNode = node.get("payproctype");
+                return (typeNode != null && !typeNode.isNull()) ? typeNode.asText() : null;
+            }
+            Iterator<String> fieldNames = node.fieldNames();
+            while (fieldNames.hasNext()) {
+                String result = resolvePayProcType(node.get(fieldNames.next()), gtwMapsId, payProcId);
+                if (result != null) {
+                    return result;
+                }
+            }
+        } else if (node.isArray()) {
+            for (JsonNode element : node) {
+                String result = resolvePayProcType(element, gtwMapsId, payProcId);
+                if (result != null) {
+                    return result;
+                }
+            }
+        }
+        return null;
+    }
+}
+----------------------------------------------
 
 
 
