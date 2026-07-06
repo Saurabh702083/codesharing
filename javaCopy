@@ -741,3 +741,160 @@ public class MerchantDownTimeDetails {
     }
   }
 }
+
+---------------------------
+API Request and Response 
+
+Transaction Booking API 
+
+Request Body 
+
+Pay Mode – Card 
+
+{ 
+
+  "payMode": "DC",  
+
+  "orderDto": { 
+
+        "orderAmount": 2, 
+
+        "currencyCode": "INR", 
+
+        "orderRefNumber": "{{orderRefNumber}}", 
+
+        "returnUrl": https: //dev.epay.sbi, 
+
+        "expiry": 30, 
+
+        "customerId": null, 
+
+    }, 
+
+    "paymentInitiationRequest": { 
+
+        "altNumber": "4335888766690063", 
+
+        “expiryMonth”:  “11”, 
+
+        “expiryYear”: “2029”, 
+
+        “cvv”: “017”, 
+
+        “cardHolderName”: “test” 
+
+    }, 
+
+    "gstInVerificationRequest": {} 
+
+} 
+
+ 
+
+ 
+
+PayMode – UPI - QR 
+
+{ 
+
+  "payMode": "UPI",  
+
+  "orderDto": { 
+
+        "orderAmount": 2, 
+
+        "currencyCode": "INR", 
+
+        "orderRefNumber": "{{orderRefNumber}}", 
+
+        "returnUrl": https: //dev.epay.sbi, 
+
+        "expiry": 30, 
+
+        "customerId": null, 
+
+    }, 
+
+    "paymentInitiationRequest": { 
+
+"payProcId": "BHIMQR", 
+
+  	"channelBank": "SBIePay Test Bank"  
+
+    }, 
+
+    "gstInVerificationRequest": {}, 
+
+} 
+
+ 
+
+PayMode – UPI - VPA 
+
+{ 
+
+  "payMode": "UPI",  
+
+  "orderDto": { 
+
+        "orderAmount": 2, 
+
+        "currencyCode": "INR", 
+
+        "orderRefNumber": "{{orderRefNumber}}", 
+
+        "returnUrl": https: //dev.epay.sbi, 
+
+        "expiry": 30, 
+
+        "customerId": null, 
+
+    }, 
+
+    "paymentInitiationRequest": { 
+
+"payProcId": "SELF", 
+
+"upiAddress": "johndoe@okhdfcbank", 
+
+  	"channelBank": " State Bank of India "  
+
+    }, 
+
+    "gstInVerificationRequest": {}, 
+
+} 
+
+PayMode - NB 
+
+{ 
+
+    "payMode": "NB", 
+
+    "orderDto": { 
+
+        "orderAmount": 2, 
+
+        "currencyCode": "INR", 
+
+        "orderRefNumber": "{{orderRefNumber}}", 
+
+        "returnUrl": https: //dev.epay.sbi, 
+
+        "expiry": 30, 
+
+        "customerId": null, 
+
+    }, 
+
+    "paymentInitiationRequest": { 
+
+        "gtwMapsId": "105", 
+
+        "channelBank": "HDFC Retail Bank", 
+
+    }, 
+
+    "gstInVerificationRequest": {},  
+
+} 
