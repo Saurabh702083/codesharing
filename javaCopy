@@ -1,419 +1,743 @@
-@PreAuthorize("hasAnyRole('ONBOARDING_MANAGER')")
-    @PostMapping("/{masterType}")
-    public AdminPortalResponse<WorkflowResponse> createMaster(@PathVariable String masterType, @Valid @RequestBody Object dto) {
-        log.info("Received create master request for masterType={}", masterType);
-        return wfService.submitCreate(masterType, dto);
+Merchant service
+
+public MerchantResponse<MerchantDownTimeResponse> getMerchantDowntimeApis(String mId) {
+        mIdValidator.validateMidWithConsent(mId);
+        List<MerchantDownTimeResponse> downtimeApiDetails = downtimeApiDao.getMerchantDowntimeAPIs(mId);
+        log.info("Started fetching downtime api details for a merchant with mId");
+        return MerchantResponse.<MerchantDownTimeResponse>builder().status(RESPONSE_SUCCESS).data(downtimeApiDetails).total((long) downtimeApiDetails.size()).build();
     }
 
-@Service
+@Component
+@AllArgsConstructor
+public class DowntimeApiDao {
+
+    private final AdminServicesClient adminServicesClient;
+
+    /**
+     * Fetches records of all downtime APIs from the Admin Services Client.
+     *
+     * @return List of AdminDowntimePayModeInfo objects containing details of all downtime APIs.
+     */
+    public List<AdminDowntimePayModeInfo> getDowntimeAPIs() {
+        return adminServicesClient.getDowntimeAPIs();
+    }
+
+    /**
+     * Fetches downtime API details for a specific merchant from the Admin Services Client.
+     *
+     * @param mId String The merchant ID for which downtime API details are to be fetched.
+     * @return List of MerchantDownTimeResponse objects containing downtime API details for the specified merchant.
+     */
+    public List<MerchantDownTimeResponse> getMerchantDowntimeAPIs(String mId) {
+        return adminServicesClient.getMerchantDowntimeAPIs(mId);
+    }
+}
+
+
+public class AdminServicesClient extends ApiClient {
+
+    public static final String DOWNTIME_API_ENDPOINT = "/payMode/downtime";
+    public static final String MERCHANT_PAYMODE_API = "/merchant/payMode/";
+    public static final String BANK_ACCOUNT_VALIDATION = "/bank/validate";
+    public static final String BANK_ENDPOINT = "/bank";
+    public static final String BRANCH_DETAILS_ENDPOINT = "/bank/branch/";
+    public static final String MERCHANT_GET_ALL_API_ENDPOINT = "/merchant/all/%s";
+
+    public static final String DATA = "data";
+    public static final String PAY_MODES = "payModes";
+    public static final String PREFERRED_OPTIONS = "preferredOptions";
+    public static final String PAYMENT_OPTIONS = "otherPaymentOptions";
+    public static final String INB = "INB";
+    public static final String UPI = "UPI";
+    public static final String UPI_KEY_BHIMQR = "BHIMQR";
+    public static final String UPI_KEY_SELF = "self";
+
+    private final ObjectMapper mapper = new ObjectMapper();
+
+    public AdminServicesClient(String baseUrl, String corsOrigin, boolean localProfile) {
+        super(baseUrl, corsOrigin, localProfile);
+    }
+  public List<MerchantDownTimeResponse> getMerchantDowntimeAPIs(String mId) {
+        Set<String> paymentGateWayId = getMerchantDowntimeAPIs();
+        URI uri = URI.create(getBaseUrl() + MERCHANT_PAYMODE_API + mId);
+        JsonNode responseNode = getWebClient().post().uri(uri).headers(httpHeaders -> httpHeaders.addAll(prepareHttpHeaders())).retrieve().onStatus(httpStatusCode -> httpStatusCode.is4xxClientError() || httpStatusCode.is5xxServerError(), clientResponse -> Mono.error(new MerchantException(ErrorConstants.INVALID_ERROR_CODE, ErrorConstants.INVALID_ERROR_CODE))).bodyToMono(JsonNode.class).block();
+        HashMap<String, MerchantDownTimeResponse> merchantDownTimeResponses = new HashMap<>();
+        if (responseNode != null && responseNode.path(DATA) != null && !responseNode.path(DATA).isEmpty() && responseNode.path(DATA).get(0).path(PAY_MODES) != null) {
+            JsonNode payModes = responseNode.path(DATA).get(0).path(PAY_MODES);
+            setUpDownTimeForPayModes(payModes, PREFERRED_OPTIONS, merchantDownTimeResponses, paymentGateWayId);
+            setUpDownTimeForPayModes(payModes, PAYMENT_OPTIONS, merchantDownTimeResponses, paymentGateWayId);
+        }
+        return merchantDownTimeResponses.keySet().stream().map(merchantDownTimeResponses::get).collect(Collectors.toList());
+    }
+
+    public List<String> validateBankDetails(String bankName, String branchName, String ifscCode) {
+        AdminBankVerification adminBankVerification = AdminBankVerification.builder().bankName(bankName).branchName(branchName).ifscCode(ifscCode).build();
+        return postList(BANK_ACCOUNT_VALIDATION, adminBankVerification, new ParameterizedTypeReference<>() {});
+    }
+-------------
 @Data
-@RequiredArgsConstructor
-public class AdminMasterService {
-
-    private final MasterWorkflowDao masterWorkflowDao;
-    private final MasterHandlerFactory handlerFactory;
-    private final MasterBulkUploadService masterBulkUploadService;
-    private final ObjectMapper objectMapper;
-    private final LoggerUtility log = LoggerFactoryUtility.getLogger(this.getClass());
-
-    public AdminPortalResponse<WorkflowResponse> submitCreate(String masterType, Object dto) {
-        MasterType master = MasterType.getMasterType(masterType);
-        log.info("Submitting create workflow for masterType={}", master);
-        MasterHandler<?, ?> handler = handlerFactory.getHandler(master);
-        MasterWorkflow wf = buildWorkflow(handler, dto, null);
-        masterWorkflowDao.save(wf);
-        log.info("Create workflow submitted successfully for masterType={} with workflowId={}", master, wf.getId());
-        return AdminPortalResponse.<WorkflowResponse>builder().status(SUCCESS_RESPONSE_CODE).data(List.of(WorkflowResponse.builder().message("Request submitted").status("PENDING").workflowId(wf.getId()).build())).build();
-    }
-    private <T> MasterWorkflow buildWorkflow(MasterHandler<T, ?> handler, Object request, UUID id) {
-        T dto = convertRequest(handler, request);
-        if(id == null){
-            handler.validateCreate(dto);
-        }else{
-            handler.validateUpdate(dto);}
-        return handler.toWorkflow(dto, id);
-    }
+@Builder
+@JsonInclude(JsonInclude.Include.NON_NULL)
+public class MerchantDownTimeResponse {
+    private String payMode;
+    private String subPayMode;
+    private List<MerchantDownTimeDetails> downTimeDetails;
+    private int downtimeCount;
 }
 
-@Component
-public class MasterHandlerFactory {
-    private final LoggerUtility log = LoggerFactoryUtility.getLogger(this.getClass());
-    private final Map<MasterType, MasterHandler<?, ?>> handlerMap = new EnumMap<>(MasterType.class);
+-----------------
+@Data
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
+@JsonInclude(JsonInclude.Include.NON_NULL)
+public class MerchantDownTimeDetails {
 
-    @Autowired
-    public MasterHandlerFactory(List<MasterHandler<?, ?>> handlers) {
-        handlers.forEach(handler -> {
-             if (handler instanceof ConstitutionHandler) {
-                handlerMap.put(MasterType.CONSTITUTION, handler);
-                log.info("Registered handler={} for masterType={}", handler.getClass().getSimpleName(), MasterType.CONSTITUTION);
-            }
-        });
-    }
-
- 
-    public MasterHandler<?, ?> getHandler(MasterType masterType) {
-        MasterHandler<?, ?> handler = handlerMap.get(masterType);
-        if (handler == null) {
-            log.warn("No handler registered for masterType={}", masterType);
-            throw new AdminPortalException(NOT_FOUND_ERROR_CODE, MessageFormat.format(NOT_FOUND_ERROR_MESSAGE, "Handler for master type " + masterType));
-        }
-        return handler;
-    }
-}
-
-import com.epay.admin.portal.master.entity.MasterWorkflow;
-import com.epay.admin.portal.model.response.AdminPortalResponse;
-import com.fasterxml.jackson.databind.ObjectMapper;
-
-import java.util.Map;
-import java.util.UUID;
-
-
-public interface MasterHandler <T, E>{
-
-    void validateCreate(T dto);
-
-    void validateUpdate(T dto);
-
-    MasterWorkflow toWorkflow(T dto, UUID existingId);
-
-    void applyApproved(MasterWorkflow wf);
-
-    AdminPortalResponse<?> search(Object request);
-
-    Class<T> getDtoClass();
-    default T fromBulkRecord(Map<String, String> record, ObjectMapper objectMapper) {
-        return objectMapper.convertValue(record, getDtoClass());
-    }
+    private String code;
+    private String name;
+    private String paymentGateWayId;
+    private boolean isPayModeDown;
 
 }
+----------------------------
 
-@Component
-@RequiredArgsConstructor
-public class ConstitutionHandler implements MasterHandler<ConstitutionDTO, Constitution> {
-
-    private final ConstitutionDao constitutionDao;
-    private final MasterWorkflowDao masterWorkflowDao;
-    private final ObjectMapper mapper;
-    private final ConstitutionMapper constitutionMapper;
-    private final ValidateMasterType validateMasterType;
-    private final LoggerUtility log = LoggerFactoryUtility.getLogger(this.getClass());
-
-    @Override
-    public void validateCreate(ConstitutionDTO dto) {
-        log.info("Validating constitution create request for constitutionName={}", dto.getConstitutionName());
-        validateMasterType.validateRequest(dto);
-        if (StringUtils.isBlank(dto.getConstitutionName())) {
-            throw new AdminPortalException("1001", "Constitution name is required");
+{
+  "orderInfo": {
+    "customerId": null,
+    "currencyCode": "INR",
+    "orderAmount": 2,
+    "orderRefNumber": "APlL1",
+    "sbiOrderRefNumber": "5A9583DD75CB47B5B846",
+    "status": "ATTEMPTED",
+    "otherDetails": null,
+    "expiry": 1783346107295,
+    "multiAccounts": null,
+    "payMode": null,
+    "orderHash": "8YpjdzLwTL6o1VYhLPp4ZO25VPXhG789Arzm1GKACL6MJPbCMYPYXjBJu7nruRQ75gdB5jFVV3ocxH7Zk0og",
+    "returnUrl": "https://sbiepay.sbi.bank.in/demo/transaction-status",
+    "transactionUrl": null,
+    "orderRetryCount": 1,
+    "thirdPartyDetails": null,
+    "pushResponse": "P",
+    "mId": "1003406"
+  },
+  "customerInfo": null,
+  "merchantInfo": {
+    "isActive": "Y",
+    "merchantName": "SBIePay",
+    "countryCode": "IN",
+    "currency": "INR",
+    "preferredPayMode": "UPI",
+    "preferredBank": "State Bank of India",
+    "accessTokenExpiryTime": 30,
+    "transactionTokenExpiryTime": 20,
+    "maxAtrnCount": 1,
+    "orderExpiryTime": 30,
+    "merchantVolVelFlag": "Y",
+    "merchantMultiAccountFlag": "N",
+    "numberOfAttemptsApplicable": "Y",
+    "numberOfAttempts": "1",
+    "isRefundApplicable": "Y",
+    "refundWindowDays": 170,
+    "merchantBusinessUrl": "https://epay.sbi.bank.in,https://sbiepay.sbi.bank.in",
+    "dvpType": "DVP",
+    "refundAdjustment": "Y",
+    "mId": "1003406"
+  },
+  "theme": {
+    "logo": "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",
+    "defaultTheme": true
+  },
+  "transactionStatus": "attempted",
+  "transactionBookingTime": 1783344307620,
+  "paymodes": {
+    "preferredOptions": {
+      "upi": {
+        "apps": [],
+        "vpa": false,
+        "drawerIntent": false,
+        "self": null,
+        "BHIMQR": null
+      },
+      "cards": {
+        "cc": [],
+        "dc": [],
+        "pc": []
+      },
+      "wallet": [
+        {
+          "bankName": null,
+          "payModeCode": "UPI",
+          "bankId": null,
+          "aggregatorGatewayMapId": null,
+          "payproc": null,
+          "payproctype": null,
+          "downtime": null,
+          "popular": null
         }
-        if (constitutionDao.existsByConstitutionName(dto.getConstitutionName()))
-            throw new AdminPortalException("1001","Constitution name already exists");
-    }
-
- 
-    @Override
-    public void validateUpdate(ConstitutionDTO dto) {
-        log.info("Validating constitution update request for constitutionName={}", dto.getConstitutionName());
-        validateMasterType.validateRequest(dto);
-        if(!constitutionDao.existsByConstitutionName(dto.getConstitutionName())){
-            throw new AdminPortalException("1001","Constitution name does not exists");
+      ],
+      "inb": [
+        {
+          "bankName": "State Bank of India",
+          "bankId": null,
+          "aggregatorGatewayMapId": null,
+          "payproc": null,
+          "payproctype": null,
+          "cardType": null,
+          "downtime": null,
+          "popular": null
         }
-    }
-
-  
-    @Override
-    public MasterWorkflow toWorkflow(ConstitutionDTO dto, UUID id) {
-        log.info("Creating constitution workflow for constitutionName={} and recordId={}", dto.getConstitutionName(), id);
-        Constitution entity = constitutionMapper.toEntity(dto);
-        entity.setConstitutionCode(MasterUtil.generateMasterCode(dto.getConstitutionName(), MasterType.CONSTITUTION));
-        entity.setStatus(StringUtils.defaultIfBlank(dto.getStatus(), "ACTIVE"));
-        entity.setCreatedAt(System.currentTimeMillis());
-        entity.setCreatedBy(EPayIdentityUtil.getUserPrincipal().getUsername());
-        String newVal = writeValueAsString(entity, "constitution create payload");
-        String oldVal = null;
-        if (id != null) {
-            Constitution old = constitutionDao.findById(id)
-                    .orElseThrow(() -> new AdminPortalException(NOT_FOUND_ERROR_CODE, MessageFormat.format(NOT_FOUND_ERROR_MESSAGE, "Constitution")));
-            oldVal = writeValueAsString(old, "constitution existing payload");
+      ]
+    },
+    "otherPaymentOptions": {
+      "upi": {
+        "apps": [
+          "PhonePe",
+          "GPay",
+          "AmazonPay"
+        ],
+        "vpa": true,
+        "drawerIntent": true,
+        "self": {
+          "bankName": "State Bank of India",
+          "aggregatorGatewayMapId": "106",
+          "payproc": "SELF",
+          "payproctype": "SELF",
+          "downtime": false
+        },
+        "BHIMQR": {
+          "bankName": "State Bank of India",
+          "aggregatorGatewayMapId": "123",
+          "payproc": "BHIMQR",
+          "payproctype": "BHIMQR",
+          "downtime": false
         }
-        return MasterWorkflow.builder().masterType(MasterType.CONSTITUTION).recordId(id).newValue(newVal).oldValue(oldVal).status(WorkflowStatus.PENDING).actionType("CREATE").makerId(EPayIdentityUtil.getUserPrincipal().getUsername()).build();
-    }
-
- 
-    @Override
-    public void applyApproved(MasterWorkflow workflow) {
-        log.info("Applying approved constitution workflow for workflowId={}", workflow.getId());
-        Constitution data = readWorkflowValue(workflow.getNewValue(), workflow.getId());
-        if (workflow.getRecordId() != null) {
-            data.setId(workflow.getRecordId());
+      },
+      "cards": {
+        "cc": [
+          {
+            "bankName": "State Bank of India WIBMO PG",
+            "aggregatorGatewayMapId": "132",
+            "payproc": "MASTER",
+            "payproctype": "MASTER",
+            "downtime": false
+          },
+          {
+            "bankName": "State Bank of India WIBMO PG",
+            "aggregatorGatewayMapId": "133",
+            "payproc": "RUPAY",
+            "payproctype": "RUPAY",
+            "downtime": false
+          },
+          {
+            "bankName": "State Bank of India WIBMO PG",
+            "aggregatorGatewayMapId": "134",
+            "payproc": "VISA",
+            "payproctype": "VISA",
+            "downtime": false
+          }
+        ],
+        "dc": [
+          {
+            "bankName": "State Bank of India WIBMO PG",
+            "aggregatorGatewayMapId": "135",
+            "payproc": "MASTER",
+            "payproctype": "MASTER",
+            "downtime": false
+          },
+          {
+            "bankName": "State Bank of India WIBMO PG",
+            "aggregatorGatewayMapId": "136",
+            "payproc": "RUPAY",
+            "payproctype": "RUPAY",
+            "downtime": false
+          },
+          {
+            "bankName": "State Bank of India WIBMO PG",
+            "aggregatorGatewayMapId": "137",
+            "payproc": "VISA",
+            "payproctype": "VISA",
+            "downtime": false
+          }
+        ],
+        "pc": [
+          {
+            "bankName": "State Bank of India WIBMO PG",
+            "aggregatorGatewayMapId": "138",
+            "payproc": "MASTER",
+            "payproctype": "MASTER",
+            "downtime": false
+          },
+          {
+            "bankName": "State Bank of India WIBMO PG",
+            "aggregatorGatewayMapId": "139",
+            "payproc": "RUPAY",
+            "payproctype": "RUPAY",
+            "downtime": false
+          },
+          {
+            "bankName": "State Bank of India WIBMO PG",
+            "aggregatorGatewayMapId": "140",
+            "payproc": "VISA",
+            "payproctype": "VISA",
+            "downtime": false
+          }
+        ]
+      },
+      "wallet": [
+        {
+          "bankName": "MobiKwik",
+          "payModeCode": "WALLET",
+          "bankId": "95",
+          "aggregatorGatewayMapId": "145",
+          "payproc": "MOBIKWIK",
+          "payproctype": "MOBIKWIK",
+          "downtime": false,
+          "popular": false
         }
-        constitutionDao.save(data);
-        workflow.setStatus(WorkflowStatus.APPROVED);
-    }
-
-in MasterBulkUploadService in bulkUpload service when file is uploaded and then we do validation and othere things. if you will identify then we will know then we are saving details multiples times in DB and that can make process slow .
-so can we make some part like async , like when we upload the file MasterFileUploadDtls table for succes record , id suposse we have lots of record then it make take lots of time to process . so that why can we make this process async and we can also try to upload success record in DB ib bulk is possible ,
-Try to optimize the code as possible without braking  our any main functionally
-
-
-
------------------------------------------
-
-package com.epay.admin.portal.master.handler;
-
-import com.epay.admin.portal.exceptions.AdminPortalException;
-import com.epay.admin.portal.master.dto.ConstitutionDTO;
-import com.epay.admin.portal.master.entity.Constitution;
-import com.epay.admin.portal.master.entity.MasterWorkflow;
-import com.epay.admin.portal.master.model.ConstitutionResponse;
-import com.epay.admin.portal.master.model.ConstitutionSearchRequest;
-import com.epay.admin.portal.master.repositories.ConstitutionRepository;
-import com.epay.admin.portal.master.repositories.CountryCurrencyRepository;
-import com.epay.admin.portal.master.repositories.MasterWorkflowRepository;
-import com.epay.admin.portal.master.specification.ConstitutionSpecification;
-import com.epay.admin.portal.master.util.ENUM.MasterType;
-import com.epay.admin.portal.master.util.ENUM.WorkflowStatus;
-import com.epay.admin.portal.master.util.MasterUtil;
-import com.epay.admin.portal.model.response.AdminPortalResponse;
-import com.epay.admin.portal.util.EPayIdentityUtil;
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import lombok.RequiredArgsConstructor;
-import org.apache.commons.lang3.StringUtils;
-import org.springframework.beans.BeanWrapperImpl;
-import org.springframework.data.domain.Pageable;
-import org.springframework.data.jpa.domain.Specification;
-import org.springframework.stereotype.Component;
-
-
-import java.util.Collections;
-import java.util.Comparator;
-import java.util.List;
-import java.util.Locale;
-import java.util.UUID;
-import java.util.stream.Stream;
-
-import static com.epay.admin.portal.util.AdminPortalConstants.SUCCESS_RESPONSE_CODE;
-
-@Component
-@RequiredArgsConstructor
-public class ConstitutionHandler implements MasterHandler<ConstitutionDTO, Constitution> {
-
-    private final ConstitutionRepository repo;
-    private final CountryCurrencyRepository countryRepo;
-    private final MasterWorkflowRepository masterWorkflowRepository;
-    private final ObjectMapper mapper;
-
-    @Override
-    public void validateCreate(ConstitutionDTO dto) {
-        if (!repo.existsByConstitutionName(dto.getConstitution_name()))
-            throw new AdminPortalException("1001","Constitution code exists");
-    }
-    @Override
-    public void validateUpdate(ConstitutionDTO dto) {
-        // similar checks as needed
-    }
-    @Override
-    public MasterWorkflow toWorkflow(ConstitutionDTO dto, UUID id) throws JsonProcessingException {
-        Constitution entity = new Constitution();
-        entity.setConstitutionName(dto.getConstitution_name());
-        entity.setConstitutionCode(MasterUtil.generateMasterCode(dto.getConstitution_name(), MasterType.CONSTITUTION));
-        entity.setCreatedAt(System.currentTimeMillis());
-        entity.setCreatedBy(EPayIdentityUtil.getUserPrincipal().getUsername());
-        String newVal = mapper.writeValueAsString(entity);
-        String oldVal = null;
-        if (id != null) {
-            Constitution old = repo.findById(id).orElseThrow();
-            oldVal =  mapper.writeValueAsString(old);
+      ],
+      "inb": [
+        {
+          "bankName": "Bandhan Bank - Retail",
+          "bankId": "96",
+          "aggregatorGatewayMapId": "149",
+          "payproc": "SELF",
+          "payproctype": "SELF",
+          "cardType": null,
+          "downtime": false,
+          "popular": false
+        },
+        {
+          "bankName": "Indian Bank - Retail",
+          "bankId": "14",
+          "aggregatorGatewayMapId": "21",
+          "payproc": "SELF",
+          "payproctype": "SELF",
+          "cardType": null,
+          "downtime": false,
+          "popular": false
+        },
+        {
+          "bankName": "Jammu and Kashmir Bank - Retail",
+          "bankId": "17",
+          "aggregatorGatewayMapId": "47",
+          "payproc": "SELF",
+          "payproctype": "SELF",
+          "cardType": null,
+          "downtime": false,
+          "popular": false
+        },
+        {
+          "bankName": "IDBI Bank-Retail",
+          "bankId": "18",
+          "aggregatorGatewayMapId": "22",
+          "payproc": "SELF",
+          "payproctype": "SELF",
+          "cardType": null,
+          "downtime": false,
+          "popular": false
+        },
+        {
+          "bankName": "Bank of Maharashtra - Retail and Corporate",
+          "bankId": "19",
+          "aggregatorGatewayMapId": "24",
+          "payproc": "SELF",
+          "payproctype": "SELF",
+          "cardType": null,
+          "downtime": false,
+          "popular": false
+        },
+        {
+          "bankName": "South Indian Bank - Retail",
+          "bankId": "21",
+          "aggregatorGatewayMapId": "26",
+          "payproc": "SELF",
+          "payproctype": "SELF",
+          "cardType": null,
+          "downtime": false,
+          "popular": false
+        },
+        {
+          "bankName": "Karnataka Bank Ltd - Retail and Corporate",
+          "bankId": "26",
+          "aggregatorGatewayMapId": "31",
+          "payproc": "SELF",
+          "payproctype": "SELF",
+          "cardType": null,
+          "downtime": false,
+          "popular": false
+        },
+        {
+          "bankName": "Canara Bank - Retail and Corporate",
+          "bankId": "30",
+          "aggregatorGatewayMapId": "35",
+          "payproc": "SELF",
+          "payproctype": "SELF",
+          "cardType": null,
+          "downtime": false,
+          "popular": false
+        },
+        {
+          "bankName": "IndusInd Bank - Retail",
+          "bankId": "35",
+          "aggregatorGatewayMapId": "46",
+          "payproc": "SELF",
+          "payproctype": "SELF",
+          "cardType": null,
+          "downtime": false,
+          "popular": false
+        },
+        {
+          "bankName": "Tamilnad Mercantile Bank Ltd - Retail",
+          "bankId": "36",
+          "aggregatorGatewayMapId": "48",
+          "payproc": "SELF",
+          "payproctype": "SELF",
+          "cardType": null,
+          "downtime": false,
+          "popular": false
+        },
+        {
+          "bankName": "DCB Bank - Retail",
+          "bankId": "38",
+          "aggregatorGatewayMapId": "51",
+          "payproc": "SELF",
+          "payproctype": "SELF",
+          "cardType": null,
+          "downtime": false,
+          "popular": false
+        },
+        {
+          "bankName": "State Bank of India",
+          "bankId": "4",
+          "aggregatorGatewayMapId": "4",
+          "payproc": "SELF",
+          "payproctype": "SELF",
+          "cardType": null,
+          "downtime": false,
+          "popular": true
+        },
+        {
+          "bankName": "Dhanlaxmi Bank-Retail",
+          "bankId": "40",
+          "aggregatorGatewayMapId": "55",
+          "payproc": "SELF",
+          "payproctype": "SELF",
+          "cardType": null,
+          "downtime": false,
+          "popular": false
+        },
+        {
+          "bankName": "Kotak Mahindra Bank - Retail",
+          "bankId": "41",
+          "aggregatorGatewayMapId": "54",
+          "payproc": "SELF",
+          "payproctype": "SELF",
+          "cardType": null,
+          "downtime": false,
+          "popular": false
+        },
+        {
+          "bankName": "Punjab and Sind Bank - Retail and Corporate",
+          "bankId": "45",
+          "aggregatorGatewayMapId": "58",
+          "payproc": "SELF",
+          "payproctype": "SELF",
+          "cardType": null,
+          "downtime": false,
+          "popular": false
+        },
+        {
+          "bankName": "UCO Bank - Retail and Corporate",
+          "bankId": "46",
+          "aggregatorGatewayMapId": "59",
+          "payproc": "SELF",
+          "payproctype": "SELF",
+          "cardType": null,
+          "downtime": false,
+          "popular": false
+        },
+        {
+          "bankName": "Bank of India - Retail and Corporate",
+          "bankId": "47",
+          "aggregatorGatewayMapId": "60",
+          "payproc": "SELF",
+          "payproctype": "SELF",
+          "cardType": null,
+          "downtime": false,
+          "popular": false
+        },
+        {
+          "bankName": "IDBI Bank-Corporate",
+          "bankId": "49",
+          "aggregatorGatewayMapId": "62",
+          "payproc": "SELF",
+          "payproctype": "SELF",
+          "cardType": null,
+          "downtime": false,
+          "popular": false
+        },
+        {
+          "bankName": "Dhanlaxmi Bank-Corporate",
+          "bankId": "51",
+          "aggregatorGatewayMapId": "63",
+          "payproc": "SELF",
+          "payproctype": "SELF",
+          "cardType": null,
+          "downtime": false,
+          "popular": false
+        },
+        {
+          "bankName": "YES Bank - Retail",
+          "bankId": "56",
+          "aggregatorGatewayMapId": "69",
+          "payproc": "SELF",
+          "payproctype": "SELF",
+          "cardType": null,
+          "downtime": false,
+          "popular": false
+        },
+        {
+          "bankName": "SVC Co-operative Bank Ltd - Retail",
+          "bankId": "58",
+          "aggregatorGatewayMapId": "70",
+          "payproc": "SELF",
+          "payproctype": "SELF",
+          "cardType": null,
+          "downtime": false,
+          "popular": false
+        },
+        {
+          "bankName": "Mehsana Urban Co. Op. Bank Ltd - Retail",
+          "bankId": "66",
+          "aggregatorGatewayMapId": "83",
+          "payproc": "SELF",
+          "payproctype": "SELF",
+          "cardType": null,
+          "downtime": false,
+          "popular": false
+        },
+        {
+          "bankName": "Mehsana Urban Co. Op. Bank Ltd - Corporate",
+          "bankId": "67",
+          "aggregatorGatewayMapId": "82",
+          "payproc": "SELF",
+          "payproctype": "SELF",
+          "cardType": null,
+          "downtime": false,
+          "popular": false
+        },
+        {
+          "bankName": "Union Bank of India - Retail",
+          "bankId": "68",
+          "aggregatorGatewayMapId": "85",
+          "payproc": "SELF",
+          "payproctype": "SELF",
+          "cardType": null,
+          "downtime": false,
+          "popular": false
+        },
+        {
+          "bankName": "Union Bank of India - Corporate",
+          "bankId": "69",
+          "aggregatorGatewayMapId": "86",
+          "payproc": "SELF",
+          "payproctype": "SELF",
+          "cardType": null,
+          "downtime": false,
+          "popular": false
+        },
+        {
+          "bankName": "Central Bank of India - Retail and Corporate",
+          "bankId": "71",
+          "aggregatorGatewayMapId": "90",
+          "payproc": "SELF",
+          "payproctype": "SELF",
+          "cardType": null,
+          "downtime": false,
+          "popular": false
+        },
+        {
+          "bankName": "ICICI Bank - Retail",
+          "bankId": "73",
+          "aggregatorGatewayMapId": "104",
+          "payproc": "SELF",
+          "payproctype": "SELF",
+          "cardType": null,
+          "downtime": false,
+          "popular": false
+        },
+        {
+          "bankName": "HDFC Bank - Corporate",
+          "bankId": "74",
+          "aggregatorGatewayMapId": "105",
+          "payproc": "SELF",
+          "payproctype": "SELF",
+          "cardType": null,
+          "downtime": false,
+          "popular": false
+        },
+        {
+          "bankName": "Punjab National Bank - Retail and Corporate",
+          "bankId": "75",
+          "aggregatorGatewayMapId": "107",
+          "payproc": "SELF",
+          "payproctype": "SELF",
+          "cardType": null,
+          "downtime": false,
+          "popular": false
+        },
+        {
+          "bankName": "Bank of Baroda - Retail and Corporate",
+          "bankId": "76",
+          "aggregatorGatewayMapId": "108",
+          "payproc": "SELF",
+          "payproctype": "SELF",
+          "cardType": null,
+          "downtime": false,
+          "popular": false
+        },
+        {
+          "bankName": "ICICI Bank - Corporate",
+          "bankId": "78",
+          "aggregatorGatewayMapId": "115",
+          "payproc": "SELF",
+          "payproctype": "SELF",
+          "cardType": null,
+          "downtime": false,
+          "popular": false
+        },
+        {
+          "bankName": "Cosmos Bank - Retail and Corporate",
+          "bankId": "83",
+          "aggregatorGatewayMapId": "120",
+          "payproc": "SELF",
+          "payproctype": "SELF",
+          "cardType": null,
+          "downtime": false,
+          "popular": false
+        },
+        {
+          "bankName": "Indian Overseas Bank - Retail And Corporate",
+          "bankId": "86",
+          "aggregatorGatewayMapId": "125",
+          "payproc": "SELF",
+          "payproctype": "SELF",
+          "cardType": null,
+          "downtime": false,
+          "popular": false
+        },
+        {
+          "bankName": "RBL - Retail",
+          "bankId": "87",
+          "aggregatorGatewayMapId": "127",
+          "payproc": "SELF",
+          "payproctype": "SELF",
+          "cardType": null,
+          "downtime": false,
+          "popular": false
+        },
+        {
+          "bankName": "RBL - Corporate",
+          "bankId": "88",
+          "aggregatorGatewayMapId": "126",
+          "payproc": "SELF",
+          "payproctype": "SELF",
+          "cardType": null,
+          "downtime": false,
+          "popular": false
+        },
+        {
+          "bankName": "AU Small Finance Bank - Retail",
+          "bankId": "89",
+          "aggregatorGatewayMapId": "128",
+          "payproc": "SELF",
+          "payproctype": "SELF",
+          "cardType": null,
+          "downtime": false,
+          "popular": false
+        },
+        {
+          "bankName": "Karur Vysya Bank - Retail",
+          "bankId": "9",
+          "aggregatorGatewayMapId": "15",
+          "payproc": "SELF",
+          "payproctype": "SELF",
+          "cardType": null,
+          "downtime": false,
+          "popular": false
+        },
+        {
+          "bankName": "AU Small Finance Bank - Corporate",
+          "bankId": "90",
+          "aggregatorGatewayMapId": "129",
+          "payproc": "SELF",
+          "payproctype": "SELF",
+          "cardType": null,
+          "downtime": false,
+          "popular": false
+        },
+        {
+          "bankName": "Capital Small Finance Bank Ltd - Retail and Corporate",
+          "bankId": "91",
+          "aggregatorGatewayMapId": "130",
+          "payproc": "SELF",
+          "payproctype": "SELF",
+          "cardType": null,
+          "downtime": false,
+          "popular": false
+        },
+        {
+          "bankName": "ESAF Small Finance Bank - Retail",
+          "bankId": "92",
+          "aggregatorGatewayMapId": "131",
+          "payproc": "SELF",
+          "payproctype": "SELF",
+          "cardType": null,
+          "downtime": false,
+          "popular": false
+        },
+        {
+          "bankName": "Kotak Mahindra Bank - Corporate",
+          "bankId": "93",
+          "aggregatorGatewayMapId": "146",
+          "payproc": "SELF",
+          "payproctype": "SELF",
+          "cardType": null,
+          "downtime": false,
+          "popular": false
+        },
+        {
+          "bankName": "Federal Bank",
+          "bankId": "12",
+          "aggregatorGatewayMapId": "18",
+          "payproc": "SELF",
+          "payproctype": "SELF",
+          "cardType": null,
+          "downtime": false,
+          "popular": false
+        },
+        {
+          "bankName": "Saraswat Bank - Retail and Corporate",
+          "bankId": "52",
+          "aggregatorGatewayMapId": "64",
+          "payproc": "SELF",
+          "payproctype": "SELF",
+          "cardType": null,
+          "downtime": false,
+          "popular": false
+        },
+        {
+          "bankName": "Jharkhand Rajya Gramin Bank - Retail",
+          "bankId": "103",
+          "aggregatorGatewayMapId": "160",
+          "payproc": "SELF",
+          "payproctype": "SELF",
+          "cardType": null,
+          "downtime": false,
+          "popular": false
         }
-        MasterWorkflow wf = new MasterWorkflow();
-        wf.setMasterType(MasterType.CONSTITUTION);
-        wf.setRecordId(id);
-        wf.setNewValue(newVal);
-        wf.setOldValue(oldVal);
-        wf.setStatus(WorkflowStatus.PENDING);
-        wf.setActionType("MAKER");
-        wf.setMakerId(EPayIdentityUtil.getUserPrincipal().getUsername());
-        return wf;
+      ]
     }
-
-    @Override
-    public void applyApproved(MasterWorkflow wf) throws JsonProcessingException {
-        Constitution data = mapper.readValue(wf.getNewValue(), Constitution.class);
-        if (wf.getRecordId() != null) {
-            data.setId(wf.getRecordId());
-        }
-        repo.save(data);
-        wf.setStatus(WorkflowStatus.APPROVED);
-    }
-
-    @Override
-    public AdminPortalResponse<?> search(Object request, Pageable pageable) {
-        ConstitutionSearchRequest req = mapper.convertValue(request, ConstitutionSearchRequest.class);
-        Specification<Constitution> spec = ConstitutionSpecification.build(req);
-        List<ConstitutionResponse> constitutionResponseList = Stream.concat(
-                        repo.findAll(spec).stream().map(this::toResponse),
-                        getUnapprovedWorkflowResponses(req).stream()
-                )
-                .toList();
-
-        List<ConstitutionResponse> sortedResponses = sortResponses(constitutionResponseList, pageable);
-        long total = sortedResponses.size();
-        int start = Math.toIntExact(pageable.getOffset());
-        int end = Math.min(start + pageable.getPageSize(), sortedResponses.size());
-        List<ConstitutionResponse> pagedResponses = start >= sortedResponses.size()
-                ? Collections.emptyList()
-                : sortedResponses.subList(start, end);
-
-        return AdminPortalResponse.<ConstitutionResponse>builder()
-                .status(SUCCESS_RESPONSE_CODE)
-                .data(pagedResponses)
-                .count((long) pagedResponses.size())
-                .total(total)
-                .build();
-    }
-
-    private List<ConstitutionResponse> getUnapprovedWorkflowResponses(ConstitutionSearchRequest req) {
-        return masterWorkflowRepository.findAllByMasterTypeAndStatusNot(MasterType.CONSTITUTION, WorkflowStatus.APPROVED)
-                .stream()
-                .filter(workflow -> matchesWorkflowFilter(workflow, req))
-                .map(this::toWorkflowResponse)
-                .toList();
-    }
-
-    private boolean matchesWorkflowFilter(MasterWorkflow workflow, ConstitutionSearchRequest req) {
-        try {
-            Constitution constitution = mapper.readValue(workflow.getNewValue(), Constitution.class);
-            if (StringUtils.isNotBlank(req.getConstitutionName())
-                    && !StringUtils.containsIgnoreCase(constitution.getConstitutionName(), req.getConstitutionName())) {
-                return false;
-            }
-            if (StringUtils.isNotBlank(req.getStatus())
-                    && !StringUtils.equalsIgnoreCase(workflow.getStatus().name(), req.getStatus())
-                    && !StringUtils.equalsIgnoreCase(constitution.getStatus(), req.getStatus())) {
-                return false;
-            }
-
-            Long createdAt = constitution.getCreatedAt() != null ? constitution.getCreatedAt() : workflow.getCreatedAt();
-            if (req.getFromDate() != null && (createdAt == null || createdAt < req.getFromDate())) {
-                return false;
-            }
-            return req.getToDate() == null || (createdAt != null && createdAt <= req.getToDate());
-        } catch (JsonProcessingException e) {
-            throw new AdminPortalException("1001", "Invalid constitution workflow data");
-        }
-    }
-
-    private ConstitutionResponse toWorkflowResponse(MasterWorkflow workflow) {
-        try {
-            Constitution constitution = mapper.readValue(workflow.getNewValue(), Constitution.class);
-            ConstitutionResponse response = toResponse(constitution);
-            response.getConstitutionMaster().setId(workflow.getRecordId());
-
-            ConstitutionResponse.MasterWorkflowData workflowData = new ConstitutionResponse.MasterWorkflowData();
-            workflowData.setWorkflowId(workflow.getId());
-            workflowData.setConstitutionCode(constitution.getConstitutionCode());
-            workflowData.setStatus(workflow.getStatus().name());
-            workflowData.setCreatedBy(workflow.getMakerId());
-            workflowData.setUpdatedBy(workflow.getCheckerId());
-            workflowData.setCreatedAt(workflow.getCreatedAt());
-            response.setMasterWorkflow(workflowData);
-            return response;
-        } catch (JsonProcessingException e) {
-            throw new AdminPortalException("1001", "Invalid constitution workflow data");
-        }
-    }
-
-    private ConstitutionResponse toResponse(Constitution entity) {
-        ConstitutionResponse response = new ConstitutionResponse();
-        ConstitutionResponse.ConstitutionMaster constitutionMaster = new ConstitutionResponse.ConstitutionMaster();
-        constitutionMaster.setId(entity.getId());
-        constitutionMaster.setConstitutionName(entity.getConstitutionName());
-        constitutionMaster.setConstitutionCode(entity.getConstitutionCode());
-        constitutionMaster.setStatus(entity.getStatus());
-        constitutionMaster.setCreatedBy(entity.getCreatedBy());
-        constitutionMaster.setUpdatedBy(entity.getUpdatedBy());
-        constitutionMaster.setCreatedAt(entity.getCreatedAt());
-        response.setConstitutionMaster(constitutionMaster);
-        return response;
-    }
-
-    private List<ConstitutionResponse> sortResponses(List<ConstitutionResponse> responses, Pageable pageable) {
-        if (pageable.getSort().isUnsorted()) {
-            return responses;
-        }
-
-        return responses.stream()
-                .sorted(buildComparator(pageable))
-                .toList();
-    }
-
-    private Comparator<ConstitutionResponse> buildComparator(Pageable pageable) {
-        Comparator<ConstitutionResponse> comparator = null;
-        for (org.springframework.data.domain.Sort.Order order : pageable.getSort()) {
-            Comparator<ConstitutionResponse> orderComparator = Comparator.comparing(
-                    response -> getComparableValue(response, order.getProperty()),
-                    Comparator.nullsLast(Comparator.naturalOrder())
-            );
-            if (order.isDescending()) {
-                orderComparator = orderComparator.reversed();
-            }
-            comparator = comparator == null ? orderComparator : comparator.thenComparing(orderComparator);
-        }
-        return comparator == null
-                ? Comparator.comparing(
-                        response -> getComparableValue(response, "constitutionMaster.constitutionName"),
-                        Comparator.nullsLast(Comparator.naturalOrder())
-                )
-                : comparator;
-    }
-
-    @SuppressWarnings("unchecked")
-    private Comparable<Object> getComparableValue(ConstitutionResponse response, String property) {
-        Object value = new BeanWrapperImpl(response).getPropertyValue(resolveSortProperty(property));
-        if (value instanceof String stringValue) {
-            return (Comparable<Object>) stringValue.toLowerCase(Locale.ROOT);
-        }
-        return (Comparable<Object>) value;
-    }
-
-    private String resolveSortProperty(String property) {
-        return switch (property) {
-            case "id" -> "constitutionMaster.id";
-            case "constitutionName" -> "constitutionMaster.constitutionName";
-            case "status" -> "constitutionMaster.status";
-            case "createdBy" -> "constitutionMaster.createdBy";
-            case "updatedBy" -> "constitutionMaster.updatedBy";
-            case "createdAt" -> "constitutionMaster.createdAt";
-            case "workflowId" -> "masterWorkflow.workflowId";
-            default -> property;
-        };
-    }
-
+  }
 }
-in my current master package i need to add another api that will be used for bulk upload of csv file. for that we need to create 3 table.
-1. MasterTable.( this will keep the record of Master type )
-fields:- id, masterType(enum), name( master type name), isBulkAllowed boolean, isMakerChakerEnabled boolean, isHeaderPresent(this will be used to check if file will have header or not),fileFormatConfig( this will keep the record for how to read a file data ),fileCheckSum( this will store the checksome calue of file data) , status.
-
-add other field as well if need that can help us to read the file data. 
-
-2. MasterFileUpload( This will keep the record of over all data of file has been uploaded for MasterType)
-fields:- id, MasterType, fileName, totalRecord( count of total record in file except header if header is present), successRecord( this will count the total master we have uploaded on MasterWorkflow table), failedRecord( this will count the total master we have not uploaded on MasterWorkflow table), status, ErrorMessage( if there is issue while uploadeing file), Remark, AuditEntity.
-3. MasterFileUploadDtls( This will keep the record of individual record present in file).
-field:- id, masterFileUploadId(FK), recordJson( individual record store in json), status, ErrorMessage, Remark, AuditEntity.
-
-so first create the entity and dto for these table and also create the liquebase Script for these table.
-In Liquebase script add one script for Constitution Master type in MasterTable for which header will be present like  ConstitutionName ,Status and there field will be privateLtm, Active so in fileFormatConfig we will write how from where we need to read ConstitutionName so that it will help use to read the ConstitutionName and add into table.
-
-Now after that we need to create an API for this. `/{masterType}/bulk` and that will return success Count and List<String > failerRecord data.
-this API will first read the about masterType in our case is ConstitutionType like if header is present or not if yes then we need to read the file from next file and from where to we have to read the data we will get it from fileFormatConfig. once we know how to read the file then we will check the basis validation of file like uploaded file is .csv or not. and then we create the checkSome of file data and then we will chek if same file data is uploaded or its new one. this will help us to find duplicate file. 
-Once the basic validation is done then we store the OverAll file details in MasterFileUpload table like fileName, and remark like file has been received. and someerror come while reciving we will update the errorMessage as well.
-Then we will start reading th file details from file and that will record we will score it in the MasterFileUploadDtls table with status.
-once all the file uploaded we will update the Record in MasterFileUpload table as well like totalRecord, successRecord, FailedRecord. etc.
-
-After that we need to upload these data in MasterWorkflow table in field `newValue` and update the other field as well like makerId, status, masterType, actionTpte,etc to upload a file table a help of `toWorkflow` method so for that we need to convert each record to `ConstitutionDTO` type then we can use the toWorkflow only.
-
-once this record is uploaded in `MasterWorkflow` then we need to update the field record status and remark  in MasterFileUploadDtls and in MasterFileUpload tale 
-
-create these api as per my current flow and try to make it as generlise as possible so that in future other masterType can also upload the data via file.
-we can add other field in MasterType table as well if need that can help us to read the file data more easily .
