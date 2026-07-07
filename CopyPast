@@ -1,3 +1,263 @@
+package com.yourorg.transaction.service;
+
+import com.yourorg.transaction.dto.admin.CardOptions;
+import com.yourorg.transaction.dto.admin.PayModeEntry;
+import com.yourorg.transaction.dto.admin.PayModesResponse;
+import com.yourorg.transaction.dto.admin.PaymentOptions;
+// ...other existing imports
+
+import java.util.List;
+import java.util.Objects;
+import java.util.stream.Stream;
+
+@Service
+@RequiredArgsConstructor
+public class PaymentBookingService {
+
+    private static final String ONUS = "ONUS";
+    private static final String OFFUS = "OFFUS";
+    private static final String SELF = "SELF";
+    private static final String STATE_BANK_NEW_PG = "State Bank of India New PG";
+
+    private static final String BIN_TYPE_CC = "cc";
+    private static final String BIN_TYPE_DC = "dc";
+    private static final String BIN_TYPE_PC = "pc";
+
+    private final LoggerUtility logger = LoggerFactoryUtility.getLogger(this.getClass());
+    private final OrderService orderService;
+    private final BookingService bookingService;
+    private final PaymentInitiationValidator paymentInitiationValidator;
+    private final PaymentBookingDao paymentBookingDao;
+    private final BookingDao bookingDao;
+    private final CardVerificationDao cardVerificationDao;
+    private final PaymentBookingValidator paymentBookingValidator;
+
+    /**
+     * Carrier DTO for the three fields (gtwMapsId, payProcId, payProcType)
+     * that must be resolved before payment-initiation validation runs.
+     */
+    @Data
+    @AllArgsConstructor
+    private static class PayProcDetails {
+        private final String gtwMapsId;
+        private final String payProcId;
+        private final String payProcType;
+    }
+
+    public TransactionResponse<PaymentBookingResponse> initiatePaymentBooking(PaymentBookingRequest paymentBookingRequest) {
+        OrderDto orderDto = orderService.createMerchantOrder(paymentBookingRequest.getOrderDto(), paymentBookingRequest.getMId());
+        logger.info("Created order for mid :{}", orderDto.getMId());
+
+        paymentBookingValidator.validateMerchantHostedRequest(paymentBookingRequest);
+
+        bookingService.initiateOrderBooking(paymentBookingRequest.getOrderDto(), TransactionTokenType.PAYMENT);
+        logger.info("Book transaction done for mid: {}", orderDto.getMId());
+
+        buildPaymentInitiationRequest(paymentBookingRequest);
+
+        paymentInitiationValidator.validatePaymentRequest(
+                paymentBookingRequest.getPaymentInitiationRequest(), orderDto, paymentBookingRequest.getPayMode());
+        logger.info("Payment initiation request validated successfully.");
+
+        paymentBookingDao.savePaymentBookingDetails(
+                orderDto, paymentBookingRequest.getPaymentInitiationRequest(), paymentBookingRequest.getPayMode());
+
+        PaymentBookingResponse paymentBookingResponse = buildPaymentBookingResponse(orderDto);
+        return TransactionResponse.<PaymentBookingResponse>builder()
+                .status(TransactionConstant.RESPONSE_SUCCESS)
+                .data(List.of(paymentBookingResponse))
+                .build();
+    }
+
+    private void buildPaymentInitiationRequest(PaymentBookingRequest paymentBookingRequest) {
+        PaymentInitiationRequest request = paymentBookingRequest.getPaymentInitiationRequest();
+        PayMode payMode = PayMode.getPayMode(paymentBookingRequest.getPayMode());
+        String mId = paymentBookingRequest.getMId();
+
+        request.setOperatingMode(OperatingMode.DOM.name());
+
+        PayProcDetails payProcDetails = resolvePayProcDetails(payMode, request, mId);
+
+        request.setGtwMapsId(payProcDetails.getGtwMapsId());
+        request.setPayProcId(payProcDetails.getPayProcId());
+        request.setPayProcType(payProcDetails.getPayProcType());
+    }
+
+    private PayProcDetails resolvePayProcDetails(PayMode payMode, PaymentInitiationRequest request, String mId) {
+        return switch (payMode) {
+            case CC, DC, PC -> resolveCardPayProcDetails(request, mId);
+            case NB -> resolveNetBankingPayProcDetails(request, mId);
+            case UPI, WALLET -> resolveUpiOrWalletPayProcDetails(payMode, request, mId);
+            default -> throw new TransactionException(INVALID_ERROR_CODE,
+                    MessageFormat.format(TransactionErrorConstants.INVALID_ERROR_MESSAGE,
+                            "payMode", "Unsupported PayMode for payProc resolution"));
+        };
+    }
+
+    // ---------------------------------------------------------------
+    // CC / DC / PC
+    // ---------------------------------------------------------------
+
+    private PayProcDetails resolveCardPayProcDetails(PaymentInitiationRequest request, String mId) {
+        BinCheckRequest binCheckRequest = BinCheckRequest.builder()
+                .cardBin(StringUtils.left(request.getAltNumber(), CARD_BIN_LENGTH))
+                .build();
+        BinCheckResponse binResponse = cardVerificationDao.validateBin(binCheckRequest);
+
+        String payProcId = binResponse.getCardProcessor();
+        String payProcType = STATE_BANK_NEW_PG.equals(binResponse.getBinIssuerId()) ? ONUS : OFFUS;
+        String gtwMapsId = resolveCardGatewayMapId(binResponse, mId);
+
+        return new PayProcDetails(gtwMapsId, payProcId, payProcType);
+    }
+
+    /**
+     * Picks the card list (cc/dc/pc) matching binResponse.binType from BOTH
+     * preferredOptions and otherPaymentOptions, merges them, then finds the
+     * entry whose payproc matches binResponse.cardProcessor.
+     */
+    private String resolveCardGatewayMapId(BinCheckResponse binResponse, String mId) {
+        String binType = binResponse.getBinType();
+        String cardProcessor = binResponse.getCardProcessor();
+
+        PayModesResponse payModesResponse = bookingDao.getMerchantPayModes(mId);
+        CardOptions preferredCards = payModesResponse.getPreferredOptions().getCards();
+        CardOptions otherCards = payModesResponse.getOtherPaymentOptions().getCards();
+
+        List<PayModeEntry> preferredList = selectCardListByBinType(preferredCards, binType);
+        List<PayModeEntry> otherList = selectCardListByBinType(otherCards, binType);
+
+        return combineLists(preferredList, otherList).stream()
+                .filter(entry -> cardProcessor.equalsIgnoreCase(entry.getPayproc()))
+                .findFirst()
+                .map(PayModeEntry::getAggregatorGatewayMapId)
+                .orElseThrow(() -> new TransactionException(INVALID_ERROR_CODE,
+                        MessageFormat.format(TransactionErrorConstants.INVALID_ERROR_MESSAGE,
+                                "gtwMapsId", "Could not resolve gtwMapsId for binType: " + binType
+                                        + " and cardProcessor: " + cardProcessor)));
+    }
+
+    private List<PayModeEntry> selectCardListByBinType(CardOptions cardOptions, String binType) {
+        if (cardOptions == null) {
+            return List.of();
+        }
+        if (binType == null) {
+            throw new TransactionException(INVALID_ERROR_CODE,
+                    MessageFormat.format(TransactionErrorConstants.INVALID_ERROR_MESSAGE,
+                            "binType", "binType is missing in BIN check response"));
+        }
+        return switch (binType.toLowerCase()) {
+            case BIN_TYPE_CC -> cardOptions.getCc();
+            case BIN_TYPE_DC -> cardOptions.getDc();
+            case BIN_TYPE_PC -> cardOptions.getPc();
+            default -> throw new TransactionException(INVALID_ERROR_CODE,
+                    MessageFormat.format(TransactionErrorConstants.INVALID_ERROR_MESSAGE,
+                            "binType", "Unsupported binType: " + binType));
+        };
+    }
+
+    // ---------------------------------------------------------------
+    // NB
+    // ---------------------------------------------------------------
+
+    /**
+     * gtwMapsId comes from the request. payProcId is looked up by matching gtwMapsId
+     * across BOTH preferredOptions.inb and otherPaymentOptions.inb.
+     */
+    private PayProcDetails resolveNetBankingPayProcDetails(PaymentInitiationRequest request, String mId) {
+        String gtwMapsId = request.getGtwMapsId();
+        PayModesResponse payModesResponse = bookingDao.getMerchantPayModes(mId);
+
+        List<PayModeEntry> combinedInb = combineLists(
+                payModesResponse.getPreferredOptions().getInb(),
+                payModesResponse.getOtherPaymentOptions().getInb());
+
+        String payProcId = combinedInb.stream()
+                .filter(entry -> gtwMapsId.equals(entry.getAggregatorGatewayMapId()))
+                .findFirst()
+                .map(PayModeEntry::getPayproc)
+                .orElseThrow(() -> new TransactionException(INVALID_ERROR_CODE,
+                        MessageFormat.format(TransactionErrorConstants.INVALID_ERROR_MESSAGE,
+                                "payProcId", "Could not resolve payProcId for gtwMapsId: " + gtwMapsId)));
+
+        String payProcType = SELF.equalsIgnoreCase(payProcId) ? ONUS : OFFUS;
+        return new PayProcDetails(gtwMapsId, payProcId, payProcType);
+    }
+
+    // ---------------------------------------------------------------
+    // UPI / WALLET
+    // ---------------------------------------------------------------
+
+    /**
+     * payProcId comes from the request. gtwMapsId is looked up by matching payProcId
+     * across BOTH preferredOptions and otherPaymentOptions (upi.self/upi.BHIMQR, or wallet).
+     * payProcType is always ONUS for UPI and WALLET.
+     */
+    private PayProcDetails resolveUpiOrWalletPayProcDetails(PayMode payMode, PaymentInitiationRequest request, String mId) {
+        String payProcId = request.getPayProcId();
+        PayModesResponse payModesResponse = bookingDao.getMerchantPayModes(mId);
+        PaymentOptions preferred = payModesResponse.getPreferredOptions();
+        PaymentOptions other = payModesResponse.getOtherPaymentOptions();
+
+        List<PayModeEntry> candidates = (payMode == PayMode.UPI)
+                ? combineUpiCandidates(preferred, other)
+                : combineLists(preferred.getWallet(), other.getWallet());
+
+        String gtwMapsId = candidates.stream()
+                .filter(Objects::nonNull)
+                .filter(entry -> payProcId.equalsIgnoreCase(entry.getPayproc()))
+                .findFirst()
+                .map(PayModeEntry::getAggregatorGatewayMapId)
+                .orElseThrow(() -> new TransactionException(INVALID_ERROR_CODE,
+                        MessageFormat.format(TransactionErrorConstants.INVALID_ERROR_MESSAGE,
+                                "gtwMapsId", "Could not resolve gtwMapsId for payProcId: " + payProcId)));
+
+        return new PayProcDetails(gtwMapsId, payProcId, ONUS);
+    }
+
+    private List<PayModeEntry> combineUpiCandidates(PaymentOptions preferred, PaymentOptions other) {
+        return Stream.of(
+                        preferred.getUpi() != null ? preferred.getUpi().getSelf() : null,
+                        preferred.getUpi() != null ? preferred.getUpi().getBhimQr() : null,
+                        other.getUpi() != null ? other.getUpi().getSelf() : null,
+                        other.getUpi() != null ? other.getUpi().getBhimQr() : null)
+                .filter(Objects::nonNull)
+                .toList();
+    }
+
+    // ---------------------------------------------------------------
+    // Shared helper
+    // ---------------------------------------------------------------
+
+    /**
+     * Null-safe merge of two PayModeEntry lists (e.g. from preferredOptions and
+     * otherPaymentOptions) into a single combined list for lookup.
+     */
+    private List<PayModeEntry> combineLists(List<PayModeEntry> first, List<PayModeEntry> second) {
+        List<PayModeEntry> safeFirst = first != null ? first : List.of();
+        List<PayModeEntry> safeSecond = second != null ? second : List.of();
+        return Stream.concat(safeFirst.stream(), safeSecond.stream()).toList();
+    }
+
+    private PaymentBookingResponse buildPaymentBookingResponse(OrderDto orderDto) {
+        return PaymentBookingResponse.builder()
+                .paymentMode(orderDto.getPayMode())
+                .transactionUrl(orderDto.getTransactionUrl())
+                .orderHash(orderDto.getOrderHash())
+                .orderRefNumber(orderDto.getOrderRefNumber())
+                .sbiOrderRefNumber(orderDto.getSbiOrderRefNumber())
+                .orderRetryCount(orderDto.getOrderRetryCount())
+                .expiry(orderDto.getExpiry())
+                .build();
+    }
+}
+
+
+-------------------------------------
+
+
+
+
 
 /**
      * Picks the card list (cc/dc/pc) matching binResponse.binType, then finds the
