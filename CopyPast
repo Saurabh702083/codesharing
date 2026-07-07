@@ -1,3 +1,43 @@
+
+/**
+     * Picks the card list (cc/dc/pc) matching binResponse.binType, then finds the
+     * entry whose payproc matches binResponse.cardProcessor to get its aggregatorGatewayMapId.
+     */
+    private String resolveCardGatewayMapId(BinCheckResponse binResponse, String mId) {
+        String binType = binResponse.getBinType();
+        String cardProcessor = binResponse.getCardProcessor();
+
+        CardOptions cardOptions = bookingDao.getMerchantPayModes(mId).getOtherPaymentOptions().getCards();
+        List<PayModeEntry> candidateEntries = selectCardListByBinType(cardOptions, binType);
+
+        return candidateEntries.stream()
+                .filter(entry -> cardProcessor.equalsIgnoreCase(entry.getPayproc()))
+                .findFirst()
+                .map(PayModeEntry::getAggregatorGatewayMapId)
+                .orElseThrow(() -> new TransactionException(INVALID_ERROR_CODE,
+                        MessageFormat.format(TransactionErrorConstants.INVALID_ERROR_MESSAGE,
+                                "gtwMapsId", "Could not resolve gtwMapsId for binType: " + binType
+                                        + " and cardProcessor: " + cardProcessor)));
+    }
+
+    private List<PayModeEntry> selectCardListByBinType(CardOptions cardOptions, String binType) {
+        if (binType == null) {
+            throw new TransactionException(INVALID_ERROR_CODE,
+                    MessageFormat.format(TransactionErrorConstants.INVALID_ERROR_MESSAGE,
+                            "binType", "binType is missing in BIN check response"));
+        }
+        return switch (binType.toLowerCase()) {
+            case BIN_TYPE_CC -> cardOptions.getCc();
+            case BIN_TYPE_DC -> cardOptions.getDc();
+            case BIN_TYPE_PC -> cardOptions.getPc();
+            default -> throw new TransactionException(INVALID_ERROR_CODE,
+                    MessageFormat.format(TransactionErrorConstants.INVALID_ERROR_MESSAGE,
+                            "binType", "Unsupported binType: " + binType));
+        };
+    }
+-------
+
+
 private static final String ONUS = "ONUS";
 private static final String OFFUS = "OFFUS";
 private static final String STATE_BANK_ISSUER = "State Bank of India New PG";
