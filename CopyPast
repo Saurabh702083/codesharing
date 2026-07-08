@@ -1,3 +1,18 @@
+
+notepad gradle\wrapper\gradle-wrapper.properties
+
+distributionUrl=file:/D:/Ranu/sw/gradle-8.9-bin.zip
+
+
+distributionUrl=https\://services.gradle.org/distributions/gradle-8.9-bin.zip
+
+
+
+gradlew :integration-merchant-hosted:dependencies --configuration runtimeClasspath
+
+
+
+
 package com.yourorg.transaction.service;
 
 import com.yourorg.transaction.dto.admin.CardOptions;
