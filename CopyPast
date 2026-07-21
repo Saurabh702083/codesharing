@@ -1,3 +1,136 @@
+@Service
+@RequiredArgsConstructor
+public class MultiAccountSettlementService {
+    private final LoggerUtility logger = LoggerFactoryUtility.getLogger(this.getClass());
+    private final KmsDao kmsDao;
+    private final ReportServiceClient reportServiceClient;
+    private final ObjectMapper objectMapper;
+
+    /**
+     *
+     * @param encryptedRequest String
+     * @param pageable Pageable
+     * @return TransactionResponse<String>
+     */
+    public TransactionResponse<String> getMasMisReport(String encryptedRequest, Pageable pageable) {
+        String mId = EPayIdentityUtil.getUserPrincipal().getMId();
+        logger.info("Resolved MID {} from access token.", mId);
+        String mek = kmsDao.getMerchantMekKey();
+        MultiAccountSettlementMISRequest request = parseRequest(encryptedRequest, mek);
+        TransactionResponse<SettlementRecordResponse> settlementRecordResponse = reportServiceClient.getReport(request, mId, pageable);
+        return buildEncryptedMisResponse(settlementRecordResponse, mek, mId);
+    }
+
+    private MultiAccountSettlementMISRequest parseRequest(String encryptedRequest, String mek) {
+        try {
+            String rawJson = EncryptionDecryptionUtil.decryptValue(mek, encryptedRequest);
+            logger.debug("Request decrypted successfully");
+            return objectMapper.readValue(rawJson, MultiAccountSettlementMISRequest.class);
+        } catch (Exception e) {
+            logger.error("Invalid encrypted request JSON, error: {}", e.getMessage());
+            throw new TransactionException(INVALID_ERROR_CODE, MessageFormat.format(INVALID_ERROR_MESSAGE, REQUEST_PARAMETER, "Invalid request"));
+        }
+    }
+
+    private TransactionResponse<String> buildEncryptedMisResponse(TransactionResponse<SettlementRecordResponse> settlementRecordResponse, String mek, String mId) {
+        JsonNode root;
+        try {
+            root = objectMapper.valueToTree(settlementRecordResponse);
+        } catch (Exception e) {
+            logger.error("Invalid MIS report response received for mId: {}, error: ", mId, e);
+            throw new TransactionException(INVALID_ERROR_CODE, MessageFormat.format(INVALID_ERROR_MESSAGE, RESPONSE_PARAMETER, INVALID_JSON_RESPONSE));
+        }
+        if (!root.has("status") || !root.has("data")) {
+            throw new TransactionException(INVALID_ERROR_CODE, MessageFormat.format(INVALID_ERROR_MESSAGE, RESPONSE_PARAMETER, MALFORMED_RESPONSE));
+        }
+        int status = root.path("status").asInt();
+        long count = root.path("count").asLong(0);
+        long total = root.path("total").asLong(0);
+        JsonNode dataNode = root.get("data");
+
+        // Empty data handling
+        if (status == TransactionConstant.RESPONSE_SUCCESS && dataNode.isArray() && dataNode.isEmpty()) {
+            logger.info("No MIS records found for MID: {}", mId);
+            return TransactionResponse.<String>builder().status(TransactionConstant.RESPONSE_FAILURE).errors(List.of(ErrorDto.builder().errorCode(GENERIC_ERROR_CODE).errorMessage(NO_RECORD_FOUND_ERROR_MESSAGE_FOR_MIS).build())).build();
+        }
+
+        String encryptedData = EncryptionDecryptionUtil.encryptValue(mek, toJson(dataNode));
+        return TransactionResponse.<String>builder().status(status).data(List.of(encryptedData)).count(count).total(total).build();
+    }
+}
+
+---------
+public class ReportServiceClient extends ApiClient {
+    public static final String MAS_MIS_REPORT = "/mas/%s";
+    public static final String MIS_REPORT = "/mis/report";
+public TransactionResponse<SettlementRecordResponse> getReport(MultiAccountSettlementMISRequest request, String mId, Pageable pageable) {
+        return post(MAS_MIS_REPORT.formatted(mId) + buildPageQuery(pageable), request, new ParameterizedTypeReference<>() {});
+    }
+
+
+
+    protected <T, R> TransactionResponse<R> post(String urlPath, T requestBody, ParameterizedTypeReference<TransactionResponse<R>> typeReference) {
+        URI uri = URI.create(getBaseUrl() + urlPath);
+        logger.info("Calling uri: {}", uri);
+        try {
+            TransactionResponse<R> transactionResponse = getWebClient().post().uri(uri).headers(httpHeaders -> httpHeaders.addAll(prepareHttpHeaders())).contentType(MediaType.APPLICATION_JSON).bodyValue(requestBody).exchangeToMono(response -> response.bodyToMono(typeReference)).block();
+            return validateAndReturnResponse(transactionResponse);
+        } catch (NestedRuntimeException e) {
+            logger.error("Got exception while calling url: {}", e.getMessage(), uri);
+            throw new TransactionException(EXTERNAL_SERVICE_ERROR_CODE, MessageFormat.format(EXTERNAL_SERVICE_ERROR_MESSAGE, getServiceName()));
+        }
+    }
+
+@Data
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
+public class SettlementRecordResponse {
+    private OrderInfo orderInfo;
+    private List<PaymentInfo> paymentInfo;
+}
+
+@Data
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
+@JsonInclude(JsonInclude.Include.NON_NULL)
+public class OrderInfo {
+    private String sbiOrderRefNumber;
+    private String orderRefNumber;
+    private String orderStatus;
+    private String currencyCode;
+    private String otherDetails;
+    private String multiAccounts;
+}
+
+@Data
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
+@JsonInclude(JsonInclude.Include.NON_NULL)
+public class PaymentInfo {
+    private String uniqueIdentifier;
+    private String accountNumber;
+    private String atrnNumber;
+    private BigDecimal orderAmount;
+    private BigDecimal totalAmount;
+    private String transactionStatus;
+    private String payMode;
+    private String bankName;
+    @JsonInclude(JsonInclude.Include.ALWAYS)
+    private String bankTxnNumber;
+    private String currencyCode;
+    private Long transactionTime;
+    @JsonProperty(value = "CIN")
+    private String cin;
+    private BigDecimal settlementAmount;
+    private String settlementStatus;
+    private Long settlementDate;
+    @JsonInclude(JsonInclude.Include.ALWAYS)
+    private String utrn;
+}
+------------------------------------------
 
 notepad gradle\wrapper\gradle-wrapper.properties
 
