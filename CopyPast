@@ -1,3 +1,12 @@
+Dear Team,
+I was experiencing internet connectivity issues on my system. Upon investigation, I found that the ClearPass status was showing "NOT UNKNOWN". Based on this, I reached out to Baker Vishal Bansal for assistance. He advised me to uninstall and reinstall the ClearPass application.
+Accordingly, I reinstalled ClearPass on my system as suggested.
+The current version of ClearPass installed on my PC is 6.11.7.257550.
+Kindly acknowledge the above for the incident record.
+Regards,
+Saurabh Mahto
+
+
 @Service
 @RequiredArgsConstructor
 public class MultiAccountSettlementService {
