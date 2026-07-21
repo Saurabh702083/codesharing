@@ -1,23 +1,20 @@
-public ReportingResponse<SettlementRecordResponse> getSettlementStatusRecords(SettlementStatusSearchRequest settlementSearchRequest, Pageable pageable) {
-        String mId = settlementSearchRequest.getMerchantId();
-        logger.info("Settlement status report request for MID: {}, payload: {}", mId, settlementSearchRequest);
-       // settlementStatusReportValidator.validateRequest(settlementSearchRequest);
-        Page<MerchantOrderPaymentTxn> paymentPage = dao.searchSettlementRecords(mId, settlementSearchRequest, pageable);
-        List<MerchantOrderPaymentTxn> payments = paymentPage.getContent();
+ public ReportingResponse<SettlementRecordResponse> getMultiAccountSettlementRecords(String mId, MultiAccountSettlementSearchRequest masSearchRequest, Pageable pageable) {
+        log.info("Multi Account Settlement status report request for MID: {}, payload: {}", mId, masSearchRequest);
+        multiAccountSettlementValidator.validateRequest(mId,masSearchRequest,pageable);
+        Page<MerchantOrderPaymentTxnMasProjection> paymentPage = reportDao.searchMultiAccountSettlementRecords(mId, masSearchRequest, pageable);
+        List<MerchantOrderPaymentTxnMasProjection> payments = paymentPage.getContent();
         if (payments.isEmpty()) {
-            return ReportingResponse.<SettlementRecordResponse>builder().status(RESPONSE_SUCCESS).data(Collections.emptyList()).count(0L).total(paymentPage.getTotalElements()).build();
+            return ReportingResponse.<SettlementRecordResponse>builder().status(RESPONSE_SUCCESS).data(Collections.emptyList()).count(0L).total(0L).build();
         }
-        List<String> sbiOrderIds = payments.stream().map(MerchantOrderPaymentTxn::getSbiOrderRefNumber).distinct().collect(Collectors.toList());
-        List<MerchantOrderTxn> orders = dao.findOrdersForPayments(mId, sbiOrderIds);
-        boolean includeSettlementFields = settlementSearchRequest.getSettlementStatus() != null;
-        List<MerchantTxnPayout> payouts = Collections.emptyList();
-        if (includeSettlementFields) {
-            List<String> atrnNumbers = payments.stream().map(MerchantOrderPaymentTxn::getAtrnNum).distinct().collect(Collectors.toList());
-            payouts = dao.findPayoutsForAtrns(mId, atrnNumbers);
-        }
-        List<SettlementRecordResponse> responseList = mapper.mapToResponse(payments, orders, payouts, includeSettlementFields);
+        List<String> sbiOrderIds = payments.stream().map(MerchantOrderPaymentTxnMasProjection::getSbiOrderRefNumber).distinct().toList();
+        List<MerchantOrderTxn> orders = settlementDao.findOrdersForPayments(mId, sbiOrderIds);
+        List<String> atrnNumbers = payments.stream().map(MerchantOrderPaymentTxnMasProjection::getAtrnNum).distinct().toList();
+        List<MerchantTxnPayout> payouts = settlementDao.findPayoutsForAtrns(mId, atrnNumbers);
+
+        List<SettlementRecordResponse> responseList = masMapper.mapToResponse(payments, orders, payouts);
         return ReportingResponse.<SettlementRecordResponse>builder().status(RESPONSE_SUCCESS).data(responseList).count((long) responseList.size()).total(paymentPage.getTotalElements()).build();
     }
+
 ------------------------------
 @Component
 @RequiredArgsConstructor
@@ -40,37 +37,42 @@ public interface MerchantOrderTxnRepository extends JpaRepository<MerchantOrderT
 
 ------------
 @Mapper(builder = @Builder(disableBuilder = true), componentModel = "spring")
-public class SettlementStatusReportMapper {
+public class MultiAccountSettlementMapper {
     /**
-     * Maps the MIS Settlement/Transaction records to its corresponding DTO (Data Transfer Object).
+     * Maps the MIS Multi Account Settlement records to its corresponding DTO (Data Transfer Object).
      *
      * @param payments the entity to be converted
      * @param orders the entity to be converted
      * @param payouts the entity to be converted
      * @return the corresponding SettlementRecordResponse
      */
-    public List<SettlementRecordResponse> mapToResponse(List<MerchantOrderPaymentTxn> payments, List<MerchantOrderTxn> orders, List<MerchantTxnPayout> payouts, boolean includeSettlementFields) {
+    public List<SettlementRecordResponse> mapToResponse(List<MerchantOrderPaymentTxnMasProjection> payments, List<MerchantOrderTxn> orders, List<MerchantTxnPayout> payouts) {
         Map<String, MerchantOrderTxn> orderMap = orders.stream().collect(Collectors.toMap(MerchantOrderTxn::getSbiOrderRefNumber, o -> o, (a, b) -> a));
         Map<String, BigDecimal> payoutAmountByAtrn = payouts.stream().collect(Collectors.toMap(MerchantTxnPayout::getAtrnNum, MerchantTxnPayout::getTxnPayoutAmount, (a, b) -> a));
         List<SettlementRecordResponse> responses = new ArrayList<>();
-        for (MerchantOrderPaymentTxn payment : payments) {
+        for (MerchantOrderPaymentTxnMasProjection payment : payments) {
             MerchantOrderTxn order = orderMap.get(payment.getSbiOrderRefNumber());
-            OrderInfo orderInfo = OrderInfo.builder().sbiOrderRefNumber(payment.getSbiOrderRefNumber()).orderRefNumber(order != null ? order.getOrderRefNumber() : payment.getOrderRefNumber())
-                    .orderStatus(order != null ? order.getStatus() : null).currencyCode(order != null ? order.getCurrencyCode() : payment.getCurrencyCode()).otherDetails(order != null ? order.getOtherDetails() : null).build();
-            BigDecimal orderAmount = Optional.ofNullable(payment.getOrderAmount()).orElse(order != null ? order.getOrderAmount() : BigDecimal.ZERO);
-            BigDecimal totalAmount = Optional.ofNullable(payment.getDebitAmount()).orElse(orderAmount);
-            PaymentInfo.PaymentInfoBuilder paymentBuilder = PaymentInfo.builder().atrnNumber(payment.getAtrnNum()).orderAmount(orderAmount)
+            OrderInfo orderInfo = OrderInfo.builder().sbiOrderRefNumber(payment.getSbiOrderRefNumber()).build();
+            if(Objects.nonNull(order)) {
+                orderInfo.setOrderRefNumber(order.getOrderRefNumber());
+                orderInfo.setOrderStatus(order.getStatus());
+                orderInfo.setCurrencyCode(order.getCurrencyCode());
+                orderInfo.setOtherDetails(order.getOtherDetails());
+                orderInfo.setMultiAccounts(order.getMultiAccounts());
+            }
+            BigDecimal orderAmount = ofNullable(payment.getOrderAmount()).orElse(ofNullable(order).map(MerchantOrderTxn::getOrderAmount).orElse(BigDecimal.ZERO));
+            BigDecimal totalAmount = ofNullable(payment.getDebitAmount()).orElse(orderAmount);
+            PaymentInfo.PaymentInfoBuilder paymentBuilder = PaymentInfo.builder().uniqueIdentifier(payment.getAccountUniqueIdentifier()).accountNumber(payment.getAccountNumber()).atrnNumber(payment.getAtrnNum()).orderAmount(orderAmount)
                     .totalAmount(totalAmount).transactionStatus(payment.getTransactionStatus()).payMode(payment.getPayMode()).bankName(payment.getChannelBank()).bankTxnNumber(payment.getBankReferenceNumber())
                     .currencyCode(payment.getCurrencyCode()).transactionTime(payment.getCreatedDate()).cin(payment.getCin());
-            if (includeSettlementFields) {
-                BigDecimal settlementAmount = payoutAmountByAtrn.get(payment.getAtrnNum());
-                paymentBuilder.settlementAmount(settlementAmount).settlementStatus(payment.getSettlementStatus()).settlementDate(payment.getSettlementTime()).utrn(payment.getPaymentNarration());
-            }
-            PaymentInfo paymentInfo = paymentBuilder.build();
+
+            BigDecimal settlementAmount = payoutAmountByAtrn.get(payment.getAtrnNum());
+            PaymentInfo paymentInfo = paymentBuilder.settlementAmount(settlementAmount).settlementStatus(payment.getSettlementStatus()).settlementDate(payment.getSettlementTime()).utrn(payment.getPaymentNarration()).build();
             responses.add(SettlementRecordResponse.builder().orderInfo(orderInfo).paymentInfo(Collections.singletonList(paymentInfo)).build());
         }
         return responses;
     }
+}
 --------------------
 
 @Data
