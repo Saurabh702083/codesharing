@@ -39,6 +39,40 @@ public interface MerchantOrderTxnRepository extends JpaRepository<MerchantOrderT
 }
 
 ------------
+@Mapper(builder = @Builder(disableBuilder = true), componentModel = "spring")
+public class SettlementStatusReportMapper {
+    /**
+     * Maps the MIS Settlement/Transaction records to its corresponding DTO (Data Transfer Object).
+     *
+     * @param payments the entity to be converted
+     * @param orders the entity to be converted
+     * @param payouts the entity to be converted
+     * @return the corresponding SettlementRecordResponse
+     */
+    public List<SettlementRecordResponse> mapToResponse(List<MerchantOrderPaymentTxn> payments, List<MerchantOrderTxn> orders, List<MerchantTxnPayout> payouts, boolean includeSettlementFields) {
+        Map<String, MerchantOrderTxn> orderMap = orders.stream().collect(Collectors.toMap(MerchantOrderTxn::getSbiOrderRefNumber, o -> o, (a, b) -> a));
+        Map<String, BigDecimal> payoutAmountByAtrn = payouts.stream().collect(Collectors.toMap(MerchantTxnPayout::getAtrnNum, MerchantTxnPayout::getTxnPayoutAmount, (a, b) -> a));
+        List<SettlementRecordResponse> responses = new ArrayList<>();
+        for (MerchantOrderPaymentTxn payment : payments) {
+            MerchantOrderTxn order = orderMap.get(payment.getSbiOrderRefNumber());
+            OrderInfo orderInfo = OrderInfo.builder().sbiOrderRefNumber(payment.getSbiOrderRefNumber()).orderRefNumber(order != null ? order.getOrderRefNumber() : payment.getOrderRefNumber())
+                    .orderStatus(order != null ? order.getStatus() : null).currencyCode(order != null ? order.getCurrencyCode() : payment.getCurrencyCode()).otherDetails(order != null ? order.getOtherDetails() : null).build();
+            BigDecimal orderAmount = Optional.ofNullable(payment.getOrderAmount()).orElse(order != null ? order.getOrderAmount() : BigDecimal.ZERO);
+            BigDecimal totalAmount = Optional.ofNullable(payment.getDebitAmount()).orElse(orderAmount);
+            PaymentInfo.PaymentInfoBuilder paymentBuilder = PaymentInfo.builder().atrnNumber(payment.getAtrnNum()).orderAmount(orderAmount)
+                    .totalAmount(totalAmount).transactionStatus(payment.getTransactionStatus()).payMode(payment.getPayMode()).bankName(payment.getChannelBank()).bankTxnNumber(payment.getBankReferenceNumber())
+                    .currencyCode(payment.getCurrencyCode()).transactionTime(payment.getCreatedDate()).cin(payment.getCin());
+            if (includeSettlementFields) {
+                BigDecimal settlementAmount = payoutAmountByAtrn.get(payment.getAtrnNum());
+                paymentBuilder.settlementAmount(settlementAmount).settlementStatus(payment.getSettlementStatus()).settlementDate(payment.getSettlementTime()).utrn(payment.getPaymentNarration());
+            }
+            PaymentInfo paymentInfo = paymentBuilder.build();
+            responses.add(SettlementRecordResponse.builder().orderInfo(orderInfo).paymentInfo(Collections.singletonList(paymentInfo)).build());
+        }
+        return responses;
+    }
+--------------------
+
 @Data
 @Entity
 @Table(name = "MERCHANT_ORDERS_TXN")
@@ -55,3 +89,36 @@ public class MerchantOrderTxn {
     private String multiAccounts;
     private Long createdDate;
 }
+
+
+ "status": 1,
+    "data": [
+        {
+            "orderInfo": {
+                "sbiOrderRefNumber": "607B35F2221C4D4A9B4E",
+                "orderRefNumber": "qftOg",
+                "orderStatus": "PAID",
+                "currencyCode": "INR",
+                "multiAccounts": "[{\"accountIdentifier\":\"Anvesh123\",\"amount\":50},{\"accountIdentifier\":\"rahul123\",\"amount\":25},{\"accountIdentifier\":\"jitesh123\",\"amount\":25}]"
+            },
+            "paymentInfo": [
+                {
+                    "uniqueIdentifier": "Anvesh123",
+                    "accountNumber": "98989898988",
+                    "atrnNumber": "WA003KPB9NKRMXL97TE4",
+                    "orderAmount": 100,
+                    "totalAmount": 100,
+                    "transactionStatus": "SUCCESS",
+                    "payMode": "WALLET",
+                    "bankName": "CSC Wallet",
+                    "bankTxnNumber": "6195181522143915",
+                    "currencyCode": "INR",
+                    "transactionTime": 1784033122952,
+                    "settlementAmount": 50,
+                    "settlementStatus": "SETTLED",
+                    "settlementDate": 1784033410453,
+                    "utrn": "EPAY100000314072601",
+                    "CIN": "10000031407202672388"
+                }
+            ]
+        }
