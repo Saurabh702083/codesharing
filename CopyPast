@@ -68,7 +68,7 @@ public class MultiAccountSettlementMapper {
      * @param payouts the entity to be converted
      * @return the corresponding SettlementRecordResponse
      */
-    public List<SettlementRecordResponse> mapToResponse(List<MerchantOrderPaymentTxnMasProjection> payments, List<MerchantOrderTxn> orders, List<MerchantTxnPayout> payouts) {
+public List<SettlementRecordResponse> mapToResponse(List<MerchantOrderPaymentTxnMasProjection> payments, List<MerchantOrderTxn> orders, List<MerchantTxnPayout> payouts) {
         Map<String, MerchantOrderTxn> orderMap = orders.stream().collect(Collectors.toMap(MerchantOrderTxn::getSbiOrderRefNumber, o -> o, (a, b) -> a));
         Map<String, BigDecimal> payoutAmountByAtrn = payouts.stream().collect(Collectors.toMap(MerchantTxnPayout::getAtrnNum, MerchantTxnPayout::getTxnPayoutAmount, (a, b) -> a));
         List<SettlementRecordResponse> responses = new ArrayList<>();
@@ -94,7 +94,6 @@ public class MultiAccountSettlementMapper {
         }
         return responses;
     }
-}
 --------------------
 
 @Data
