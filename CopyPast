@@ -1,3 +1,25 @@
+private JsonNode parseMultiAccounts(String rawJson) {
+    if (rawJson == null || rawJson.isBlank()) {
+        return null;
+    }
+    try {
+        return objectMapper.readTree(rawJson);
+    } catch (JsonProcessingException e) {
+        logger.error("Malformed multiAccounts JSON: {}", e.getMessage());
+        return null; // or throw, depending on how strict you want to be
+    }
+}
+
+OrderInfo orderInfo = OrderInfo.builder()
+        .sbiOrderRefNumber(payment.getSbiOrderRefNumber())
+        ...
+        .multiAccounts(parseMultiAccounts(order != null ? order.getMultiAccounts() : null))
+        .build();
+
+-------
+
+
+
  public ReportingResponse<SettlementRecordResponse> getMultiAccountSettlementRecords(String mId, MultiAccountSettlementSearchRequest masSearchRequest, Pageable pageable) {
         log.info("Multi Account Settlement status report request for MID: {}, payload: {}", mId, masSearchRequest);
         multiAccountSettlementValidator.validateRequest(mId,masSearchRequest,pageable);
