@@ -87,6 +87,49 @@ public class MasterService {
     }
 
 }
+------------------
+import com.epay.admin.portal.dto.master.CountryDto;
+import com.epay.admin.portal.entity.admin.master.Country;
+import com.epay.admin.portal.mapper.admin.master.MasterMapper;
+import com.epay.admin.portal.repository.admin.master.CountryRepository;
+import lombok.RequiredArgsConstructor;
+import org.springframework.stereotype.Component;
+
+import java.util.List;
+import java.util.UUID;
+
+@Component
+@RequiredArgsConstructor
+public class MasterDao {
+    private MasterMapper masterMapper;
+    private final CountryRepository countryRepository;
+
+    public CountryDto createCountry(CountryDto countryDto){
+        Country country= countryRepository.save(masterMapper.mapCountryDtoToCountry(countryDto));
+        return masterMapper.mapCountryToCountryDto(country);
+    }
+
+//    public void updateApproveStatusById(List<UUID> masterIds, String status){
+//        countryRepository.updateStatus(masterIds,status);
+//    }
+
+    public List<CountryDto> findCountries(List<UUID> ids){
+        return countryRepository.findAllById(ids).stream().map(masterMapper::mapCountryToCountryDto).toList();
+    }
+
+    public void approve(List<UUID> ids){
+        countryRepository.approve(ids);
+    }
+
+    public void reject(List<UUID> ids){
+        countryRepository.reject(ids);
+    }
+
+    public void markPendingForInactivation(List<UUID> ids){
+        countryRepository.markPendingForInactivation(ids);
+    }
+
+}
 -------------------------
 @Service
 @RequiredArgsConstructor
@@ -510,4 +553,70 @@ public enum WorkflowAction {
 
     WorkflowAction(String create) {
     }
+}
+-------------------------
+@Getter
+@Setter
+@NoArgsConstructor
+@AllArgsConstructor
+@MappedSuperclass
+@Data
+public class MasterWorkFlow extends AuditEntity {
+
+    @Id
+    @GeneratedValue(strategy = GenerationType.UUID)
+    private UUID id;
+    private String masterCode;
+    private String action;
+    //Respective MASTER DB ID
+    private String entityId;
+    private String status;
+    private String oldValue;//current
+    private String newValue;
+    private String remark;
+    private String makerId;
+    private String checkerId;
+
+}
+--------------------------
+@Getter
+@Setter
+@NoArgsConstructor
+@AllArgsConstructor
+@Builder
+public class MasterWorkFlowDto {
+
+    private String masterCode;
+    private String action;
+    private String entityId;
+    private String status;
+    private String oldValue;
+    private String newValue;
+    private String remark;
+    private String makerId;
+    private String checkerId;
+
+}
+--------------
+import com.epay.admin.portal.entity.admin.master.MasterWorkFlow;
+import com.epay.admin.portal.util.enums.MasterType;
+import com.epay.admin.portal.util.enums.WorkflowAction;
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.stereotype.Repository;
+
+import java.util.List;
+import java.util.Optional;
+import java.util.UUID;
+
+@Repository
+public interface MasterWorkFlowRepository extends JpaRepository<MasterWorkFlow, UUID> {
+    /**
+     * Finds the most recent workflow for the supplied master record and allowed statuses.
+     *
+     * @param masterType target master type
+     * @param recordId master record identifier
+     * @param statuses allowed workflow statuses
+     * @return matching workflow when present
+     */
+    Optional<MasterWorkFlow> findTopByMasterTypeAndRecordIdAndStatusInOrderByCreatedAtDesc(MasterType masterType, UUID recordId, List<WorkflowAction> statuses);
 }
