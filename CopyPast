@@ -1,147 +1,393 @@
-private JsonNode parseMultiAccounts(String rawJson) {
-    if (rawJson == null || rawJson.isBlank()) {
-        return null;
-    }
-    try {
-        return objectMapper.readTree(rawJson);
-    } catch (JsonProcessingException e) {
-        logger.error("Malformed multiAccounts JSON: {}", e.getMessage());
-        return null; // or throw, depending on how strict you want to be
-    }
-}
-
-OrderInfo orderInfo = OrderInfo.builder()
-        .sbiOrderRefNumber(payment.getSbiOrderRefNumber())
-        ...
-        .multiAccounts(parseMultiAccounts(order != null ? order.getMultiAccounts() : null))
-        .build();
-
--------
-
-
-
- public ReportingResponse<SettlementRecordResponse> getMultiAccountSettlementRecords(String mId, MultiAccountSettlementSearchRequest masSearchRequest, Pageable pageable) {
-        log.info("Multi Account Settlement status report request for MID: {}, payload: {}", mId, masSearchRequest);
-        multiAccountSettlementValidator.validateRequest(mId,masSearchRequest,pageable);
-        Page<MerchantOrderPaymentTxnMasProjection> paymentPage = reportDao.searchMultiAccountSettlementRecords(mId, masSearchRequest, pageable);
-        List<MerchantOrderPaymentTxnMasProjection> payments = paymentPage.getContent();
-        if (payments.isEmpty()) {
-            return ReportingResponse.<SettlementRecordResponse>builder().status(RESPONSE_SUCCESS).data(Collections.emptyList()).count(0L).total(0L).build();
-        }
-        List<String> sbiOrderIds = payments.stream().map(MerchantOrderPaymentTxnMasProjection::getSbiOrderRefNumber).distinct().toList();
-        List<MerchantOrderTxn> orders = settlementDao.findOrdersForPayments(mId, sbiOrderIds);
-        List<String> atrnNumbers = payments.stream().map(MerchantOrderPaymentTxnMasProjection::getAtrnNum).distinct().toList();
-        List<MerchantTxnPayout> payouts = settlementDao.findPayoutsForAtrns(mId, atrnNumbers);
-
-        List<SettlementRecordResponse> responseList = masMapper.mapToResponse(payments, orders, payouts);
-        return ReportingResponse.<SettlementRecordResponse>builder().status(RESPONSE_SUCCESS).data(responseList).count((long) responseList.size()).total(paymentPage.getTotalElements()).build();
-    }
-
-------------------------------
-@Component
+ @Getter
 @RequiredArgsConstructor
-public class SettlementStatusReportDao {
-    private final LoggerUtility logger = LoggerFactoryUtility.getLogger(this.getClass());
-    private final MerchantOrderPaymentTxnRepository paymentTxnRepository;
-    private final MerchantOrderTxnRepository orderTxnRepository;
-    private final MerchantTxnPayoutRepository payoutRepository; 
-public List<MerchantOrderTxn> findOrdersForPayments(String mId, List<String> sbiOrderIds) {
-        return orderTxnRepository.findByMerchantIdAndSbiOrderRefNumberIn(mId, sbiOrderIds);
+public enum MasterStatus {
+
+    ACTIVE("ACTIVE"),
+
+    INACTIVE("INACTIVE"),
+
+    PENDING_FOR_APPROVAL("PENDING_FOR_APPROVAL"),
+
+    PENDING_FOR_INACTIVATION("PENDING_FOR_INACTIVATION");
+
+    private final String value;
+}
+
+
+@Getter
+@RequiredArgsConstructor
+public enum WorkflowOperation {
+
+    CREATE,
+
+    UPDATE,
+
+    INACTIVATION
+}
+
+
+---------
+public interface BaseMasterService<T extends BaseMasterDto> {
+
+    MasterCode getMasterCode();
+
+    List<MasterCode> getParentCodes();
+
+    T mapToMasterDto(MasterRequest request);
+
+    MasterWorkFlowDto mapToMasterWorkFlowDto(T dto);
+
+    AdminPortalResponse<MasterResponse> mapToResponse(T dto);
+
+    void validateCreate(T dto);
+
+    void validateUpdate(T dto);
+
+    void validateApprove(T dto);
+
+    T create(T dto);
+
+    T update(T dto);
+
+    boolean approve(T dto);
+
+    boolean reject(T dto);
+
+    void approve(List<UUID> ids);
+
+    void reject(List<UUID> ids);
+
+    void markPendingForInactivation(List<UUID> ids);
+
+    List<T> findByIds(List<UUID> ids);
+
+    void validateForApprove(List<T> masters);
+
+    void validateForInactivation(List<T> masters);
+
+}
+--------
+@Transactional
+public AdminPortalResponse<String> approveMaster(
+        MasterApproveRejectRequest request,
+        String masterCode) {
+
+    MasterType master = MasterType.getMasterType(masterCode);
+
+    BaseMasterService<BaseMasterDto> service =
+            masterHandlerFactory.getMasterService(master.name());
+
+    List<UUID> ids = request.getRecords()
+            .stream()
+            .map(MasterApproveRejectRequest.RecordItem::getMasterId)
+            .toList();
+
+    List<BaseMasterDto> masters = service.findByIds(ids);
+
+    service.validateForApprove(masters);
+
+    service.approve(ids);
+
+    request.getRecords().forEach(record ->
+            masterWorkFlowService.approveWorkFlow(master, record));
+
+    return AdminPortalResponse.<String>builder()
+            .status(SUCCESS_RESPONSE_CODE)
+            .data(List.of("Masters approved successfully"))
+            .build();
+}
+
+
+--------
+
+
+@Transactional
+public AdminPortalResponse<String> rejectMaster(
+        MasterApproveRejectRequest request,
+        String masterCode) {
+
+    MasterType master = MasterType.getMasterType(masterCode);
+
+    BaseMasterService<BaseMasterDto> service =
+            masterHandlerFactory.getMasterService(master.name());
+
+    List<UUID> ids = request.getRecords()
+            .stream()
+            .map(MasterApproveRejectRequest.RecordItem::getMasterId)
+            .toList();
+
+    List<BaseMasterDto> masters = service.findByIds(ids);
+
+    service.validateForApprove(masters);
+
+    service.reject(ids);
+
+    request.getRecords().forEach(record ->
+            masterWorkFlowService.rejectWorkFlow(master, record));
+
+    return AdminPortalResponse.<String>builder()
+            .status(SUCCESS_RESPONSE_CODE)
+            .data(List.of("Masters rejected successfully"))
+            .build();
+}
+----
+@Transactional
+public AdminPortalResponse<String> inactivate(
+        MasterInactivationRequest request,
+        String masterCode) {
+
+    MasterType master = MasterType.getMasterType(masterCode);
+
+    BaseMasterService<BaseMasterDto> service =
+            masterHandlerFactory.getMasterService(master.name());
+
+    List<BaseMasterDto> masters =
+            service.findByIds(request.getMasterIds());
+
+    service.validateForInactivation(masters);
+
+    service.markPendingForInactivation(request.getMasterIds());
+
+    masters.forEach(masterDto -> {
+
+        MasterWorkFlowDto workflow =
+                service.mapToMasterWorkFlowDto(masterDto);
+
+        workflow.setAction(WorkflowAction.INACTIVATE.name());
+
+        workflow.setStatus(WorkflowAction.INACTIVATION_PENDING.name());
+
+        workflow.setRemark(request.getRemark());
+
+        masterWorkFlowService.save(
+                workflow,
+                WorkflowOperation.INACTIVATION);
+
+    });
+
+    return AdminPortalResponse.<String>builder()
+            .status(SUCCESS_RESPONSE_CODE)
+            .data(List.of("Masters submitted for inactivation successfully"))
+            .build();
+}
+
+------
+Update Workflow Service:-
+
+
+public void save(
+        MasterWorkFlowDto dto,
+        WorkflowOperation operation) {
+
+    dto.setAction(operation.name());
+
+    dto.setMakerId(
+            EPayIdentityUtil.getUserPrincipal().getUsername());
+
+    MasterWorkFlow workflow =
+            masterWorkFlowMapper.mapEntityToDto(dto);
+
+    masterWorkFlowRepository.save(workflow);
+}
+-----
+
+
+@Transactional
+@Modifying
+@Query("""
+UPDATE Country c
+SET c.status =
+CASE
+
+WHEN c.status='PENDING_FOR_APPROVAL'
+THEN 'ACTIVE'
+
+WHEN c.status='PENDING_FOR_INACTIVATION'
+THEN 'INACTIVE'
+
+ELSE c.status
+
+END
+WHERE c.id IN :ids
+""")
+int approve(@Param("ids") List<UUID> ids);
+
+
+
+@Transactional
+@Modifying
+@Query("""
+UPDATE Country c
+SET c.status =
+CASE
+
+WHEN c.status='PENDING_FOR_APPROVAL'
+THEN 'INACTIVE'
+
+WHEN c.status='PENDING_FOR_INACTIVATION'
+THEN 'ACTIVE'
+
+ELSE c.status
+
+END
+WHERE c.id IN :ids
+""")
+int reject(@Param("ids") List<UUID> ids);
+
+
+
+@Transactional
+@Modifying
+@Query("""
+UPDATE Country c
+SET c.status='PENDING_FOR_INACTIVATION'
+WHERE c.id IN :ids
+""")
+int markPendingForInactivation(
+        @Param("ids") List<UUID> ids);
+
+
+
+--------MasterDao
+
+public List<CountryDto> findCountries(List<UUID> ids){
+
+    return countryRepository.findByIdIn(ids)
+            .stream()
+            .map(masterMapper::mapCountryToCountryDto)
+            .toList();
+}
+
+
+public void approve(List<UUID> ids){
+
+    countryRepository.approve(ids);
+
+}
+
+
+public void reject(List<UUID> ids){
+
+    countryRepository.reject(ids);
+
+}
+
+
+public void markPendingForInactivation(
+        List<UUID> ids){
+
+    countryRepository.markPendingForInactivation(ids);
+
+}
+
+
+------CountryService
+
+@Override
+public void approve(List<UUID> ids){
+
+    masterDao.approve(ids);
+
+}
+
+
+@Override
+public void reject(List<UUID> ids){
+
+    masterDao.reject(ids);
+
+}
+
+
+
+@Override
+public void markPendingForInactivation(
+        List<UUID> ids){
+
+    masterDao.markPendingForInactivation(ids);
+
+}
+
+
+
+@Override
+public List<CountryDto> findByIds(
+        List<UUID> ids){
+
+    return masterDao.findCountries(ids);
+
+}
+
+
+-----Validation
+
+@Override
+public void validateForApprove(
+        List<CountryDto> masters){
+
+    List<UUID> invalidIds =
+            masters.stream()
+
+            .filter(master ->
+
+                    !MasterStatus.PENDING_FOR_APPROVAL
+                            .getValue()
+                            .equals(master.getStatus())
+
+                    &&
+
+                    !MasterStatus.PENDING_FOR_INACTIVATION
+                            .getValue()
+                            .equals(master.getStatus()))
+
+            .map(CountryDto::getId)
+
+            .toList();
+
+    if(!invalidIds.isEmpty()){
+
+        throw new AdminPortalException(
+
+                VALIDATION_ERROR_CODE,
+
+                "Following records are not pending : "
+                        + invalidIds
+
+        );
+
     }
+
 }
 
-------------
-@Repository
-public interface MerchantOrderTxnRepository extends JpaRepository<MerchantOrderTxn, String> {
 
-    List<MerchantOrderTxn> findByMerchantIdAndSbiOrderRefNumberIn(String merchantId, List<String> sbiOrderRefNumbers);
-}
+@Override
+public void validateForInactivation(
+        List<CountryDto> masters){
 
-------------
-@Mapper(builder = @Builder(disableBuilder = true), componentModel = "spring")
-public class MultiAccountSettlementMapper {
-    /**
-     * Maps the MIS Multi Account Settlement records to its corresponding DTO (Data Transfer Object).
-     *
-     * @param payments the entity to be converted
-     * @param orders the entity to be converted
-     * @param payouts the entity to be converted
-     * @return the corresponding SettlementRecordResponse
-     */
-public List<SettlementRecordResponse> mapToResponse(List<MerchantOrderPaymentTxnMasProjection> payments, List<MerchantOrderTxn> orders, List<MerchantTxnPayout> payouts) {
-        Map<String, MerchantOrderTxn> orderMap = orders.stream().collect(Collectors.toMap(MerchantOrderTxn::getSbiOrderRefNumber, o -> o, (a, b) -> a));
-        Map<String, BigDecimal> payoutAmountByAtrn = payouts.stream().collect(Collectors.toMap(MerchantTxnPayout::getAtrnNum, MerchantTxnPayout::getTxnPayoutAmount, (a, b) -> a));
-        List<SettlementRecordResponse> responses = new ArrayList<>();
-        for (MerchantOrderPaymentTxnMasProjection payment : payments) {
-            MerchantOrderTxn order = orderMap.get(payment.getSbiOrderRefNumber());
-            OrderInfo orderInfo = OrderInfo.builder().sbiOrderRefNumber(payment.getSbiOrderRefNumber()).build();
-            if(Objects.nonNull(order)) {
-                orderInfo.setOrderRefNumber(order.getOrderRefNumber());
-                orderInfo.setOrderStatus(order.getStatus());
-                orderInfo.setCurrencyCode(order.getCurrencyCode());
-                orderInfo.setOtherDetails(order.getOtherDetails());
-                orderInfo.setMultiAccounts(order.getMultiAccounts());
-            }
-            BigDecimal orderAmount = ofNullable(payment.getOrderAmount()).orElse(ofNullable(order).map(MerchantOrderTxn::getOrderAmount).orElse(BigDecimal.ZERO));
-            BigDecimal totalAmount = ofNullable(payment.getDebitAmount()).orElse(orderAmount);
-            PaymentInfo.PaymentInfoBuilder paymentBuilder = PaymentInfo.builder().uniqueIdentifier(payment.getAccountUniqueIdentifier()).accountNumber(payment.getAccountNumber()).atrnNumber(payment.getAtrnNum()).orderAmount(orderAmount)
-                    .totalAmount(totalAmount).transactionStatus(payment.getTransactionStatus()).payMode(payment.getPayMode()).bankName(payment.getChannelBank()).bankTxnNumber(payment.getBankReferenceNumber())
-                    .currencyCode(payment.getCurrencyCode()).transactionTime(payment.getCreatedDate()).cin(payment.getCin());
+    List<UUID> invalidIds =
+            masters.stream()
 
-            BigDecimal settlementAmount = payoutAmountByAtrn.get(payment.getAtrnNum());
-            PaymentInfo paymentInfo = paymentBuilder.settlementAmount(settlementAmount).settlementStatus(payment.getSettlementStatus()).settlementDate(payment.getSettlementTime()).utrn(payment.getPaymentNarration()).build();
-            responses.add(SettlementRecordResponse.builder().orderInfo(orderInfo).paymentInfo(Collections.singletonList(paymentInfo)).build());
-        }
-        return responses;
+            .filter(master ->
+
+                    !MasterStatus.ACTIVE
+                            .getValue()
+                            .equals(master.getStatus()))
+
+            .map(CountryDto::getId)
+
+            .toList();
+
+    if(!invalidIds.isEmpty()){
+
+        throw new AdminPortalException(
+
+                VALIDATION_ERROR_CODE,
+
+                "Following records are not ACTIVE : "
+                        + invalidIds
+
+        );
+
     }
---------------------
 
-@Data
-@Entity
-@Table(name = "MERCHANT_ORDERS_TXN")
-public class MerchantOrderTxn {
-    @Id
-    @Column(nullable = false, updatable = false)
-    private String sbiOrderRefNumber;
-    private String merchantId;
-    private String orderRefNumber;
-    private String currencyCode;
-    private BigDecimal orderAmount;
-    private String status;
-    private String otherDetails;
-    private String multiAccounts;
-    private Long createdDate;
 }
-
-
- "status": 1,
-    "data": [
-        {
-            "orderInfo": {
-                "sbiOrderRefNumber": "607B35F2221C4D4A9B4E",
-                "orderRefNumber": "qftOg",
-                "orderStatus": "PAID",
-                "currencyCode": "INR",
-                "multiAccounts": "[{\"accountIdentifier\":\"Anvesh123\",\"amount\":50},{\"accountIdentifier\":\"rahul123\",\"amount\":25},{\"accountIdentifier\":\"jitesh123\",\"amount\":25}]"
-            },
-            "paymentInfo": [
-                {
-                    "uniqueIdentifier": "Anvesh123",
-                    "accountNumber": "98989898988",
-                    "atrnNumber": "WA003KPB9NKRMXL97TE4",
-                    "orderAmount": 100,
-                    "totalAmount": 100,
-                    "transactionStatus": "SUCCESS",
-                    "payMode": "WALLET",
-                    "bankName": "CSC Wallet",
-                    "bankTxnNumber": "6195181522143915",
-                    "currencyCode": "INR",
-                    "transactionTime": 1784033122952,
-                    "settlementAmount": 50,
-                    "settlementStatus": "SETTLED",
-                    "settlementDate": 1784033410453,
-                    "utrn": "EPAY100000314072601",
-                    "CIN": "10000031407202672388"
-                }
-            ]
-        }
