@@ -1,57 +1,232 @@
- @Getter
+@RestController
+@RequestMapping("/master")
 @RequiredArgsConstructor
-public enum MasterStatus {
+public class MasterController {
 
-    ACTIVE("ACTIVE"),
+    private final MasterService masterService;
 
-    INACTIVE("INACTIVE"),
+    @PostMapping("/{masterCode}")
+    public AdminPortalResponse<MasterResponse> create(@PathVariable String masterCode, @RequestBody MasterRequest masterRequest){
+        masterRequest.setMasterCode(masterCode);
+        return masterService.create(masterRequest);
+    }
 
-    PENDING_FOR_APPROVAL("PENDING_FOR_APPROVAL"),
+    @PostMapping("/approve/{masterCode}")
+    public AdminPortalResponse<String> approve(@PathVariable String masterCode, @RequestBody MasterApproveRejectRequest masterApproveRejectRequest){
+        return masterService.approveMaster(masterApproveRejectRequest, masterCode);
+    }
 
-    PENDING_FOR_INACTIVATION("PENDING_FOR_INACTIVATION");
+    @PostMapping("/reject/{masterCode}")
+    public AdminPortalResponse<String> reject(@PathVariable String masterCode, @RequestBody MasterApproveRejectRequest masterApproveRejectRequest){
+        return masterService.rejectMaster(masterApproveRejectRequest, masterCode);
+    }
 
-    private final String value;
+    @PostMapping("/inactivate/{masterCode}")
+    public AdminPortalResponse<String> inactivate (@PathVariable String masterCode, @RequestBody MasterInactivationRequest masterInactivationRequest){
+        return masterService.inactivateMaster(masterInactivationRequest, masterCode);
+    }
+
+}
+------------------------
+
+@Service
+@RequiredArgsConstructor
+public class MasterService {
+
+    private final MasterHandlerFactory<BaseMasterDto> masterHandlerFactory;
+    private final MasterWorkFlowService masterWorkFlowService;
+
+    public AdminPortalResponse<MasterResponse> create(MasterRequest masterRequest) {
+        BaseMasterService<BaseMasterDto> masterService = masterHandlerFactory.getMasterService(masterRequest.getMasterCode());
+        BaseMasterDto masterDto = masterService.mapToMasterDto(masterRequest);
+        masterService.validateCreate(masterDto);
+        masterDto = masterService.create(masterDto);
+        MasterWorkFlowDto masterWorkFlowDto = masterService.mapToMasterWorkFlowDto(masterDto);
+        masterWorkFlowService.save(masterWorkFlowDto, WorkflowOperation.CREATE);
+        return masterService.mapToResponse(masterDto);
+    }
+
+    @Transactional
+    public AdminPortalResponse<String> approveMaster(MasterApproveRejectRequest request, String masterCode) {
+        MasterType master = MasterType.getMasterType(masterCode);
+        BaseMasterService<BaseMasterDto> service = masterHandlerFactory.getMasterService(master.name());
+        List<UUID> ids = request.getRecords().stream().map(MasterApproveRejectRequest.RecordItem::getMasterId).toList();
+        List<BaseMasterDto> masters = service.findByIds(ids);
+//        service.validateForApprove(masters);
+        service.approve(ids);
+        request.getRecords().forEach(record -> masterWorkFlowService.approveWorkFlow(master, record));
+        return AdminPortalResponse.<String>builder().status(SUCCESS_RESPONSE_CODE).data(List.of("Masters approved successfully")).build();
+    }
+
+    @Transactional
+    public AdminPortalResponse<String> rejectMaster(MasterApproveRejectRequest request, String masterCode) {
+        MasterType master = MasterType.getMasterType(masterCode);
+        BaseMasterService<BaseMasterDto> service = masterHandlerFactory.getMasterService(master.name());
+        List<UUID> ids = request.getRecords().stream().map(MasterApproveRejectRequest.RecordItem::getMasterId).toList();
+        List<BaseMasterDto> masters = service.findByIds(ids);
+//        service.validateForApprove(masters);
+        service.reject(ids);
+        request.getRecords().forEach(record -> masterWorkFlowService.rejectWorkFlow(master, record));
+        return AdminPortalResponse.<String>builder().status(SUCCESS_RESPONSE_CODE).data(List.of("Masters rejected successfully")).build();
+    }
+    @Transactional
+    public AdminPortalResponse<String> inactivateMaster(MasterInactivationRequest request, String masterCode) {
+        MasterType master = MasterType.getMasterType(masterCode);
+        BaseMasterService<BaseMasterDto> service = masterHandlerFactory.getMasterService(master.name());
+        List<BaseMasterDto> masters = service.findByIds(request.getMasterIds());
+//        service.validateForInactivation(masters);
+        service.markPendingForInactivation(request.getMasterIds());
+        masters.forEach(masterDto -> {
+            MasterWorkFlowDto workflow = service.mapToMasterWorkFlowDto(masterDto);
+            workflow.setAction(WorkflowAction.INACTIVATE.name());
+            workflow.setStatus(WorkflowAction.PENDING_FOR_INACTIVATION.name());
+            workflow.setRemark(request.getRemarks());
+            masterWorkFlowService.save(workflow, WorkflowOperation.INACTIVATION);
+        });
+        return AdminPortalResponse.<String>builder().status(SUCCESS_RESPONSE_CODE).data(List.of("Masters submitted for inactivation successfully")).build();
+    }
+
+}
+-------------------------
+@Service
+@RequiredArgsConstructor
+public class MasterWorkFlowService {
+    private final LoggerUtility log = LoggerFactoryUtility.getLogger(this.getClass());
+
+    private final MasterWorkFlowRepository masterWorkFlowRepository;
+    private final MasterWorkFlowMapper masterWorkFlowMapper;
+
+    public void save(MasterWorkFlowDto masterWorkFlowDto,  WorkflowOperation operation){
+        masterWorkFlowDto.setAction(operation.name());
+        masterWorkFlowDto.setMakerId(EPayIdentityUtil.getUserPrincipal().getUsername());
+        MasterWorkFlow masterWorkFlow = masterWorkFlowMapper.mapEntityToDto(masterWorkFlowDto);
+        masterWorkFlowRepository.save(masterWorkFlow);
+    }
+
+    public String approveWorkFlow(MasterType masterType, MasterApproveRejectRequest.RecordItem record) {
+        MasterWorkFlow workFlow= masterWorkFlowRepository.findTopByMasterTypeAndRecordIdAndStatusInOrderByCreatedAtDesc(masterType, record.getMasterId(), List.of(WorkflowAction.PENDING, WorkflowAction.INACTIVATION_PENDING))
+                .orElseThrow(() -> new AdminPortalException(NOT_FOUND_ERROR_CODE, MessageFormat.format(NOT_FOUND_ERROR_MESSAGE, "Pending workflow for masterId " + record.getMasterId())));
+        workFlow.setRemark(record.getRemark());
+        workFlow.setCheckerId(EPayIdentityUtil.getUserPrincipal().getUsername());
+        workFlow.setStatus(WorkflowAction.APPROVED.name());
+        masterWorkFlowRepository.save(workFlow);
+        log.info("Approved workflowId={} successfully for masterType={} and masterId={}", workFlow.getId(), masterType, record.getMasterId());
+        return "Approved masterId " + record.getMasterId();
+    }
+
+    public String rejectWorkFlow(MasterType masterType, MasterApproveRejectRequest.RecordItem record) {
+        MasterWorkFlow workFlow= masterWorkFlowRepository.findTopByMasterTypeAndRecordIdAndStatusInOrderByCreatedAtDesc(masterType, record.getMasterId(), List.of(WorkflowAction.PENDING, WorkflowAction.INACTIVATION_PENDING))
+                .orElseThrow(() -> new AdminPortalException(NOT_FOUND_ERROR_CODE, MessageFormat.format(NOT_FOUND_ERROR_MESSAGE, "Pending workflow for masterId " + record.getMasterId())));
+        workFlow.setRemark(record.getRemark());
+        workFlow.setCheckerId(EPayIdentityUtil.getUserPrincipal().getUsername());
+        workFlow.setStatus(WorkflowAction.REJECTED.name());
+        masterWorkFlowRepository.save(workFlow);
+        log.info("Approved workflowId={} successfully for masterType={} and masterId={}", workFlow.getId(), masterType, record.getMasterId());
+        return "Approved masterId " + record.getMasterId();
+    }
+
+    private String getRemarks(String operation){
+       return StringUtils.EMPTY;
+    }
+
+}
+------------------------------
+import com.epay.admin.portal.dto.master.MasterWorkFlowDto;
+import com.epay.admin.portal.entity.admin.master.MasterWorkFlow;
+import org.mapstruct.Builder;
+import org.mapstruct.Mapper;
+
+@Mapper(builder = @Builder(disableBuilder = true), componentModel = "spring")
+public interface MasterWorkFlowMapper {
+
+    MasterWorkFlow mapEntityToDto(MasterWorkFlowDto masterWorkFlowDto);
+}
+-------------------
+
+import com.epay.admin.portal.entity.admin.master.MasterWorkFlow;
+import com.epay.admin.portal.util.enums.MasterType;
+import com.epay.admin.portal.util.enums.WorkflowAction;
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.stereotype.Repository;
+
+import java.util.List;
+import java.util.Optional;
+import java.util.UUID;
+
+@Repository
+public interface MasterWorkFlowRepository extends JpaRepository<MasterWorkFlow, UUID> {
+    /**
+     * Finds the most recent workflow for the supplied master record and allowed statuses.
+     *
+     * @param masterType target master type
+     * @param recordId master record identifier
+     * @param statuses allowed workflow statuses
+     * @return matching workflow when present
+     */
+    Optional<MasterWorkFlow> findTopByMasterTypeAndRecordIdAndStatusInOrderByCreatedAtDesc(MasterType masterType, UUID recordId, List<WorkflowAction> statuses);
 }
 
+---------------------
+@Component
+public class MasterHandlerFactory<T extends BaseMasterDto> {
 
-@Getter
-@RequiredArgsConstructor
-public enum WorkflowOperation {
+    private final Map<String, BaseMasterService<T>> masterServiceMap;
 
-    CREATE,
+    public MasterHandlerFactory(Map<String, BaseMasterService<T>> masterServiceMap) {
+        this.masterServiceMap = masterServiceMap;
+    }
 
-    UPDATE,
+    public BaseMasterService<T> getMasterService(String masterCode){
+        BaseMasterService<T> masterService = masterServiceMap.get(masterCode+"Service");
+        if(masterService == null){
+            throw new AdminPortalException(ErrorConstants.GENERATION_ERROR_CODE, MessageFormat.format(ErrorConstants.GENERATION_ERROR_MESSAGE, masterCode));
+        }
+        return masterService;
+    }
 
-    INACTIVATION
 }
+--------------------------
+package com.epay.admin.portal.service.master;
 
+import com.epay.admin.portal.dto.BaseMasterDto;
+import com.epay.admin.portal.dto.master.MasterWorkFlowDto;
+import com.epay.admin.portal.model.request.MasterRequest;
+import com.epay.admin.portal.model.response.AdminPortalResponse;
+import com.epay.admin.portal.model.response.MasterResponse;
+import com.epay.admin.portal.util.enums.MasterCode;
 
----------
+import java.util.List;
+import java.util.UUID;
+
 public interface BaseMasterService<T extends BaseMasterDto> {
 
     MasterCode getMasterCode();
 
     List<MasterCode> getParentCodes();
 
-    T mapToMasterDto(MasterRequest request);
+    T mapToMasterDto(MasterRequest masterRequest);
 
-    MasterWorkFlowDto mapToMasterWorkFlowDto(T dto);
+    MasterWorkFlowDto mapToMasterWorkFlowDto(T t);
 
-    AdminPortalResponse<MasterResponse> mapToResponse(T dto);
+    AdminPortalResponse<MasterResponse> mapToResponse(T t);
 
-    void validateCreate(T dto);
+    void validateCreate(T t);
 
-    void validateUpdate(T dto);
+//    void validateUpdate(T t);
+//
+//    void validateApprove(T t);
 
-    void validateApprove(T dto);
+    T create(T t);
+//
+//    T update(T t);
 
-    T create(T dto);
+//    boolean approve(T t);
+//
+//    boolean reject(T t);
 
-    T update(T dto);
-
-    boolean approve(T dto);
-
-    boolean reject(T dto);
+//    void updateApproveStatus(List<UUID> ids);
+//
+//    void updateRejectStatus(List<UUID> ids);
 
     void approve(List<UUID> ids);
 
@@ -64,330 +239,275 @@ public interface BaseMasterService<T extends BaseMasterDto> {
     void validateForApprove(List<T> masters);
 
     void validateForInactivation(List<T> masters);
-
 }
---------
-@Transactional
-public AdminPortalResponse<String> approveMaster(
-        MasterApproveRejectRequest request,
-        String masterCode) {
-
-    MasterType master = MasterType.getMasterType(masterCode);
-
-    BaseMasterService<BaseMasterDto> service =
-            masterHandlerFactory.getMasterService(master.name());
-
-    List<UUID> ids = request.getRecords()
-            .stream()
-            .map(MasterApproveRejectRequest.RecordItem::getMasterId)
-            .toList();
-
-    List<BaseMasterDto> masters = service.findByIds(ids);
-
-    service.validateForApprove(masters);
-
-    service.approve(ids);
-
-    request.getRecords().forEach(record ->
-            masterWorkFlowService.approveWorkFlow(master, record));
-
-    return AdminPortalResponse.<String>builder()
-            .status(SUCCESS_RESPONSE_CODE)
-            .data(List.of("Masters approved successfully"))
-            .build();
-}
-
-
---------
-
-
-@Transactional
-public AdminPortalResponse<String> rejectMaster(
-        MasterApproveRejectRequest request,
-        String masterCode) {
-
-    MasterType master = MasterType.getMasterType(masterCode);
-
-    BaseMasterService<BaseMasterDto> service =
-            masterHandlerFactory.getMasterService(master.name());
-
-    List<UUID> ids = request.getRecords()
-            .stream()
-            .map(MasterApproveRejectRequest.RecordItem::getMasterId)
-            .toList();
-
-    List<BaseMasterDto> masters = service.findByIds(ids);
-
-    service.validateForApprove(masters);
-
-    service.reject(ids);
-
-    request.getRecords().forEach(record ->
-            masterWorkFlowService.rejectWorkFlow(master, record));
-
-    return AdminPortalResponse.<String>builder()
-            .status(SUCCESS_RESPONSE_CODE)
-            .data(List.of("Masters rejected successfully"))
-            .build();
-}
-----
-@Transactional
-public AdminPortalResponse<String> inactivate(
-        MasterInactivationRequest request,
-        String masterCode) {
-
-    MasterType master = MasterType.getMasterType(masterCode);
-
-    BaseMasterService<BaseMasterDto> service =
-            masterHandlerFactory.getMasterService(master.name());
-
-    List<BaseMasterDto> masters =
-            service.findByIds(request.getMasterIds());
-
-    service.validateForInactivation(masters);
-
-    service.markPendingForInactivation(request.getMasterIds());
-
-    masters.forEach(masterDto -> {
-
-        MasterWorkFlowDto workflow =
-                service.mapToMasterWorkFlowDto(masterDto);
-
-        workflow.setAction(WorkflowAction.INACTIVATE.name());
-
-        workflow.setStatus(WorkflowAction.INACTIVATION_PENDING.name());
-
-        workflow.setRemark(request.getRemark());
-
-        masterWorkFlowService.save(
-                workflow,
-                WorkflowOperation.INACTIVATION);
-
-    });
-
-    return AdminPortalResponse.<String>builder()
-            .status(SUCCESS_RESPONSE_CODE)
-            .data(List.of("Masters submitted for inactivation successfully"))
-            .build();
-}
-
-------
-Update Workflow Service:-
-
-
-public void save(
-        MasterWorkFlowDto dto,
-        WorkflowOperation operation) {
-
-    dto.setAction(operation.name());
-
-    dto.setMakerId(
-            EPayIdentityUtil.getUserPrincipal().getUsername());
-
-    MasterWorkFlow workflow =
-            masterWorkFlowMapper.mapEntityToDto(dto);
-
-    masterWorkFlowRepository.save(workflow);
-}
------
-
-
-@Transactional
-@Modifying
-@Query("""
-UPDATE Country c
-SET c.status =
-CASE
-
-WHEN c.status='PENDING_FOR_APPROVAL'
-THEN 'ACTIVE'
-
-WHEN c.status='PENDING_FOR_INACTIVATION'
-THEN 'INACTIVE'
-
-ELSE c.status
-
-END
-WHERE c.id IN :ids
-""")
-int approve(@Param("ids") List<UUID> ids);
-
-
-
-@Transactional
-@Modifying
-@Query("""
-UPDATE Country c
-SET c.status =
-CASE
-
-WHEN c.status='PENDING_FOR_APPROVAL'
-THEN 'INACTIVE'
-
-WHEN c.status='PENDING_FOR_INACTIVATION'
-THEN 'ACTIVE'
-
-ELSE c.status
-
-END
-WHERE c.id IN :ids
-""")
-int reject(@Param("ids") List<UUID> ids);
-
-
-
-@Transactional
-@Modifying
-@Query("""
-UPDATE Country c
-SET c.status='PENDING_FOR_INACTIVATION'
-WHERE c.id IN :ids
-""")
-int markPendingForInactivation(
-        @Param("ids") List<UUID> ids);
-
-
-
---------MasterDao
-
-public List<CountryDto> findCountries(List<UUID> ids){
-
-    return countryRepository.findByIdIn(ids)
-            .stream()
-            .map(masterMapper::mapCountryToCountryDto)
-            .toList();
-}
-
-
-public void approve(List<UUID> ids){
-
-    countryRepository.approve(ids);
-
-}
-
-
-public void reject(List<UUID> ids){
-
-    countryRepository.reject(ids);
-
-}
-
-
-public void markPendingForInactivation(
-        List<UUID> ids){
-
-    countryRepository.markPendingForInactivation(ids);
-
-}
-
-
-------CountryService
-
-@Override
-public void approve(List<UUID> ids){
-
-    masterDao.approve(ids);
-
-}
-
-
-@Override
-public void reject(List<UUID> ids){
-
-    masterDao.reject(ids);
-
-}
-
-
-
-@Override
-public void markPendingForInactivation(
-        List<UUID> ids){
-
-    masterDao.markPendingForInactivation(ids);
-
-}
-
-
-
-@Override
-public List<CountryDto> findByIds(
-        List<UUID> ids){
-
-    return masterDao.findCountries(ids);
-
-}
-
-
------Validation
-
-@Override
-public void validateForApprove(
-        List<CountryDto> masters){
-
-    List<UUID> invalidIds =
-            masters.stream()
-
-            .filter(master ->
-
-                    !MasterStatus.PENDING_FOR_APPROVAL
-                            .getValue()
-                            .equals(master.getStatus())
-
-                    &&
-
-                    !MasterStatus.PENDING_FOR_INACTIVATION
-                            .getValue()
-                            .equals(master.getStatus()))
-
-            .map(CountryDto::getId)
-
-            .toList();
-
-    if(!invalidIds.isEmpty()){
-
-        throw new AdminPortalException(
-
-                VALIDATION_ERROR_CODE,
-
-                "Following records are not pending : "
-                        + invalidIds
-
-        );
+-------------------------
+import com.epay.admin.portal.dao.admin.master.MasterDao;
+import com.epay.admin.portal.dto.master.CountryDto;
+import com.epay.admin.portal.dto.master.MasterWorkFlowDto;
+import com.epay.admin.portal.model.request.MasterRequest;
+import com.epay.admin.portal.model.response.AdminPortalResponse;
+import com.epay.admin.portal.model.response.MasterResponse;
+import com.epay.admin.portal.util.enums.MasterCode;
+import com.epay.admin.portal.util.enums.WorkflowAction;
+import com.epay.admin.portal.util.enums.WorkflowOperation;
+import com.epay.admin.portal.validator.AdminMasterValidator;
+import lombok.Data;
+import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Qualifier;
+
+import java.util.List;
+import java.util.UUID;
+
+@Qualifier("countryService")
+@Data
+@RequiredArgsConstructor
+public class CountryService implements BaseMasterService<CountryDto> {
+
+    private final AdminMasterValidator adminMasterValidator;
+    private final MasterDao masterDao;
+    public static final String STATUS_APPROVAL_PENDING = "APPROVAL_PENDING";
+
+
+    @Override
+    public MasterCode getMasterCode() {
+        return MasterCode.COUNTRY;
+    }
+
+    @Override
+    public List<MasterCode> getParentCodes() {
+        return List.of();
+    }
+
+    @Override
+    public CountryDto mapToMasterDto(MasterRequest masterRequest) {
+        return new CountryDto();
+    }
+
+    @Override
+    public MasterWorkFlowDto mapToMasterWorkFlowDto(CountryDto countryDto) {
+       return MasterWorkFlowDto.builder().masterCode(MasterCode.COUNTRY.name()).remark(WorkflowOperation.CREATE.name()).status(WorkflowAction.PENDING.name()).entityId(countryDto.getId().toString()).build();
+    }
+
+    @Override
+    public AdminPortalResponse<MasterResponse> mapToResponse(CountryDto countryDto) {
+
+        return null;
+    }
+
+    @Override
+    public void validateCreate(CountryDto countryDto) {
+        adminMasterValidator.validateCreateCountry(countryDto);
+    }
+
+//    @Override
+//    public void validateUpdate(CountryDto countryDto) {
+//
+//    }
+//
+//    @Override
+//    public void validateApprove(CountryDto countryDto) {
+//
+//    }
+
+    @Override
+    public CountryDto create(CountryDto countryDto) {
+        countryDto.setStatus(WorkflowAction.PENDING_FOR_APPROVAL.name());
+      return masterDao.createCountry(countryDto);
+    }
+
+//    @Override
+//    public CountryDto update(CountryDto countryDto) {
+//        return null;
+//    }
+//
+//    @Override
+//    public boolean approve(CountryDto countryDto) {
+//        return false;
+//    }
+//
+//    @Override
+//    public boolean reject(CountryDto countryDto) {
+//        return false;
+//    }
+
+//    @Override
+//    public void updateApproveStatus(List<UUID> masterIds) {
+//        masterDao.updateApproveStatusById(masterIds, "ACTIVE");
+//    }
+//
+//    @Override
+//    public void updateRejectStatus(List<UUID> ids) {
+//        masterDao.updateApproveStatusById(ids, "INACTIVE");
+//    }
+
+    @Override
+    public void approve(List<UUID> ids){
+        masterDao.approve(ids);
+    }
+
+    @Override
+    public void reject(List<UUID> ids){
+        masterDao.reject(ids);
+    }
+
+    @Override
+    public void markPendingForInactivation(List<UUID> ids){
+        masterDao.markPendingForInactivation(ids);
+    }
+
+    @Override
+    public List<CountryDto> findByIds(List<UUID> ids){
+        return masterDao.findCountries(ids);
+    }
+
+    @Override
+    public void validateForApprove(List<CountryDto> masters) {
 
     }
 
-}
-
-
-@Override
-public void validateForInactivation(
-        List<CountryDto> masters){
-
-    List<UUID> invalidIds =
-            masters.stream()
-
-            .filter(master ->
-
-                    !MasterStatus.ACTIVE
-                            .getValue()
-                            .equals(master.getStatus()))
-
-            .map(CountryDto::getId)
-
-            .toList();
-
-    if(!invalidIds.isEmpty()){
-
-        throw new AdminPortalException(
-
-                VALIDATION_ERROR_CODE,
-
-                "Following records are not ACTIVE : "
-                        + invalidIds
-
-        );
+    @Override
+    public void validateForInactivation(List<CountryDto> masters) {
 
     }
+}
+----------------------
+@Component
+@RequiredArgsConstructor
+public class MasterDao {
+    private MasterMapper masterMapper;
+    private final CountryRepository countryRepository;
 
+    public CountryDto createCountry(CountryDto countryDto){
+        Country country= countryRepository.save(masterMapper.mapCountryDtoToCountry(countryDto));
+        return masterMapper.mapCountryToCountryDto(country);
+    }
+
+//    public void updateApproveStatusById(List<UUID> masterIds, String status){
+//        countryRepository.updateStatus(masterIds,status);
+//    }
+
+    public List<CountryDto> findCountries(List<UUID> ids){
+        return countryRepository.findAllById(ids).stream().map(masterMapper::mapCountryToCountryDto).toList();
+    }
+
+    public void approve(List<UUID> ids){
+        countryRepository.approve(ids);
+    }
+
+    public void reject(List<UUID> ids){
+        countryRepository.reject(ids);
+    }
+
+    public void markPendingForInactivation(List<UUID> ids){
+        countryRepository.markPendingForInactivation(ids);
+    }
+
+}
+-------------------------------
+package com.epay.admin.portal.repository.admin.master;
+
+import com.epay.admin.portal.entity.admin.master.Country;
+import jakarta.transaction.Transactional;
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
+
+import java.util.List;
+import java.util.UUID;
+
+public interface CountryRepository extends JpaRepository<Country, UUID> {
+    @Transactional
+    @Modifying
+    @Query("UPDATE Country c SET c.status= :status WHERE c.id IN :masterIds")
+    int updateStatus(@Param("masterIds")List<UUID> masterIds, @Param("status") String status);
+
+    @Transactional
+    @Modifying
+    @Query("""
+           UPDATE Country c SET c.status = CASE
+            WHEN c.status='PENDING_FOR_APPROVAL' THEN 'ACTIVE'
+            WHEN c.status='PENDING_FOR_INACTIVATION' THEN 'INACTIVE'
+            ELSE c.status END
+            WHERE c.id IN :ids
+            """)
+    int approve(@Param("ids") List<UUID> ids);
+
+
+    @Transactional
+    @Modifying
+    @Query("""
+            UPDATE Country c
+            SET c.status =
+            CASE
+            WHEN c.status='PENDING_FOR_APPROVAL' THEN 'INACTIVE'
+            WHEN c.status='PENDING_FOR_INACTIVATION' THEN 'ACTIVE'
+            ELSE c.status END WHERE c.id IN :ids
+            """)
+    int reject(@Param("ids") List<UUID> ids);
+
+
+
+    @Transactional
+    @Modifying
+    @Query("""
+            UPDATE Country c
+            SET c.status='PENDING_FOR_INACTIVATION' WHERE c.id IN :ids
+            """)
+    int markPendingForInactivation(@Param("ids") List<UUID> ids);
+
+}
+--------------
+@Data
+@AllArgsConstructor
+@NoArgsConstructor
+@Builder
+public class MasterInactivationRequest {
+    private List<UUID> masterIds;
+    private String remarks;
+}
+---------------------
+@Data
+@AllArgsConstructor
+@NoArgsConstructor
+@Builder
+public class MasterApproveRejectRequest {
+   private List<RecordItem> records;
+
+   @Data
+   @NoArgsConstructor
+   @AllArgsConstructor
+   @Builder
+   public static class RecordItem {
+      private UUID masterId;
+      private String remark;
+   }
+
+}
+----------------------
+@Getter
+@RequiredArgsConstructor
+public enum WorkflowOperation {
+
+    CREATE,
+    INACTIVATION
+}
+----------------
+@Getter
+@RequiredArgsConstructor
+public enum WorkflowAction {
+
+    CREATE("Create"),
+    APPROVED("Approved"),
+    REJECTED("Rejected"),
+    PENDING("Pending"),
+    INACTIVATE("Inactivate"),
+    //    INACTIVATION_PENDING("Inactivation pending"),
+//    APPROVE_INACTIVATION("Approve Inactivation"),
+//    REJECT_INACTIVATION("Reject Inactivation"),
+    BULK_UPLOAD("Bulk Upload"),
+    PENDING_FOR_APPROVAL("PENDING_FOR_APPROVAL");
+
+    WorkflowAction(String create) {
+    }
 }
