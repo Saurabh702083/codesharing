@@ -1,15 +1,18 @@
-public CountryCurrencyDto mapToMasterDto(MasterRequest request) {
-    Map<String, Object> data = request.getData();
+@Mapper(componentModel = "spring")
+public interface CountryCurrencyMapper {
 
-    CountryCurrencyDto dto = new CountryCurrencyDto();
-    dto.setCode(getStringValue(data.get("code")));
-    dto.setName(getStringValue(data.get("name")));
-    dto.setCurrencyCode(getStringValue(data.get("currencyCode")));
-    dto.setCurrencyName(getStringValue(data.get("currencyName")));
-    ...
+    default CountryCurrencyDto toDto(MasterRequest request) {
+        if (request == null || request.getData() == null) {
+            return new CountryCurrencyDto();
+        }
+
+        ObjectMapper mapper = new ObjectMapper();
+        return mapper.convertValue(request.getData(), CountryCurrencyDto.class);
+    }
 }
 
------------
+
+
 
 @Mapper(componentModel = "spring")
 public interface MasterResponseMapper {
@@ -36,7 +39,6 @@ public interface MasterResponseMapper {
         return map;
     }
 }
------------
 
 
 
@@ -46,20 +48,6 @@ public interface MasterResponseMapper {
 
 
 
-
-public static StandardOrderRequest convertRequestToJson(String jsonRequest, String pairSeparatorRegex) throws JsonProcessingException {
-    ObjectMapper mapper = new ObjectMapper();
-    JsonNode rootNode = mapper.readTree(jsonRequest);
-
-    String encryptedRequest = rootNode.path("encryptedRequest").asText();
-    String multiAccountEncryptRequest = rootNode.path("multiAccountEncryptRequest").asText();
-
-    // existing logic — unchanged, just now operating on encryptedRequest pulled from JSON
-    String[] pairs = encryptedRequest.split(Pattern.quote(pairSeparatorRegex), -1);
-    StandardOrderRequest standardOrderRequest = StandardOrderRequest.builder()
-            .merchantId(pairs[0]).operatingMode(pairs[1]).merchantCountry(pairs[2])
-            .merchantCurrency(pairs[3]).postingAmount(pairs[4]).otherDetails(pairs[5])
-            .successURL(pairs[6]).failURL(pairs[7])
             .aggregatorID(pairs[8]).merchantOrderNumber(pairs[9])
             .merchantCustomerID(pairs[10]).paymode(pairs[11]).accessMedium(pairs[12])
             .transactionSource(pairs[13]).build();
