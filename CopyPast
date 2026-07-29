@@ -1,4 +1,80 @@
 @Mapper(componentModel = "spring")
+public interface MasterMapper {
+
+    default Map<String, Object> toMap(BaseMasterDto dto) {
+
+        Map<String, Object> map = new LinkedHashMap<>();
+
+        map.put("id", dto.getId());
+        map.put("code", dto.getCode());
+        map.put("name", dto.getName());
+        map.put("status", dto.getStatus());
+        map.put("createdAt", dto.getCreatedAt());
+        map.put("createdBy", dto.getCreatedBy());
+        map.put("updatedAt", dto.getUpdatedAt());
+        map.put("updatedBy", dto.getUpdatedBy());
+
+        if (dto instanceof CountryCurrencyDto country) {
+            map.put("currencyCode", country.getCurrencyCode());
+            map.put("currencyName", country.getCurrencyName());
+        }
+
+        return map;
+    }
+
+    default MasterResponse toMasterResponse(BaseMasterDto dto,
+                                            MasterType masterType) {
+
+        MasterResponse response = new MasterResponse();
+        response.setMasterCode(masterType.name());
+        response.setData(toMap(dto));
+
+        return response;
+    }
+
+    default MasterSearchResponse toMasterSearchResponse(BaseMasterDto dto,
+                                                        MasterType masterType) {
+
+        MasterSearchResponse response = new MasterSearchResponse();
+        response.setMasterCode(masterType.name());
+        response.setData(toMap(dto));
+
+        return response;
+    }
+}
+
+
+
+
+@Mapper(componentModel = "spring")
+public interface CountryCurrencyMapper {
+
+    ObjectMapper OBJECT_MAPPER = new ObjectMapper();
+
+    default CountryCurrencyDto toDto(MasterRequest request) {
+
+        if (request == null || request.getData() == null) {
+            return new CountryCurrencyDto();
+        }
+
+        CountryCurrencyDto dto =
+                OBJECT_MAPPER.convertValue(request.getData(), CountryCurrencyDto.class);
+
+        Object masterId = request.getData().get("masterId");
+
+        if (masterId != null && StringUtils.isNotBlank(masterId.toString())) {
+            dto.setId(UUID.fromString(masterId.toString()));
+        }
+
+        return dto;
+    }
+}
+
+
+
+
+
+@Mapper(componentModel = "spring")
 public interface CountryCurrencyMapper {
 
     default CountryCurrencyDto toDto(MasterRequest request) {
