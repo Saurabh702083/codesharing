@@ -1,3 +1,52 @@
+public CountryCurrencyDto mapToMasterDto(MasterRequest request) {
+    Map<String, Object> data = request.getData();
+
+    CountryCurrencyDto dto = new CountryCurrencyDto();
+    dto.setCode(getStringValue(data.get("code")));
+    dto.setName(getStringValue(data.get("name")));
+    dto.setCurrencyCode(getStringValue(data.get("currencyCode")));
+    dto.setCurrencyName(getStringValue(data.get("currencyName")));
+    ...
+}
+
+-----------
+
+@Mapper(componentModel = "spring")
+public interface MasterResponseMapper {
+
+    @Mapping(target = "masterCode", constant = "COUNTRY_CURRENCY")
+    @Mapping(target = "data", source = ".")
+    MasterResponse toResponse(CountryCurrencyDto dto);
+
+    default Map<String, Object> map(CountryCurrencyDto dto) {
+
+        Map<String, Object> map = new LinkedHashMap<>();
+
+        map.put("id", dto.getId());
+        map.put("code", dto.getCode());
+        map.put("name", dto.getName());
+        map.put("currencyCode", dto.getCurrencyCode());
+        map.put("currencyName", dto.getCurrencyName());
+        map.put("status", dto.getStatus());
+        map.put("createdAt", dto.getCreatedAt());
+        map.put("createdBy", dto.getCreatedBy());
+        map.put("updatedAt", dto.getUpdatedAt());
+        map.put("updatedBy", dto.getUpdatedBy());
+
+        return map;
+    }
+}
+-----------
+
+
+
+
+
+
+
+
+
+
 public static StandardOrderRequest convertRequestToJson(String jsonRequest, String pairSeparatorRegex) throws JsonProcessingException {
     ObjectMapper mapper = new ObjectMapper();
     JsonNode rootNode = mapper.readTree(jsonRequest);
