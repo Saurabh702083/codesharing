@@ -1,3 +1,119 @@
+@PostMapping("/approve/{masterCode}")
+public AdminPortalResponse<String> approve(@PathVariable String masterCode,
+                                           @RequestBody MasterApproveRejectRequest request) {
+    return adminMasterService.approve(request, masterCode);
+}
+
+@PostMapping("/reject/{masterCode}")
+public AdminPortalResponse<String> reject(@PathVariable String masterCode,
+                                          @RequestBody MasterApproveRejectRequest request) {
+    return adminMasterService.reject(request, masterCode);
+}
+
+@Transactional
+public AdminPortalResponse<String> approve(MasterApproveRejectRequest request,
+                                           String masterCode) {
+
+    return performAction(
+            request,
+            WorkflowOperation.APPROVE,
+            List.of(
+                    WorkflowAction.PENDING_FOR_APPROVAL.name(),
+                    WorkflowAction.PENDING_FOR_INACTIVE.name(),
+                    WorkflowAction.PENDING_FOR_REJECTED.name()
+            ),
+            masterCode
+    );
+}
+
+
+@Transactional
+public AdminPortalResponse<String> reject(MasterApproveRejectRequest request,
+                                          String masterCode) {
+
+    return performAction(
+            request,
+            WorkflowOperation.REJECT,
+            List.of(
+                    WorkflowAction.PENDING_FOR_APPROVAL.name(),
+                    WorkflowAction.PENDING_FOR_INACTIVE.name()
+            ),
+            masterCode
+    );
+}
+
+
+private AdminPortalResponse<String> performAction(
+        MasterApproveRejectRequest request,
+        WorkflowOperation operation,
+        List<String> allowedPreviousActions,
+        String masterCode) {
+
+    BaseMasterService<BaseMasterDto> masterService = resolveMasterService(masterCode);
+
+    List<UUID> ids = request.getRecords()
+            .stream()
+            .map(record -> UUID.fromString(record.getMasterId()))
+            .toList();
+
+    List<BaseMasterDto> masters = masterService.findByIds(ids);
+
+    masterService.validateBulkMasters(
+            masters,
+            allowedPreviousActions,
+            operation.name());
+
+    logger.info("Request validated successfully for operation : {}.", operation.name());
+
+    masterService.performAction(ids, operation);
+
+    logger.info("{} operation performed successfully for master code: {}",
+            operation.name(),
+            masterCode);
+
+    Map<UUID, String> remarksMap = request.getRecords()
+            .stream()
+            .collect(Collectors.toMap(
+                    record -> UUID.fromString(record.getMasterId()),
+                    RecordItem::getRemark
+            ));
+
+    List<MasterWorkFlowDto> workflowDtos = masters.stream()
+            .map(master -> {
+
+                String remark = remarksMap.get(master.getId());
+
+                if (StringUtils.isBlank(remark)) {
+                    remark = MessageFormat.format(message, operation.name());
+                }
+
+                return masterService.mapToMasterWorkFlowDto(
+                        master,
+                        operation,
+                        remark);
+            })
+            .toList();
+
+    masterWorkFlowService.save(workflowDtos);
+
+    logger.info("Master workflow records saved for {}", masterCode);
+
+    return mapToResponse(MessageFormat.format(message, operation.name()));
+}
+
+
+@Transactional
+public AdminPortalResponse<String> inactive(MasterBulkRequest request,
+                                            String masterCode) {
+    return performAction(
+            request,
+            WorkflowOperation.INACTIVE,
+            List.of(WorkflowAction.APPROVED.name()),
+            masterCode);
+}
+
+
+_______________________
 @RestController
 @RequestMapping("/admin/master")
 @RequiredArgsConstructor
