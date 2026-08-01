@@ -1,3 +1,164 @@
+public class BaseSpecificationBuilder <T>{
+    private final Root<T> root;
+
+    private final CriteriaBuilder cb;
+
+    private final List<Predicate> predicates = new ArrayList<>();
+
+    public BaseSpecificationBuilder(Root<T> root, CriteriaBuilder cb) {
+        this.root = root;
+        this.cb = cb;
+    }
+
+    public BaseSpecificationBuilder<T> like(String field, String value) {
+        if (StringUtils.hasText(value)) {
+            predicates.add(cb.like(cb.upper(root.get(field)), "%" + value.toUpperCase() + "%"));
+        }
+        return this;
+    }
+
+    public BaseSpecificationBuilder<T> equal(String field, Object value) {
+        if (value != null) {
+            predicates.add(cb.equal(root.get(field), value));
+        }
+        return this;
+    }
+
+    public BaseSpecificationBuilder<T> dateRange(String field, Long from, Long to) {
+        if (from != null) {
+            predicates.add(cb.greaterThanOrEqualTo(root.get(field), from));
+        }
+        if (to != null) {predicates.add(cb.lessThanOrEqualTo(root.get(field), to));
+        }
+        return this;
+    }
+
+    public BaseSpecificationBuilder<T> status(String status) {
+        if (StringUtils.hasText(status)) {
+            predicates.add(cb.equal(root.get("status"), status));
+        } else {
+            predicates.add(root.get("status").in("ACTIVE","INACTIVE"));
+        }
+        return this;
+    }
+
+    public Predicate build() {
+        return cb.and(predicates.toArray(new Predicate[0]));
+
+    }
+}
+
+@Getter
+@Setter
+@Entity
+@Table(name = "COUNTRY_CURRENCY_MASTER")
+public class CountryCurrency extends BaseMasterEntity {
+    @Id
+    @GeneratedValue
+    @UuidGenerator(style = UuidGenerator.Style.TIME)
+    private UUID id;
+
+    private String currencyCode;
+
+    private String currencyName;
+}
+
+@Getter
+@Setter
+@Audited
+@MappedSuperclass
+public abstract class BaseMasterEntity extends AuditEntity {
+    private String code;
+    private String name;
+    private String status;
+    private String action;
+}
+
+------------------------------------
+
+@Component
+@RequiredArgsConstructor
+public class CountryCurrencyValidator extends BaseValidator{
+
+    private final LoggerUtility logger = LoggerFactoryUtility.getLogger(this.getClass());
+
+    public void validateCreate(CountryCurrencyDto countryDto){
+        errorDtoList = new ArrayList<>();
+        validateMandatoryFields(countryDto);
+        logger.debug("Mandatory validation completed for {}", countryDto);
+        checkForLeadingTrailingAndSingleSpace(countryDto);
+        logger.debug("checkForLeadingTrailing validation completed for {}", countryDto);
+        validateFieldsLength(countryDto);
+        logger.debug("validateFieldsLength completed for {}", countryDto);
+
+    }
+
+    private void validateMandatoryFields(CountryCurrencyDto countryDto) {
+        checkMandatoryField(countryDto.getCode(), MASTER_CODE);
+        checkMandatoryField(countryDto.getName(), MASTER_NAME);
+        checkMandatoryField(countryDto.getCurrencyCode(), CURRENCY_CODE);
+        checkMandatoryField(countryDto.getCurrencyName(), CURRENCY_NAME);
+        throwIfErrors();
+    }
+
+    private void checkForLeadingTrailingAndSingleSpace(CountryCurrencyDto countryDto) {
+        checkForLeadingTrailingAndSingleSpace(countryDto.getCode(), MASTER_CODE);
+        checkForLeadingTrailingAndSingleSpace(countryDto.getName(), MASTER_NAME);
+        checkForLeadingTrailingAndSingleSpace(countryDto.getCurrencyCode(),CURRENCY_CODE);
+        checkForLeadingTrailingAndSingleSpace(countryDto.getCurrencyName(),CURRENCY_NAME);
+        throwIfErrors();
+    }
+
+    private void validateFieldsLength(CountryCurrencyDto countryDto) {
+        validateFieldLength(countryDto.getCode(),FIFTY_LENGTH, MASTER_CODE);
+        validateFieldLength(countryDto.getName(), FIFTY_LENGTH, MASTER_NAME);
+        validateFieldLength(countryDto.getCurrencyCode(), FIFTY_LENGTH, CURRENCY_CODE);
+        validateFieldLength(countryDto.getCurrencyName(), FIFTY_LENGTH, CURRENCY_NAME);
+        throwIfErrors();
+    }
+
+    public void validateUpdate(CountryCurrencyDto countryDto){
+        errorDtoList = new ArrayList<>();
+        checkMandatoryField(countryDto.getId(), MASTER_ID);
+        checkForLeadingTrailingAndSingleSpace(countryDto);
+        logger.debug("checkForLeadingTrailing validation completed for {}", countryDto);
+        validateFieldsLength(countryDto);
+        logger.debug("validateFieldsLength completed for {}", countryDto);
+    }
+
+    public void validateBulkMasters(List<CountryCurrencyDto> masters, List<String> workflowActions, String performAction) {
+        List<UUID> invalidIds = masters.stream().filter(countryCurrencyDto -> !workflowActions.contains(countryCurrencyDto.getAction())).map(CountryCurrencyDto::getId).collect(Collectors.toList());
+        if (CollectionUtils.isNotEmpty(invalidIds)) {
+            throw new ValidationException(INVALID_ERROR_CODE, MessageFormat.format(FOLLOWING_RECORDS_ARE_NOT_VALID, performAction, invalidIds));
+        }
+    }
+}
+
+@Getter
+@Setter
+@AllArgsConstructor
+@NoArgsConstructor
+public class CountryCurrencyDto extends BaseMasterDto {
+    private UUID id;
+    private String currencyCode;
+    private String currencyName;
+}
+
+@Getter
+@Setter
+public abstract class BaseMasterDto {
+    private UUID id;
+    private String code;
+    private String name;
+    private String status;
+    private String action;
+    private long createdAt;
+    private String createdBy;
+    private long updatedAt;
+    private String updatedBy;
+}
+-----------------------------
+
 @Mapper(componentModel = "spring")
 public interface MasterMapper {
 
