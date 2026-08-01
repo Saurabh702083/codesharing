@@ -1,3 +1,118 @@
+public abstract class BaseMasterValidator extends BaseValidator {
+
+    protected void validateCommonMandatoryFields(BaseMasterDto dto) {
+        checkMandatoryField(dto.getCode(), MASTER_CODE);
+        checkMandatoryField(dto.getName(), MASTER_NAME);
+        throwIfErrors();
+    }
+
+    protected void validateCommonFieldsSpacing(BaseMasterDto dto) {
+        checkForLeadingTrailingAndSingleSpace(dto.getCode(), MASTER_CODE);
+        checkForLeadingTrailingAndSingleSpace(dto.getName(), MASTER_NAME);
+        throwIfErrors();
+    }
+
+    protected void validateCommonFieldsLength(BaseMasterDto dto) {
+        validateFieldLength(dto.getCode(), FIFTY_LENGTH, MASTER_CODE);
+        validateFieldLength(dto.getName(), FIFTY_LENGTH, MASTER_NAME);
+        throwIfErrors();
+    }
+
+    protected void validateId(BaseMasterDto dto) {
+        checkMandatoryField(dto.getId(), MASTER_ID);
+        throwIfErrors();
+    }
+}
+
+@Component
+@RequiredArgsConstructor
+public class CountryCurrencyValidator extends BaseMasterValidator {
+
+    private final LoggerUtility logger = LoggerFactoryUtility.getLogger(this.getClass());
+
+    public void validateCreate(CountryCurrencyDto dto) {
+        errorDtoList = new ArrayList<>();
+
+        // Common validations
+        validateCommonMandatoryFields(dto);
+        validateCommonFieldsSpacing(dto);
+        validateCommonFieldsLength(dto);
+
+        // Master specific validations
+        validateCurrencyMandatoryFields(dto);
+        validateCurrencySpacing(dto);
+        validateCurrencyLength(dto);
+    }
+
+    public void validateUpdate(CountryCurrencyDto dto) {
+        errorDtoList = new ArrayList<>();
+
+        validateId(dto);
+
+        // Common validations
+        validateCommonFieldsSpacing(dto);
+        validateCommonFieldsLength(dto);
+
+        // Master specific validations
+        validateCurrencySpacing(dto);
+        validateCurrencyLength(dto);
+    }
+
+    private void validateCurrencyMandatoryFields(CountryCurrencyDto dto) {
+        checkMandatoryField(dto.getCurrencyCode(), CURRENCY_CODE);
+        checkMandatoryField(dto.getCurrencyName(), CURRENCY_NAME);
+        throwIfErrors();
+    }
+
+    private void validateCurrencySpacing(CountryCurrencyDto dto) {
+        checkForLeadingTrailingAndSingleSpace(dto.getCurrencyCode(), CURRENCY_CODE);
+        checkForLeadingTrailingAndSingleSpace(dto.getCurrencyName(), CURRENCY_NAME);
+        throwIfErrors();
+    }
+
+    private void validateCurrencyLength(CountryCurrencyDto dto) {
+        validateFieldLength(dto.getCurrencyCode(), FIFTY_LENGTH, CURRENCY_CODE);
+        validateFieldLength(dto.getCurrencyName(), FIFTY_LENGTH, CURRENCY_NAME);
+        throwIfErrors();
+    }
+
+    // validateBulkMasters() remains unchanged
+}
+
+protected void validateCommonCreate(BaseMasterDto dto) {
+    validateCommonMandatoryFields(dto);
+    validateCommonFieldsSpacing(dto);
+    validateCommonFieldsLength(dto);
+}
+
+protected void validateCommonUpdate(BaseMasterDto dto) {
+    validateId(dto);
+    validateCommonFieldsSpacing(dto);
+    validateCommonFieldsLength(dto);
+}
+
+public void validateCreate(CountryCurrencyDto dto) {
+    errorDtoList = new ArrayList<>();
+
+    validateCommonCreate(dto);
+
+    validateCurrencyMandatoryFields(dto);
+    validateCurrencySpacing(dto);
+    validateCurrencyLength(dto);
+}
+
+public void validateUpdate(CountryCurrencyDto dto) {
+    errorDtoList = new ArrayList<>();
+
+    validateCommonUpdate(dto);
+
+    validateCurrencySpacing(dto);
+    validateCurrencyLength(dto);
+}
+
+___________
+
+
 public class BaseSpecificationBuilder <T>{
     private final Root<T> root;
 
