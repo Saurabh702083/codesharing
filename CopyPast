@@ -1,3 +1,188 @@
+@Getter
+@Builder
+public class BulkUploadBatchContext {
+    private MasterType masterType;
+    private List<Map<String, String>> records;
+    private BulkUploadFormatConfig formatConfig;
+}
+
+public interface MasterBulkUploadHandler {
+    MasterType getMasterType();
+    List<BulkUploadRowResult> process(BulkUploadBatchContext context);
+}
+
+List<Map<String, String>> records = readRecords(file, formatConfig);
+List<BulkUploadRowResult> rowResults = handler.process(BulkUploadBatchContext.builder()
+        .masterType(masterType)
+        .records(records)
+        .formatConfig(formatConfig)
+        .build());
+
+List<MasterBulkUploadFileDetail> detailEntities = new ArrayList<>();
+List<Map<String, String>> failedRecords = new ArrayList<>();
+long success = 0, failed = 0;
+
+for (int i = 0; i < records.size(); i++) {
+    Map<String, String> record = records.get(i);
+    BulkUploadRowResult rowResult = rowResults.get(i);
+    if (BulkUploadRecordStatus.SUCCESS.name().equals(rowResult.getRecordStatus())) {
+        success++;
+    } else {
+        failed++;
+        failedRecords.add(buildFailedRecord(record, rowResult.getRemark()));
+    }
+    detailEntities.add(mapDetail(uploadFile, record, rowResult));
+}
+
+@Override
+public List<BulkUploadRowResult> process(BulkUploadBatchContext context) {
+    List<Map<String, String>> records = context.getRecord() != null ? null : context.getRecords();
+    BulkUploadRowResult[] results = new BulkUploadRowResult[records.size()];
+
+    List<Integer> createIdx = new ArrayList<>();
+    List<CountryCurrencyDto> createDtos = new ArrayList<>();
+    List<Integer> inactivateIdx = new ArrayList<>();
+    List<CountryCurrencyDto> inactivateDtos = new ArrayList<>();
+
+    for (int i = 0; i < records.size(); i++) {
+        Map<String, String> record = records.get(i);
+        CountryCurrencyDto dto = toDto(record);
+        String status = normalize(record.get(STATUS));
+
+        if (StringUtils.isBlank(status) || ACTIVE.equals(status)) {
+            createIdx.add(i);
+            createDtos.add(dto);
+        } else if (INACTIVE.equals(status)) {
+            inactivateIdx.add(i);
+            inactivateDtos.add(dto);
+        } else {
+            results[i] = failure("Unsupported status value: " + record.get(STATUS));
+        }
+    }
+
+    List<BulkUploadRowResult> createResults = handleCreateBatch(createDtos);
+    List<BulkUploadRowResult> inactivateResults = handleInactivateBatch(inactivateDtos);
+
+    for (int i = 0; i < createIdx.size(); i++) results[createIdx.get(i)] = createResults.get(i);
+    for (int i = 0; i < inactivateIdx.size(); i++) results[inactivateIdx.get(i)] = inactivateResults.get(i);
+
+    return Arrays.asList(results);
+}
+
+
+private List<BulkUploadRowResult> handleCreateBatch(List<CountryCurrencyDto> dtos) {
+    List<BulkUploadRowResult> results = new ArrayList<>(Collections.nCopies(dtos.size(), null));
+    if (dtos.isEmpty()) return results;
+
+    List<String> codes = dtos.stream().map(CountryCurrencyDto::getCode).distinct().toList();
+    Map<String, CountryCurrency> existingByKey = countryCurrencyRepository.findByCodeInIgnoreCase(codes).stream()
+            .collect(Collectors.toMap(this::keyOf, e -> e, (a, b) -> a));
+
+    List<Integer> toSaveIdx = new ArrayList<>();
+    List<CountryCurrencyDto> toSave = new ArrayList<>();
+
+    for (int i = 0; i < dtos.size(); i++) {
+        CountryCurrencyDto dto = dtos.get(i);
+        try {
+            countryCurrencyService.validate(dto, WorkflowOperation.CREATE);
+        } catch (ValidationException | AdminPortalException ex) {
+            results.set(i, failure(resolveMessage(ex)));
+            continue;
+        }
+        if (existingByKey.containsKey(keyOf(dto))) {
+            results.set(i, failure(RECORD_ALREADY_EXISTS));
+            continue;
+        }
+        toSaveIdx.add(i);
+        toSave.add(dto);
+    }
+
+    if (!toSave.isEmpty()) {
+        List<CountryCurrencyDto> saved = countryCurrencyService.saveAll(toSave, WorkflowOperation.CREATE);
+        List<MasterWorkFlowDto> workFlows = saved.stream()
+                .map(s -> countryCurrencyService.mapToMasterWorkFlowDto(s, WorkflowOperation.CREATE, "CREATE action perform successfully."))
+                .toList();
+        masterWorkFlowService.saveAll(workFlows);
+
+        for (int i = 0; i < toSaveIdx.size(); i++) {
+            CountryCurrencyDto s = saved.get(i);
+            results.set(toSaveIdx.get(i), BulkUploadRowResult.builder()
+                    .recordStatus(BulkUploadRecordStatus.SUCCESS.name())
+                    .operation(WorkflowOperation.CREATE.name())
+                    .remark("Record moved to Approval Pending.")
+                    .masterRecordId(s.getId())
+                    .build());
+        }
+    }
+    return results;
+}
+
+private String keyOf(CountryCurrencyDto dto) {
+    return (dto.getCode() + "|" + dto.getName() + "|" + dto.getCurrencyCode() + "|" + dto.getCurrencyName()).toUpperCase();
+}
+private String keyOf(CountryCurrency e) {
+    return (e.getCode() + "|" + e.getName() + "|" + e.getCurrencyCode() + "|" + e.getCurrencyName()).toUpperCase();
+}
+
+
+
+private List<BulkUploadRowResult> handleInactivateBatch(List<CountryCurrencyDto> dtos) {
+    List<BulkUploadRowResult> results = new ArrayList<>(Collections.nCopies(dtos.size(), null));
+    if (dtos.isEmpty()) return results;
+
+    List<String> codes = dtos.stream().map(CountryCurrencyDto::getCode).distinct().toList();
+    List<CountryCurrency> candidates = countryCurrencyRepository.findByCodeInIgnoreCase(codes);
+    Map<String, CountryCurrency> activeByKey = candidates.stream()
+            .filter(e -> ACTIVE.equals(e.getStatus()) && APPROVED.equals(e.getAction()))
+            .collect(Collectors.toMap(this::keyOf, e -> e, (a, b) -> a));
+    Set<String> inactiveKeys = candidates.stream()
+            .filter(e -> INACTIVE.equals(e.getStatus()))
+            .map(this::keyOf).collect(Collectors.toSet());
+
+    List<Integer> toInactivateIdx = new ArrayList<>();
+    List<UUID> idsToInactivate = new ArrayList<>();
+
+    for (int i = 0; i < dtos.size(); i++) {
+        CountryCurrencyDto dto = dtos.get(i);
+        CountryCurrency active = activeByKey.get(keyOf(dto));
+        if (active != null) {
+            toInactivateIdx.add(i);
+            idsToInactivate.add(active.getId());
+        } else {
+            results.set(i, inactiveKeys.contains(keyOf(dto)) ? failure(RECORD_ALREADY_INACTIVE) : failure(NO_VALID_RECORDS));
+        }
+    }
+
+    if (!idsToInactivate.isEmpty()) {
+        countryCurrencyService.performAction(idsToInactivate, WorkflowOperation.INACTIVE);
+        List<CountryCurrencyDto> updated = countryCurrencyService.findByIds(idsToInactivate);
+        Map<UUID, CountryCurrencyDto> byId = updated.stream().collect(Collectors.toMap(CountryCurrencyDto::getId, d -> d));
+        List<MasterWorkFlowDto> workFlows = new ArrayList<>();
+
+        for (int i = 0; i < toInactivateIdx.size(); i++) {
+            UUID id = idsToInactivate.get(i);
+            workFlows.add(countryCurrencyService.mapToMasterWorkFlowDto(byId.get(id), WorkflowOperation.INACTIVE, "INACTIVE action perform successfully."));
+            results.set(toInactivateIdx.get(i), BulkUploadRowResult.builder()
+                    .recordStatus(BulkUploadRecordStatus.SUCCESS.name())
+                    .operation(WorkflowOperation.INACTIVE.name())
+                    .remark("Record moved to Inactivation pending.")
+                    .masterRecordId(id)
+                    .build());
+        }
+        masterWorkFlowService.saveAll(workFlows);
+    }
+    return results;
+}
+
+
+
+
+
+
+
+
+
+
 @RestController
 @RequestMapping("/admin/master")
 @RequiredArgsConstructor
