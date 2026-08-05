@@ -390,3 +390,97 @@ public class BulkUploadRecordContext {
     private Map<String, String> record;
     private BulkUploadFormatConfig formatConfig;
 }
+-----------
+@Service("countryCurrencyService")
+@Data
+@RequiredArgsConstructor
+public class CountryCurrencyService implements BaseMasterService<CountryCurrencyDto> {
+
+    private final CountryCurrencyValidator countryCurrencyValidator;
+    private final CountryCurrencyDao countryCurrencyDao;
+    private final ObjectMapper objectMapper;
+
+    @Override
+    public MasterType getMasterCode() {
+        return MasterType.COUNTRY_CURRENCY;
+    }
+
+    @Override
+    public List<MasterType> getParentCodes() {
+        return List.of();
+    }
+
+    @Override
+    public CountryCurrencyDto mapToMasterDto(MasterRequest masterRequest) {
+        return objectMapper.convertValue(masterRequest.getData(), CountryCurrencyDto.class);
+    }
+
+    @Override
+    public MasterWorkFlowDto mapToMasterWorkFlowDto(CountryCurrencyDto dto, WorkflowOperation workflowOperation, String remark) {
+        return MasterWorkFlowDto.builder().masterCode(MasterType.COUNTRY_CURRENCY).action(workflowOperation).remark(remark).entityId(dto.getId().toString()).build();
+    }
+
+    @Override
+    public void validate(CountryCurrencyDto dto, WorkflowOperation workflowOperation) {
+        switch (workflowOperation) {
+            case CREATE ->countryCurrencyValidator.validateCreate(dto);
+            case UPDATE ->countryCurrencyValidator.validateUpdate(dto);
+            default -> throw new AdminPortalException(ErrorConstants.INVALID_ERROR_CODE, MessageFormat.format(ErrorConstants.INVALID_ENUM_ERROR_MESSAGE, workflowOperation.name()));
+        }
+    }
+
+    @Override
+    public void validateAction(MasterBulkRequest masters, String actionName) {
+        countryCurrencyValidator.validateAction(masters, actionName);
+    }
+
+    @Override
+    public void validateBulkMasters(List<CountryCurrencyDto> masters, List<String> workflowActions, String performAction) {
+        countryCurrencyValidator.validateBulkMasters(masters, workflowActions, performAction);
+    }
+
+    @Override
+    public CountryCurrencyDto save(CountryCurrencyDto dto, WorkflowOperation action) {
+        dto.setStatus(MasterAction.INACTIVE.name());
+        dto.setAction(MasterAction.PENDING_FOR_APPROVAL.name());
+        switch (action) {
+            case CREATE -> {
+                return countryCurrencyDao.create(dto);
+            }
+            case UPDATE -> {
+                return countryCurrencyDao.update(dto);
+            }
+        }
+        throw new AdminPortalException(ErrorConstants.INVALID_ERROR_CODE, MessageFormat.format(ErrorConstants.INVALID_ENUM_ERROR_MESSAGE, action.name()));
+    }
+
+    @Override
+    public void performAction(List<UUID> ids, WorkflowOperation action) {
+        switch (action) {
+            case APPROVE ->countryCurrencyDao.performAction(ids, MasterAction.APPROVED);
+            case REJECT -> countryCurrencyDao.performAction(ids, MasterAction.PENDING_FOR_REJECTED);
+            case INACTIVE ->countryCurrencyDao.performAction(ids, MasterAction.PENDING_FOR_INACTIVE);
+            default -> throw new AdminPortalException(ErrorConstants.INVALID_ERROR_CODE, MessageFormat.format(ErrorConstants.INVALID_ENUM_ERROR_MESSAGE, action.name()));
+        }
+    }
+
+    @Override
+    public List<CountryCurrencyDto> findByIds(List<UUID> ids) {
+        return countryCurrencyDao.findAllById(ids);
+    }
+
+
+    @Override
+    public Page<CountryCurrencyDto> search(MasterSearchRequest request, Pageable pageable) {
+        Specification<CountryCurrency> specification = MasterSpecification.buildCountryCurrency(request.getFilters());
+        return countryCurrencyDao.findBySpecification(specification, pageable);
+    }
+
+    @Override
+    public AdminPortalResponse<Map<String, Object>> mapToResponse(List<CountryCurrencyDto> dtos, Long total) {
+        List<Map<String, Object>> masterResponse = dtos.stream().<Map<String, Object>>map(countryCurrencyDto -> objectMapper.convertValue(countryCurrencyDto, new TypeReference<>() {
+        })).collect(Collectors.toList());
+        return AdminPortalResponse.<Map<String, Object>>builder().status(SUCCESS_RESPONSE_CODE).data(masterResponse).count((long) dtos.size()).total(total).build();
+    }
+
+}
