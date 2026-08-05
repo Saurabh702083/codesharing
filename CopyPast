@@ -1,463 +1,392 @@
-@PostMapping("/approve/{masterCode}")
-public AdminPortalResponse<String> approve(@PathVariable String masterCode,
-                                           @RequestBody MasterApproveRejectRequest request) {
-    return adminMasterService.approve(request, masterCode);
-}
-
-@PostMapping("/reject/{masterCode}")
-public AdminPortalResponse<String> reject(@PathVariable String masterCode,
-                                          @RequestBody MasterApproveRejectRequest request) {
-    return adminMasterService.reject(request, masterCode);
-}
-
-@Transactional
-public AdminPortalResponse<String> approve(MasterApproveRejectRequest request,
-                                           String masterCode) {
-
-    return performAction(
-            request,
-            WorkflowOperation.APPROVE,
-            List.of(
-                    WorkflowAction.PENDING_FOR_APPROVAL.name(),
-                    WorkflowAction.PENDING_FOR_INACTIVE.name(),
-                    WorkflowAction.PENDING_FOR_REJECTED.name()
-            ),
-            masterCode
-    );
-}
-
-
-@Transactional
-public AdminPortalResponse<String> reject(MasterApproveRejectRequest request,
-                                          String masterCode) {
-
-    return performAction(
-            request,
-            WorkflowOperation.REJECT,
-            List.of(
-                    WorkflowAction.PENDING_FOR_APPROVAL.name(),
-                    WorkflowAction.PENDING_FOR_INACTIVE.name()
-            ),
-            masterCode
-    );
-}
-
-
-private AdminPortalResponse<String> performAction(
-        MasterApproveRejectRequest request,
-        WorkflowOperation operation,
-        List<String> allowedPreviousActions,
-        String masterCode) {
-
-    BaseMasterService<BaseMasterDto> masterService = resolveMasterService(masterCode);
-
-    List<UUID> ids = request.getRecords()
-            .stream()
-            .map(record -> UUID.fromString(record.getMasterId()))
-            .toList();
-
-    List<BaseMasterDto> masters = masterService.findByIds(ids);
-
-    masterService.validateBulkMasters(
-            masters,
-            allowedPreviousActions,
-            operation.name());
-
-    logger.info("Request validated successfully for operation : {}.", operation.name());
-
-    masterService.performAction(ids, operation);
-
-    logger.info("{} operation performed successfully for master code: {}",
-            operation.name(),
-            masterCode);
-
-    Map<UUID, String> remarksMap = request.getRecords()
-            .stream()
-            .collect(Collectors.toMap(
-                    record -> UUID.fromString(record.getMasterId()),
-                    RecordItem::getRemark
-            ));
-
-    List<MasterWorkFlowDto> workflowDtos = masters.stream()
-            .map(master -> {
-
-                String remark = remarksMap.get(master.getId());
-
-                if (StringUtils.isBlank(remark)) {
-                    remark = MessageFormat.format(message, operation.name());
-                }
-
-                return masterService.mapToMasterWorkFlowDto(
-                        master,
-                        operation,
-                        remark);
-            })
-            .toList();
-
-    masterWorkFlowService.save(workflowDtos);
-
-    logger.info("Master workflow records saved for {}", masterCode);
-
-    return mapToResponse(MessageFormat.format(message, operation.name()));
-}
-
-
-@Transactional
-public AdminPortalResponse<String> inactive(MasterBulkRequest request,
-                                            String masterCode) {
-    return performAction(
-            request,
-            WorkflowOperation.INACTIVE,
-            List.of(WorkflowAction.APPROVED.name()),
-            masterCode);
-}
-
-
-_______________________
 @RestController
 @RequestMapping("/admin/master")
 @RequiredArgsConstructor
 public class MasterController {
 private final AdminMasterService adminMasterService;
+    private final MasterBulkUploadService masterBulkUploadService;
 
-    @PostMapping("/approve/{masterCode}")
-    @Operation(summary = "Maker to approve the created record", description = "This api will be used by maker to approve new record created by checker.")
-    public AdminPortalResponse<String> approve(@PathVariable String masterCode, @RequestBody MasterBulkRequest masterBulkRequest) {
-        return adminMasterService.approve(masterBulkRequest, masterCode);
-    }
-
-    @PostMapping("/reject/{masterCode}")
-    @Operation(summary = "Maker to approve the reject record", description = "This api will be used by maker to reject new record created by checker.")
-    public AdminPortalResponse<String> reject(@PathVariable String masterCode, @RequestBody MasterBulkRequest masterBulkRequest) {
-        return adminMasterService.reject(masterBulkRequest, masterCode);
-    }
-
-    @PostMapping("/inactivate/{masterCode}")
-    @Operation(summary = "To inactivate existing record", description = "This api will be used by checker to inactivate existing record.")
-    public AdminPortalResponse<String> inactivate(@PathVariable String masterCode, @RequestBody MasterBulkRequest masterBulkRequest) {
-        return adminMasterService.inactive(masterBulkRequest, masterCode);
+   @PostMapping(value = "/bulk-upload/{masterCode}", consumes = {"multipart/form-data"})
+    @Operation(summary = "Bulk upload master records", description = "This api will be used to create or inactivate master records in bulk through csv upload.")
+    public AdminPortalResponse<MasterBulkUploadResponse> bulkUpload(@PathVariable String masterCode, @RequestPart("file") MultipartFile file) {
+        return masterBulkUploadService.upload(masterCode, file);
     }
 }
 
 @Service
 @RequiredArgsConstructor
-public class AdminMasterService {
-    private final LoggerUtility logger = LoggerFactoryUtility.getLogger(this.getClass());
-    private final MasterHandlerFactory<BaseMasterDto> masterHandlerFactory;
-    private final MasterWorkFlowService masterWorkFlowService;
-    private final String message = "{0} action perform successfully.";
+public class MasterBulkUploadService {
 
-@Transactional
-    public AdminPortalResponse<String> approve(MasterBulkRequest request, String masterCode) {
-        return performAction(request, WorkflowOperation.APPROVE, List.of(WorkflowAction.PENDING_FOR_APPROVAL.name(), WorkflowAction.PENDING_FOR_INACTIVE.name(),  WorkflowAction.PENDING_FOR_REJECTED.name()), masterCode);
-    }
+    private final MasterBulkUploadConfigRepository configRepository;
+    private final MasterBulkUploadFileRepository fileRepository;
+    private final MasterBulkUploadFileDetailRepository fileDetailRepository;
+    private final MasterBulkUploadHandlerFactory handlerFactory;
+    private final ObjectMapper objectMapper;
+    private final FileService fileService;
 
-    @Transactional
-    public AdminPortalResponse<String> reject(MasterBulkRequest request, String masterCode) {
-        return performAction(request, WorkflowOperation.REJECT, List.of(WorkflowAction.PENDING_FOR_APPROVAL.name(), WorkflowAction.PENDING_FOR_INACTIVE.name()), masterCode);
-    }
-
-    @Transactional
-    public AdminPortalResponse<String> inactive(MasterBulkRequest request, String masterCode) {
-        return performAction(request, WorkflowOperation.INACTIVE, List.of(WorkflowAction.APPROVED.name()), masterCode);
-    }
-
-    private AdminPortalResponse<String> performAction(MasterBulkRequest request, WorkflowOperation performOperation, List<String> allowedPreviousActions, String masterCode) {
-        BaseMasterService<BaseMasterDto> masterService = resolveMasterService(masterCode);
-
-        List<BaseMasterDto> masters = masterService.findByIds(request.getMasterIds());
-        masterService.validateBulkMasters(masters, allowedPreviousActions, performOperation.name());
-        logger.info("Request validated successfully for operation : {}.", performOperation.name());
-
-        masterService.performAction(request.getMasterIds(), performOperation);
-        logger.info(" {} : Operation performed successfully for master code: {}", performOperation.name(), masterCode);
-
-        String remarks = StringUtils.isNotEmpty(request.getRemarks()) ? request.getRemarks() : MessageFormat.format(message, performOperation.name());
-        List<MasterWorkFlowDto> masterWorkFlowDtos = masters.stream().map(master -> masterService.mapToMasterWorkFlowDto(master, performOperation, remarks)).toList();
-        masterWorkFlowService.save(masterWorkFlowDtos);
-        logger.info("Master flow record saved of :{}, for Operation : {}", masterCode, performOperation.name());
-
-        return mapToResponse(MessageFormat.format(message, performOperation.name()));
-    }
-
-    private BaseMasterService<BaseMasterDto> resolveMasterService(String masterCode) {
+    public AdminPortalResponse<MasterBulkUploadResponse> upload(String masterCode, MultipartFile file) {
+        validateFile(file);
         MasterType masterType = MasterType.getMasterType(masterCode);
-        logger.info("Master request for: {}", masterType);
-        return masterHandlerFactory.getMasterService(masterType.getCode());
+        MasterBulkUploadConfig config = configRepository.findByMasterTypeIgnoreCase(masterType.getCode())
+                .orElseThrow(() -> new AdminPortalException(ErrorConstants.NOT_FOUND_ERROR_CODE, MessageFormat.format(ErrorConstants.NOT_FOUND_ERROR_MESSAGE, "Bulk upload config for " + masterType.getCode())));
+
+        if (config.getBulkUploadAllowed() == null || config.getBulkUploadAllowed() != 1) {
+            throw new ValidationException(ErrorConstants.INVALID_ERROR_CODE, "Bulk upload is not allowed for masterType: " + masterType.getCode());
+        }
+
+        BulkUploadFormatConfig formatConfig = parseConfig(config.getFileFormatConfig());
+        MasterBulkUploadHandler handler = handlerFactory.getHandler(masterType);
+
+        MasterBulkUploadFile uploadFile = new MasterBulkUploadFile();
+        uploadFile.setMasterType(masterType.getCode());
+        uploadFile.setMasterConfig(config);
+        uploadFile.setFileName(file.getOriginalFilename());
+        uploadFile.setSourceFileS3Path(fileService.uploadFile(file));
+        uploadFile.setParsingStatus(BulkUploadParsingStatus.IN_PROGRESS.name());
+        uploadFile.setFileStatus(BulkUploadFileStatus.IN_PROGRESS.name());
+        uploadFile.setRemark("File parsing is in progress.");
+        uploadFile.setTotalRecords(0L);
+        uploadFile.setSuccessRecords(0L);
+        uploadFile.setFailedRecords(0L);
+        uploadFile = fileRepository.save(uploadFile);
+
+        try {
+            List<Map<String, String>> records = readRecords(file, formatConfig);
+            List<MasterBulkUploadFileDetail> detailEntities = new ArrayList<>();
+            List<Map<String, String>> failedRecords = new ArrayList<>();
+            long success = 0;
+            long failed = 0;
+
+            for (Map<String, String> record : records) {
+                BulkUploadRowResult rowResult;
+                try {
+                    rowResult = handler.process(BulkUploadRecordContext.builder()
+                            .masterType(masterType)
+                            .record(record)
+                            .formatConfig(formatConfig)
+                            .build());
+                } catch (ValidationException ex) {
+                    rowResult = BulkUploadRowResult.builder()
+                            .recordStatus(BulkUploadRecordStatus.FAILED.name())
+                            .remark(ex.getErrorMessage())
+                            .build();
+                } catch (AdminPortalException ex) {
+                    rowResult = BulkUploadRowResult.builder()
+                            .recordStatus(BulkUploadRecordStatus.FAILED.name())
+                            .remark(ex.getErrorMessage())
+                            .build();
+                }
+
+                if (BulkUploadRecordStatus.SUCCESS.name().equals(rowResult.getRecordStatus())) {
+                    success++;
+                } else {
+                    failed++;
+                    failedRecords.add(buildFailedRecord(record, rowResult.getRemark()));
+                }
+                detailEntities.add(mapDetail(uploadFile, record, rowResult));
+            }
+
+            fileDetailRepository.saveAll(detailEntities);
+            uploadFile.setFailedRecordFileS3Path(uploadFailedRecordsFile(formatConfig, failedRecords));
+            uploadFile.setTotalRecords((long) records.size());
+            uploadFile.setSuccessRecords(success);
+            uploadFile.setFailedRecords(failed);
+            uploadFile.setParsingStatus(BulkUploadParsingStatus.COMPLETED.name());
+            uploadFile.setFileStatus(failed > 0 ? BulkUploadFileStatus.COMPLETED_WITH_ERRORS.name() : BulkUploadFileStatus.COMPLETED.name());
+            uploadFile.setRemark(buildFileRemark(success, failed));
+            fileRepository.save(uploadFile);
+            return response(uploadFile);
+        } catch (RuntimeException ex) {
+            uploadFile.setParsingStatus(BulkUploadParsingStatus.FAILED.name());
+            uploadFile.setFileStatus(BulkUploadFileStatus.FAILED.name());
+            uploadFile.setRemark(resolveMessage(ex));
+            fileRepository.save(uploadFile);
+            throw ex;
+        }
     }
 
-    private AdminPortalResponse<String> mapToResponse(String s) {
-        return AdminPortalResponse.<String>builder().status(SUCCESS_RESPONSE_CODE).data(List.of(s)).count(1L).total(1L).build();
+    private List<Map<String, String>> readRecords(MultipartFile file, BulkUploadFormatConfig formatConfig) {
+        try (BufferedReader reader = new BufferedReader(new InputStreamReader(file.getInputStream(), StandardCharsets.UTF_8))) {
+            List<String> nonBlankLines = reader.lines()
+                    .map(String::trim)
+                    .filter(StringUtils::isNotBlank)
+                    .toList();
+
+            if (nonBlankLines.isEmpty()) {
+                throw new ValidationException(ErrorConstants.MANDATORY_ERROR_CODE, "Bulk upload file is empty.");
+            }
+
+            List<String> headers = parseCsvLine(nonBlankLines.getFirst());
+            validateHeaders(headers, formatConfig.getHeaders());
+
+            List<Map<String, String>> records = new ArrayList<>();
+            for (int i = 1; i < nonBlankLines.size(); i++) {
+                List<String> values = parseCsvLine(nonBlankLines.get(i));
+                if (values.stream().allMatch(StringUtils::isBlank)) {
+                    continue;
+                }
+                Map<String, String> row = new LinkedHashMap<>();
+                for (int index = 0; index < headers.size(); index++) {
+                    row.put(headers.get(index), index < values.size() ? values.get(index).trim() : null);
+                }
+                records.add(row);
+            }
+            return records;
+        } catch (IOException e) {
+            throw new AdminPortalException(ErrorConstants.GENERIC_ERROR_CODE, ErrorConstants.GENERIC_ERROR_MESSAGE);
+        }
+    }
+
+    private List<String> parseCsvLine(String line) {
+        return java.util.Arrays.stream(line.split(",", -1))
+                .map(String::trim)
+                .toList();
+    }
+
+    private void validateHeaders(List<String> actualHeaders, List<String> expectedHeaders) {
+        if (actualHeaders.size() != expectedHeaders.size()) {
+            throw new ValidationException(ErrorConstants.INVALID_ERROR_CODE, "Invalid headers in bulk upload file.");
+        }
+        for (int i = 0; i < expectedHeaders.size(); i++) {
+            if (!expectedHeaders.get(i).equalsIgnoreCase(actualHeaders.get(i))) {
+                throw new ValidationException(ErrorConstants.INVALID_ERROR_CODE, "Invalid headers in bulk upload file.");
+            }
+        }
+    }
+
+    private MasterBulkUploadFileDetail mapDetail(MasterBulkUploadFile uploadFile, Map<String, String> record, BulkUploadRowResult rowResult) {
+        MasterBulkUploadFileDetail detail = new MasterBulkUploadFileDetail();
+        detail.setMasterUploadFile(uploadFile);
+        detail.setRecordJson(toJson(record));
+        detail.setStatus(rowResult.getRecordStatus());
+        detail.setOperation(rowResult.getOperation());
+        detail.setRemark(rowResult.getRemark());
+        detail.setMasterRecordId(rowResult.getMasterRecordId());
+        return detail;
+    }
+
+    private BulkUploadFormatConfig parseConfig(String config) {
+        try {
+            return objectMapper.readValue(config, BulkUploadFormatConfig.class);
+        } catch (JsonProcessingException e) {
+            throw new AdminPortalException(ErrorConstants.JSON_ERROR_CODE, MessageFormat.format(ErrorConstants.JSON_ERROR_MESSAGE, "bulk upload format config"));
+        }
+    }
+
+    private String toJson(Map<String, String> record) {
+        try {
+            return objectMapper.writeValueAsString(record);
+        } catch (JsonProcessingException e) {
+            throw new AdminPortalException(ErrorConstants.JSON_ERROR_CODE, MessageFormat.format(ErrorConstants.JSON_ERROR_MESSAGE, "bulk upload detail"));
+        }
+    }
+
+    private void validateFile(MultipartFile file) {
+        if (file == null || file.isEmpty()) {
+            throw new ValidationException(ErrorConstants.MANDATORY_ERROR_CODE, "Bulk upload file is required.");
+        }
+        String fileName = file.getOriginalFilename();
+        if (StringUtils.isBlank(fileName) || !fileName.toLowerCase().endsWith(".csv")) {
+            throw new ValidationException(ErrorConstants.INVALID_ERROR_CODE, "Only csv file format is allowed.");
+        }
+    }
+
+    private String buildFileRemark(long success, long failed) {
+        return "Bulk upload processed. Success records: " + success + ", Failed records: " + failed;
+    }
+
+    private Map<String, String> buildFailedRecord(Map<String, String> record, String remark) {
+        Map<String, String> failedRecord = new LinkedHashMap<>(record);
+        failedRecord.put("failureRemark", StringUtils.defaultString(remark));
+        return failedRecord;
+    }
+
+    private String uploadFailedRecordsFile(BulkUploadFormatConfig formatConfig, List<Map<String, String>> failedRecords) {
+        if (failedRecords.isEmpty()) {
+            return null;
+        }
+        Path tempFile = null;
+        try {
+            tempFile = Files.createTempFile("master-bulk-upload-failed-", ".csv");
+            try (BufferedWriter writer = Files.newBufferedWriter(tempFile, StandardCharsets.UTF_8)) {
+                List<String> headers = new ArrayList<>(formatConfig.getHeaders());
+                headers.add("failureRemark");
+                writer.write(toCsvRow(headers));
+                writer.newLine();
+                for (Map<String, String> failedRecord : failedRecords) {
+                    List<String> values = headers.stream().map(header -> failedRecord.getOrDefault(header, "")).toList();
+                    writer.write(toCsvRow(values));
+                    writer.newLine();
+                }
+            }
+            return fileService.uploadFile(tempFile.toFile());
+        } catch (IOException e) {
+            throw new AdminPortalException(ErrorConstants.GENERIC_ERROR_CODE, ErrorConstants.GENERIC_ERROR_MESSAGE);
+        } finally {
+            if (tempFile != null) {
+                try {
+                    Files.deleteIfExists(tempFile);
+                } catch (IOException ignored) {
+                }
+            }
+        }
+    }
+
+    private String toCsvRow(List<String> values) {
+        return values.stream()
+                .map(this::escapeCsvValue)
+                .reduce((left, right) -> left + "," + right)
+                .orElse("");
+    }
+
+    private String escapeCsvValue(String value) {
+        String safeValue = StringUtils.defaultString(value);
+        if (safeValue.contains(",") || safeValue.contains("\"") || safeValue.contains("\n") || safeValue.contains("\r")) {
+            return "\"" + safeValue.replace("\"", "\"\"") + "\"";
+        }
+        return safeValue;
+    }
+
+    private String resolveMessage(RuntimeException ex) {
+        if (ex instanceof ValidationException validationException) {
+            return validationException.getErrorMessage();
+        }
+        if (ex instanceof AdminPortalException adminPortalException) {
+            return adminPortalException.getErrorMessage();
+        }
+        return ex.getMessage();
+    }
+
+    private AdminPortalResponse<MasterBulkUploadResponse> response(MasterBulkUploadFile uploadFile) {
+        MasterBulkUploadResponse data = MasterBulkUploadResponse.builder().uploadFileId(uploadFile.getId()).masterType(uploadFile.getMasterType()).sourceFileS3Path(uploadFile.getSourceFileS3Path()).failedRecordFileS3Path(uploadFile.getFailedRecordFileS3Path()).totalRecords(uploadFile.getTotalRecords()).successRecords(uploadFile.getSuccessRecords()).failedRecords(uploadFile.getFailedRecords()).parsingStatus(uploadFile.getParsingStatus()).fileStatus(uploadFile.getFileStatus()).remark(uploadFile.getRemark()).build();
+        return AdminPortalResponse.<MasterBulkUploadResponse>builder().status(SUCCESS_RESPONSE_CODE).data(List.of(data)).count(1L).total(1L).build();
     }
 }
 
-@Service("countryCurrencyService")
-@Data
+@Service("countryCurrencyBulkUploadHandler")
 @RequiredArgsConstructor
-public class CountryCurrencyService implements BaseMasterService<CountryCurrencyDto> {
+public class CountryCurrencyBulkUploadHandler implements MasterBulkUploadHandler {
 
-    private final CountryCurrencyMasterValidator countryCurrencyValidator;
-    private final CountryCurrencyDao countryCurrencyDao;
-    private final ObjectMapper objectMapper;
+    private static final String STATUS = "status";
+    private static final String ACTIVE = "ACTIVE";
+    private static final String INACTIVE = "INACTIVE";
+    private static final String APPROVED = "APPROVED";
+    private static final String RECORD_ALREADY_EXISTS = "Record already exists.";
+    private static final String NO_VALID_RECORDS = "No valid records found to inactivate.";
+    private static final String RECORD_ALREADY_INACTIVE = "Record is already Inactive.";
+
+    private final CountryCurrencyService countryCurrencyService;
+    private final CountryCurrencyRepository countryCurrencyRepository;
+    private final MasterWorkFlowService masterWorkFlowService;
 
     @Override
-    public MasterType getMasterCode() {
+    public MasterType getMasterType() {
         return MasterType.COUNTRY_CURRENCY;
     }
 
     @Override
-    public List<MasterType> getParentCodes() {
-        return List.of();
-    }
+    public BulkUploadRowResult process(BulkUploadRecordContext context) {
+        Map<String, String> record = context.getRecord();
+        CountryCurrencyDto dto = toDto(record);
+        String status = normalize(record.get(STATUS));
 
-    @Override
-    public CountryCurrencyDto mapToMasterDto(MasterRequest masterRequest) {
-        return objectMapper.convertValue(masterRequest.getData(), CountryCurrencyDto.class);
-    }
-
-    @Override
-    public MasterWorkFlowDto mapToMasterWorkFlowDto(CountryCurrencyDto dto, WorkflowOperation workflowOperation, String remark) {
-        return MasterWorkFlowDto.builder().masterCode(MasterType.COUNTRY_CURRENCY).action(workflowOperation).remark(remark).entityId(dto.getId().toString()).build();
-    }
-
-    @Override
-    public void validate(CountryCurrencyDto dto, WorkflowOperation workflowOperation) {
-        switch (workflowOperation) {
-            case CREATE ->countryCurrencyValidator.validateCreate(dto);
-            case UPDATE ->countryCurrencyValidator.validateUpdate(dto);
-            default -> new AdminPortalException(ErrorConstants.INVALID_ERROR_CODE, MessageFormat.format(ErrorConstants.INVALID_ENUM_ERROR_MESSAGE, workflowOperation.name()));
+        if (StringUtils.isBlank(status) || ACTIVE.equals(status)) {
+            return handleCreate(dto);
         }
-    }
-
-    @Override
-    public void validateBulkMasters(List<CountryCurrencyDto> masters, List<String> workflowActions, String performAction) {
-        countryCurrencyValidator.validateBulkMaster(masters, workflowActions, performAction);
-    }
-
-    @Override
-    public CountryCurrencyDto save(CountryCurrencyDto dto, WorkflowOperation action) {
-        dto.setStatus(WorkflowAction.INACTIVE.name());
-        dto.setAction(WorkflowAction.PENDING_FOR_APPROVAL.name());
-        switch (action) {
-            case CREATE -> {
-                return countryCurrencyDao.create(dto);
-            }
-            case UPDATE -> {
-                return countryCurrencyDao.update(dto);
-            }
+        if (INACTIVE.equals(status)) {
+            return handleInactivate(dto);
         }
-        throw new AdminPortalException(ErrorConstants.INVALID_ERROR_CODE, MessageFormat.format(ErrorConstants.INVALID_ENUM_ERROR_MESSAGE, action.name()));
+        return failure("Unsupported status value: " + record.get(STATUS));
     }
 
-    @Override
-    public void performAction(List<UUID> ids, WorkflowOperation action) {
-        switch (action) {
-            case APPROVE ->countryCurrencyDao.performAction(ids, WorkflowAction.APPROVED);
-            case REJECT -> countryCurrencyDao.performAction(ids, WorkflowAction.PENDING_FOR_REJECTED);
-            case INACTIVE ->countryCurrencyDao.performAction(ids, WorkflowAction.PENDING_FOR_INACTIVE);
-            default -> new AdminPortalException(ErrorConstants.INVALID_ERROR_CODE, MessageFormat.format(ErrorConstants.INVALID_ENUM_ERROR_MESSAGE, action.name()));
+    private BulkUploadRowResult handleCreate(CountryCurrencyDto dto) {
+        countryCurrencyService.validate(dto, WorkflowOperation.CREATE);
+        if (findExact(dto).isPresent()) {
+            return failure(RECORD_ALREADY_EXISTS);
         }
+        CountryCurrencyDto savedDto = countryCurrencyService.save(dto, WorkflowOperation.CREATE);
+        MasterWorkFlowDto workFlowDto = countryCurrencyService.mapToMasterWorkFlowDto(savedDto, WorkflowOperation.CREATE, "CREATE action perform successfully.");
+        masterWorkFlowService.save(workFlowDto);
+        return BulkUploadRowResult.builder()
+                .recordStatus(BulkUploadRecordStatus.SUCCESS.name())
+                .operation(WorkflowOperation.CREATE.name())
+                .remark("Record moved to Approval Pending.")
+                .masterRecordId(savedDto.getId())
+                .build();
     }
 
-    @Override
-    public List<CountryCurrencyDto> findByIds(List<UUID> ids) {
-        return countryCurrencyDao.findAllById(ids);
-    }
-
-
-    @Override
-    public Page<CountryCurrencyDto> search(MasterSearchRequest request, Pageable pageable) {
-        Specification<CountryCurrency> specification = MasterSpecification.buildCountryCurrency(request.getFilters());
-        return countryCurrencyDao.findBySpecfication(specification, pageable);
-    }
-
-    @Override
-    public AdminPortalResponse<Map<String, Object>> mapToResponse(List<CountryCurrencyDto> dtos, Long total) {
-        List<Map<String, Object>> masterResponse = dtos.stream().<Map<String, Object>>map(countryCurrencyDto -> objectMapper.convertValue(countryCurrencyDto, new TypeReference<>() {
-        })).collect(Collectors.toList());
-        return AdminPortalResponse.<Map<String, Object>>builder().status(SUCCESS_RESPONSE_CODE).data(masterResponse).count((long) dtos.size()).total(total).build();
-    }
-
-}
-
-
-@Component
-@RequiredArgsConstructor
-public class CountryCurrencyDao {
-    private final MasterMapper<CountryCurrencyDto, CountryCurrency> masterMapper;
-    private final CountryCurrencyRepository countryCurrencyRepository;
-
-    public CountryCurrencyDto create(CountryCurrencyDto countryCurrencyDto) {
-        CountryCurrency entity = countryCurrencyRepository.save(masterMapper.mapDtoToEntity(countryCurrencyDto));
-        return masterMapper.mapEntityToDto(entity);
-    }
-
-    public CountryCurrencyDto update(CountryCurrencyDto dto) {
-        CountryCurrency entity = countryCurrencyRepository.findById(dto.getId()).orElseThrow(() -> new AdminPortalException(FAILED_ERROR_CODE, MessageFormat.format(FAILED_ERROR_MESSAGE_WITH_REASON, "CountryCurrency update", "CountryCurrency record not found for the masterId")));
-        masterMapper.updateEntityByDto(dto, entity);
-        CountryCurrency updatedCountryCurrency = countryCurrencyRepository.save(entity);
-        return masterMapper.mapEntityToDto(updatedCountryCurrency);
-    }
-
-    public List<CountryCurrencyDto> findAllById(List<UUID> ids) {
-        return countryCurrencyRepository.findAllById(ids).stream().map(masterMapper::mapEntityToDto).toList();
-    }
-
-
-    public void performAction(List<UUID>ids, WorkflowAction action){
-        switch(action){
-            case APPROVED ->countryCurrencyRepository.approve(ids, WorkflowAction.APPROVED.name());
-            case PENDING_FOR_REJECTED -> countryCurrencyRepository.performAction(ids, WorkflowAction.PENDING_FOR_REJECTED.name());
-            case PENDING_FOR_INACTIVE -> countryCurrencyRepository.performAction(ids, WorkflowAction.PENDING_FOR_INACTIVE.name());
+    private BulkUploadRowResult handleInactivate(CountryCurrencyDto dto) {
+        Optional<CountryCurrency> activeRecord = countryCurrencyRepository
+                .findByCodeIgnoreCaseAndNameIgnoreCaseAndCurrencyCodeIgnoreCaseAndCurrencyNameIgnoreCaseAndStatusAndAction(
+                        dto.getCode(), dto.getName(), dto.getCurrencyCode(), dto.getCurrencyName(), ACTIVE, APPROVED);
+        if (activeRecord.isPresent()) {
+            countryCurrencyService.performAction(java.util.List.of(activeRecord.get().getId()), WorkflowOperation.INACTIVE);
+            MasterWorkFlowDto workFlowDto = countryCurrencyService.mapToMasterWorkFlowDto(
+                    countryCurrencyService.findByIds(java.util.List.of(activeRecord.get().getId())).getFirst(),
+                    WorkflowOperation.INACTIVE,
+                    "INACTIVE action perform successfully.");
+            masterWorkFlowService.save(workFlowDto);
+            return BulkUploadRowResult.builder()
+                    .recordStatus(BulkUploadRecordStatus.SUCCESS.name())
+                    .operation(WorkflowOperation.INACTIVE.name())
+                    .remark("Record moved to Inactivation pending.")
+                    .masterRecordId(activeRecord.get().getId())
+                    .build();
         }
+
+        boolean inactiveRecordExists = countryCurrencyRepository
+                .findByCodeIgnoreCaseAndNameIgnoreCaseAndCurrencyCodeIgnoreCaseAndCurrencyNameIgnoreCaseAndStatus(
+                        dto.getCode(), dto.getName(), dto.getCurrencyCode(), dto.getCurrencyName(), INACTIVE)
+                .isPresent();
+
+        return inactiveRecordExists ? failure(RECORD_ALREADY_INACTIVE) : failure(NO_VALID_RECORDS);
     }
 
-    public Page<CountryCurrencyDto> findBySpecfication(Specification<CountryCurrency> specification, Pageable pageable) {
-        Page<CountryCurrency> page = countryCurrencyRepository.findAll(specification, pageable);
-        return page.map(masterMapper::mapEntityToDto);
+    private Optional<CountryCurrency> findExact(CountryCurrencyDto dto) {
+        return countryCurrencyRepository.findByCodeIgnoreCaseAndNameIgnoreCaseAndCurrencyCodeIgnoreCaseAndCurrencyNameIgnoreCase(
+                dto.getCode(), dto.getName(), dto.getCurrencyCode(), dto.getCurrencyName());
+    }
+
+    private CountryCurrencyDto toDto(Map<String, String> record) {
+        CountryCurrencyDto dto = new CountryCurrencyDto();
+        dto.setCode(normalize(record.get("code")));
+        dto.setName(normalize(record.get("name")));
+        dto.setCurrencyCode(normalize(record.get("currencyCode")));
+        dto.setCurrencyName(normalize(record.get("currencyName")));
+        return dto;
+    }
+
+    private String normalize(String value) {
+        return value == null ? null : value.trim();
+    }
+
+    private BulkUploadRowResult failure(String remark) {
+        return BulkUploadRowResult.builder()
+                .recordStatus(BulkUploadRecordStatus.FAILED.name())
+                .remark(remark)
+                .build();
     }
 }
 
+public interface MasterBulkUploadHandler {
 
-public interface CountryCurrencyRepository extends JpaRepository<CountryCurrency, UUID> , JpaSpecificationExecutor<CountryCurrency> {
+    MasterType getMasterType();
 
-    @Transactional
-    @Modifying
-    @Query("""
-           UPDATE CountryCurrency c SET c.action = :action,
-            c.status = CASE
-                WHEN c.action='PENDING_FOR_APPROVAL' THEN 'ACTIVE'
-                WHEN c.action='PENDING_FOR_REJECTED' THEN 'INACTIVE'
-                WHEN c.action='PENDING_FOR_INACTIVE' THEN 'INACTIVE'
-                ELSE 'INACTIVE'
-            END
-            WHERE c.id IN :ids
-           """)
-    int approve(@Param("ids") List<UUID> ids, String action);
-
-
-    @Transactional
-    @Modifying
-    @Query("""
-           UPDATE CountryCurrency c SET c.action = :action WHERE c.id IN :ids
-           """)
-    int performAction(@Param("ids") List<UUID> ids, String action);
-
+    BulkUploadRowResult process(BulkUploadRecordContext context);
 }
 
 @Getter
-@Setter
-@AllArgsConstructor
-@NoArgsConstructor
-public class CountryCurrencyDto extends BaseMasterDto {
-    private UUID id;
-    private String currencyCode;
-    private String currencyName;
-}
-
-@Getter
-@Setter
-public abstract class BaseMasterDto {
-    private UUID id;
-    private String code;
-    private String name;
-    private String status;
-    private String action;
-    private long createdAt;
-    private String createdBy;
-    private long updatedAt;
-    private String updatedBy;
-}
-
-@Getter
-@Setter
-@Entity
-@Table(name = "COUNTRY_CURRENCY_MASTER")
-public class CountryCurrency extends BaseMasterEntity {
-    @Id
-    @GeneratedValue
-    @UuidGenerator(style = UuidGenerator.Style.TIME)
-    private UUID id;
-
-    private String currencyCode;
-
-    private String currencyName;
-}
-
-@Service
-@RequiredArgsConstructor
-public class MasterWorkFlowService {
-    private final LoggerUtility log = LoggerFactoryUtility.getLogger(this.getClass());
-
-    private final MasterWorkFlowRepository masterWorkFlowRepository;
-    private final MasterWorkFlowMapper masterWorkFlowMapper;
-
-    public void save(MasterWorkFlowDto masterWorkFlowDto) {
-        MasterWorkFlow masterWorkFlow = masterWorkFlowMapper.mapEntityToDto(masterWorkFlowDto);
-        masterWorkFlowRepository.save(masterWorkFlow);
-    }
-
-    public void save(List<MasterWorkFlowDto> masterWorkFlowDtos) {
-        List<MasterWorkFlow> masterWorkFlows = masterWorkFlowDtos.stream().map(masterWorkFlowMapper::mapEntityToDto).toList();
-        masterWorkFlowRepository.saveAll(masterWorkFlows);
-    }
-
-    public void update(MasterWorkFlowDto masterWorkFlowDto, BaseMasterDto oldMasterDto, BaseMasterDto newMasterDto) {
-        masterWorkFlowDto.setOldValue(toJson(oldMasterDto));
-        masterWorkFlowDto.setNewValue(toJson(newMasterDto));
-        MasterWorkFlow masterWorkFlow = masterWorkFlowMapper.mapEntityToDto(masterWorkFlowDto);
-        masterWorkFlowRepository.save(masterWorkFlow);
-    }
-}
-
-
-@Getter
-@Setter
-@Audited
-@MappedSuperclass
-public abstract class BaseMasterEntity extends AuditEntity {
-    private String code;
-    private String name;
-    private String status;
-    private String action;
-}
-@MapperConfig(componentModel = "spring", builder = @Builder(disableBuilder = true))
-public interface MasterMapper<T extends BaseMasterDto, E extends BaseMasterEntity> {
-
-    T mapEntityToDto(E entity);
-
-    E mapDtoToEntity(T dto);
-
-    @BeanMapping(nullValuePropertyMappingStrategy = NullValuePropertyMappingStrategy.IGNORE)
-    void updateEntityByDto(T dto, @MappingTarget E entity);
-}
-
-@Mapper(config=MasterMapper.class)
-public interface CountryCurrencyMapper extends MasterMapper <CountryCurrencyDto, CountryCurrency> {
-}
-
-@Data
-@AllArgsConstructor
-@NoArgsConstructor
 @Builder
-public class MasterBulkRequest {
-   private List<UUID> masterIds;
-   private String remarks;
+public class BulkUploadRowResult {
+    private String recordStatus;
+    private String operation;
+    private String remark;
+    private UUID masterRecordId;
 }
--------------------------------------
-@Data
-@AllArgsConstructor
-@NoArgsConstructor
-@Builder
-public class MasterApproveRejectRequest {
-    private List<RecordItem> records;
 
-    @Data
-    @NoArgsConstructor
-    @AllArgsConstructor
-    @Builder
-    public static class RecordItem {
-        private String masterId;
-        private String remark;
-    }
+@Getter
+@Builder
+public class BulkUploadRecordContext {
+    private MasterType masterType;
+    private Map<String, String> record;
+    private BulkUploadFormatConfig formatConfig;
 }
