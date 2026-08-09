@@ -1,696 +1,1185 @@
-package com.yourorg.transaction.dto.admin;
+package com.epay.admin.portal.service.master;
 
-import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
-import com.fasterxml.jackson.annotation.JsonProperty;
+import com.epay.admin.portal.config.AdminPortalConfig;
+import com.epay.admin.portal.dto.BaseMasterDto;
+import com.epay.admin.portal.dto.master.MasterWorkFlowDto;
+import com.epay.admin.portal.entity.admin.master.MasterBulkUploadConfig;
+import com.epay.admin.portal.entity.admin.master.MasterBulkUploadFile;
+import com.epay.admin.portal.entity.admin.master.MasterBulkUploadFileDetail;
+import com.epay.admin.portal.exceptions.AdminPortalException;
+import com.epay.admin.portal.externalservice.FileService;
+import com.epay.admin.portal.model.request.master.*;
+import com.epay.admin.portal.model.response.AdminPortalResponse;
+import com.epay.admin.portal.model.response.master.MasterBulkUploadResponse;
+import com.epay.admin.portal.util.enums.*;
+import com.epay.admin.portal.validator.MasterBulkUploadValidation;
+import com.sbi.epay.logging.utility.LoggerFactoryUtility;
+import com.sbi.epay.logging.utility.LoggerUtility;
+import lombok.RequiredArgsConstructor;
+import org.apache.commons.lang3.StringUtils;
+import org.slf4j.MDC;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.multipart.MultipartFile;
 
+import java.text.MessageFormat;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 
-public record PayModesResponse(
-        @JsonProperty("preferredOptions") PaymentOptions preferredOptions,
-        @JsonProperty("otherPaymentOptions") PaymentOptions otherPaymentOptions) {
-}
+import static com.epay.admin.portal.util.AdminPortalConstants.*;
+import static com.epay.admin.portal.util.AdminPortalUtil.toDto;
+import static com.epay.admin.portal.util.AdminPortalUtil.toJson;
 
-@JsonIgnoreProperties(ignoreUnknown = true)
-public record PaymentOptions(
-        UpiOptions upi,
-        CardOptions cards,
-        List<PayModeEntry> wallet,
-        List<PayModeEntry> inb) {
-}
-
-@JsonIgnoreProperties(ignoreUnknown = true)
-public record UpiOptions(
-        List<String> apps,
-        boolean vpa,
-        boolean drawerIntent,
-        PayModeEntry self,
-        @JsonProperty("BHIMQR") PayModeEntry bhimQr) {
-}
-
-@JsonIgnoreProperties(ignoreUnknown = true)
-public record CardOptions(
-        List<PayModeEntry> cc,
-        List<PayModeEntry> dc,
-        List<PayModeEntry> pc) {
-}
-
-@JsonIgnoreProperties(ignoreUnknown = true)
-public record PayModeEntry(
-        String bankName,
-        String bankId,
-        String aggregatorGatewayMapId,
-        String payproc,
-        String payproctype,
-        String payModeCode,
-        String cardType,
-        Boolean downtime,
-        Boolean popular) {
-}
-
-
-@Component
-@RequiredArgsConstructor
-public class BookingDao {
-
-    private final OrderDao orderDao;
-    private final CustomerDao customerDao;
-    private final AdminDao adminDao;
-    private final TokenDao tokenDao;
-    private final MerchantDao merchantDao;
-    private final EPayTokenProvider ePayTokenProvider;
-    private final ObjectMapper objectMapper;
-    private final LoggerUtility logger = LoggerFactoryUtility.getLogger(this.getClass());
-
-    public PayModesResponse getMerchantPayModes(String mId) {
-        JsonNode rawPayModes = adminDao.getMerchantPayModes(mId);
-        try {
-            return objectMapper.treeToValue(rawPayModes, PayModesResponse.class);
-        } catch (JsonProcessingException e) {
-            logger.error("Failed to parse payModes response for mId: {}", mId, e);
-            throw new TransactionException(INVALID_ERROR_CODE,
-                    MessageFormat.format(TransactionErrorConstants.INVALID_ERROR_MESSAGE,
-                            "payModes", "Unable to parse merchant pay modes response"));
-        }
-    }
-}
-
-package com.yourorg.transaction.service;
-
-import com.yourorg.transaction.dto.admin.PayModeEntry;
-import com.yourorg.transaction.dto.admin.PayModesResponse;
-import com.yourorg.transaction.dto.admin.PaymentOptions;
-// ...other existing imports
-
-import java.util.List;
-import java.util.Objects;
-
+/**
+ * Class Name: AdminMasterService
+ * *
+ * Author: V1018841(Saurabh Mahto)
+ * <p>
+ * Copyright (c) 2026 [State Bank of India]
+ * All rights reserved
+ * *
+ * Version:1.0
+ */
 @Service
 @RequiredArgsConstructor
-public class PaymentBookingService {
-
-    private static final String ONUS = "ONUS";
-    private static final String OFFUS = "OFFUS";
-    private static final String SELF = "SELF";
-
+public class AdminMasterService {
     private final LoggerUtility logger = LoggerFactoryUtility.getLogger(this.getClass());
-    private final OrderService orderService;
-    private final BookingService bookingService;
-    private final PaymentInitiationValidator paymentInitiationValidator;
-    private final PaymentBookingDao paymentBookingDao;
-    private final BookingDao bookingDao;
-    private final CardVerificationDao cardVerificationDao;
-    private final PaymentBookingValidator paymentBookingValidator;
+    private final MasterHandlerFactory<BaseMasterDto> masterHandlerFactory;
+    private final MasterWorkFlowService masterWorkFlowService;
+    private final MasterBulkUploadService masterBulkUploadService;
+    private final FileService fileService;
+    private final AdminPortalConfig adminPortalConfig;
+    private final MasterBulkUploadValidation bulkUploadValidation;
 
-    /**
-     * Immutable carrier for the three fields that must be resolved
-     * (gtwMapsId, payProcId, payProcType) before payment-initiation validation runs.
-     */
-    private record PayProcDetails(String gtwMapsId, String payProcId, String payProcType) {}
+    @Transactional
+    public AdminPortalResponse<String> create(MasterRequest masterRequest, String masterCode) {
+        BaseMasterService<BaseMasterDto> masterService = resolveMasterService(masterCode);
 
-    /**
-     * Creates order and transaction booking, resolves payProc details based on payMode,
-     * validates, and persists the payment booking.
-     *
-     * @param paymentBookingRequest incoming booking request
-     * @return orderHash and related booking details
-     */
-    public TransactionResponse<PaymentBookingResponse> initiatePaymentBooking(PaymentBookingRequest paymentBookingRequest) {
-        OrderDto orderDto = orderService.createMerchantOrder(paymentBookingRequest.getOrderDto(), paymentBookingRequest.getMId());
-        logger.info("Created order for mid :{}", orderDto.getMId());
+        BaseMasterDto masterDto = masterService.mapToMasterDto(masterRequest);
+        logger.info("Create master request :{}", masterDto);
 
-        paymentBookingValidator.validateMerchantHostedRequest(paymentBookingRequest);
+        masterService.validate(masterDto, WorkflowOperation.CREATE);
+        logger.info("Request validated successfully.");
 
-        bookingService.initiateOrderBooking(paymentBookingRequest.getOrderDto(), TransactionTokenType.PAYMENT);
-        logger.info("Book transaction done for mid: {}", orderDto.getMId());
+        masterDto = masterService.save(masterDto, WorkflowOperation.CREATE);
+        logger.info("Record Created successfully for master code: {}", masterDto.getCode());
 
-        buildPaymentInitiationRequest(paymentBookingRequest);
+        MasterWorkFlowDto masterWorkFlowDto = masterService.mapToMasterWorkFlowDto(masterDto, WorkflowOperation.CREATE, MessageFormat.format(MASTER_ACTION_PERFORMED, WorkflowOperation.CREATE.name()));
+        masterWorkFlowService.save(masterWorkFlowDto);
+        logger.info("Master flow record updated for :{}", masterDto.getCode());
 
-        paymentInitiationValidator.validatePaymentRequest(
-                paymentBookingRequest.getPaymentInitiationRequest(), orderDto, paymentBookingRequest.getPayMode());
-        logger.info("Payment initiation request validated successfully.");
-
-        paymentBookingDao.savePaymentBookingDetails(
-                orderDto, paymentBookingRequest.getPaymentInitiationRequest(), paymentBookingRequest.getPayMode());
-
-        PaymentBookingResponse paymentBookingResponse = buildPaymentBookingResponse(orderDto);
-        return TransactionResponse.<PaymentBookingResponse>builder()
-                .status(TransactionConstant.RESPONSE_SUCCESS)
-                .data(List.of(paymentBookingResponse))
-                .build();
+        return mapToResponse(MessageFormat.format(MASTER_ACTION_PERFORMED, WorkflowOperation.CREATE.name()));
     }
 
-    /**
-     * Populates operatingMode, gtwMapsId, payProcId and payProcType on the
-     * PaymentInitiationRequest based on payMode-specific resolution rules.
-     */
-    private void buildPaymentInitiationRequest(PaymentBookingRequest paymentBookingRequest) {
-        PaymentInitiationRequest request = paymentBookingRequest.getPaymentInitiationRequest();
-        PayMode payMode = PayMode.getPayMode(paymentBookingRequest.getPayMode());
-        String mId = paymentBookingRequest.getMId();
+    @Transactional
+    public AdminPortalResponse<String> update(MasterRequest masterRequest, String masterCode) {
+        BaseMasterService<BaseMasterDto> masterService = resolveMasterService(masterCode);
 
-        request.setOperatingMode(OperatingMode.DOM.name());
+        BaseMasterDto masterDto = masterService.mapToMasterDto(masterRequest);
+        logger.info("Create master request :{}", masterDto);
 
-        PayProcDetails payProcDetails = resolvePayProcDetails(payMode, request, mId);
+        masterService.validate(masterDto, WorkflowOperation.UPDATE);
+        masterDto = masterService.save(masterDto, WorkflowOperation.UPDATE);
+        logger.info("Record update successfully for master code: {}", masterDto.getCode());
 
-        request.setGtwMapsId(payProcDetails.gtwMapsId());
-        request.setPayProcId(payProcDetails.payProcId());
-        request.setPayProcType(payProcDetails.payProcType());
+        MasterWorkFlowDto masterWorkFlowDto = masterService.mapToMasterWorkFlowDto(masterDto, WorkflowOperation.UPDATE, MessageFormat.format(MASTER_ACTION_PERFORMED, WorkflowOperation.UPDATE.name()));
+        BaseMasterDto savedMasterDto = masterService.findByIds(List.of(masterDto.getId())).getFirst();
+        masterWorkFlowService.update(masterWorkFlowDto, savedMasterDto, masterDto);
+        logger.info("Master flow record updated for :{}", masterDto.getCode());
+
+        return mapToResponse(MessageFormat.format(MASTER_ACTION_PERFORMED, WorkflowOperation.UPDATE.name()));
     }
 
-    private PayProcDetails resolvePayProcDetails(PayMode payMode, PaymentInitiationRequest request, String mId) {
-        return switch (payMode) {
-            case CC, DC, PC -> resolveCardPayProcDetails(request, mId);
-            case NB -> resolveNetBankingPayProcDetails(request, mId);
-            case UPI, WALLET -> resolveUpiOrWalletPayProcDetails(payMode, request, mId);
-            default -> throw new TransactionException(INVALID_ERROR_CODE,
-                    MessageFormat.format(TransactionErrorConstants.INVALID_ERROR_MESSAGE,
-                            "payMode", "Unsupported PayMode for payProc resolution"));
-        };
+    @Transactional(readOnly = true)
+    public AdminPortalResponse<Map<String, Object>> search(String masterCode, MasterSearchRequest request, Pageable pageable) {
+        BaseMasterService<BaseMasterDto> masterService = resolveMasterService(masterCode);
+        Page<BaseMasterDto> page = masterService.search(request, pageable);
+        return masterService.mapToResponse(page.getContent(), page.getTotalElements());
     }
 
-    // ---------------------------------------------------------------
-    // CC / DC / PC
-    // ---------------------------------------------------------------
-
-    /**
-     * For card payModes, payProcId and payProcType come from the BIN check response.
-     * gtwMapsId resolution is pending confirmation from Admin-service team - see TODO below.
-     */
-    private PayProcDetails resolveCardPayProcDetails(PaymentInitiationRequest request, String mId) {
-        BinCheckRequest binCheckRequest = BinCheckRequest.builder()
-                .cardBin(StringUtils.left(request.getAltNumber(), CARD_BIN_LENGTH))
-                .build();
-        BinCheckResponse binResponse = cardVerificationDao.validateBin(binCheckRequest);
-
-        String payProcId = binResponse.getCardProcessor();
-        String payProcType = STATE_BANK_NEW_PG.equals(binResponse.getBinIssuerId()) ? ONUS : OFFUS;
-        String gtwMapsId = resolveCardGatewayMapId(binResponse, mId);
-
-        return new PayProcDetails(gtwMapsId, payProcId, payProcType);
+    @Transactional
+    public AdminPortalResponse<String> approve(MasterBulkRequest request, String masterCode) {
+        return performAction(request, WorkflowOperation.APPROVE, List.of(MasterAction.PENDING_FOR_APPROVAL.name(), MasterAction.PENDING_FOR_INACTIVE.name(),  MasterAction.PENDING_FOR_REJECTED.name()), masterCode);
     }
 
-    // TODO: Confirm with Admin-service team how a BinCheckResponse
-    // (binType / cardProcessor / binOpModeId / binIssuerId) maps to an
-    // aggregatorGatewayMapId within PayModesResponse.otherPaymentOptions().cards().
-    // Likely candidate: match PayModeEntry.payproc() == binResponse.getCardProcessor()
-    // within cards().cc()/dc()/pc() depending on payMode - needs confirmation.
-    private String resolveCardGatewayMapId(BinCheckResponse binResponse, String mId) {
-        return null;
+    @Transactional
+    public AdminPortalResponse<String> reject(MasterBulkRequest request, String masterCode) {
+        return performAction(request, WorkflowOperation.REJECT, List.of(MasterAction.PENDING_FOR_APPROVAL.name(), MasterAction.PENDING_FOR_INACTIVE.name()), masterCode);
     }
 
-    // ---------------------------------------------------------------
-    // NB
-    // ---------------------------------------------------------------
-
-    /**
-     * gtwMapsId comes from the request. payProcId is looked up in otherPaymentOptions.inb
-     * by matching gtwMapsId. payProcType is ONUS if payProcId is SELF, else OFFUS.
-     */
-    private PayProcDetails resolveNetBankingPayProcDetails(PaymentInitiationRequest request, String mId) {
-        String gtwMapsId = request.getGtwMapsId();
-        List<PayModeEntry> inbOptions = bookingDao.getMerchantPayModes(mId).otherPaymentOptions().inb();
-
-        String payProcId = inbOptions.stream()
-                .filter(entry -> gtwMapsId.equals(entry.aggregatorGatewayMapId()))
-                .findFirst()
-                .map(PayModeEntry::payproc)
-                .orElseThrow(() -> new TransactionException(INVALID_ERROR_CODE,
-                        MessageFormat.format(TransactionErrorConstants.INVALID_ERROR_MESSAGE,
-                                "payProcId", "Could not resolve payProcId for gtwMapsId: " + gtwMapsId)));
-
-        String payProcType = SELF.equalsIgnoreCase(payProcId) ? ONUS : OFFUS;
-        return new PayProcDetails(gtwMapsId, payProcId, payProcType);
+    @Transactional
+    public AdminPortalResponse<String> inactive(MasterBulkRequest request, String masterCode) {
+        return performAction(request, WorkflowOperation.INACTIVE, List.of(MasterAction.APPROVED.name()), masterCode);
     }
 
-    // ---------------------------------------------------------------
-    // UPI / WALLET
-    // ---------------------------------------------------------------
+    private AdminPortalResponse<String> performAction(MasterBulkRequest request, WorkflowOperation performOperation, List<String> allowedPreviousActions, String masterCode) {
+        BaseMasterService<BaseMasterDto> masterService = resolveMasterService(masterCode);
+        masterService.validateAction(request, performOperation.name());
 
-    /**
-     * payProcId comes from the request. gtwMapsId is looked up in otherPaymentOptions.upi
-     * (self/BHIMQR) or otherPaymentOptions.wallet by matching payProcId.
-     * payProcType is always ONUS for UPI and WALLET.
-     */
-    private PayProcDetails resolveUpiOrWalletPayProcDetails(PayMode payMode, PaymentInitiationRequest request, String mId) {
-        String payProcId = request.getPayProcId();
-        PaymentOptions options = bookingDao.getMerchantPayModes(mId).otherPaymentOptions();
+        List<BaseMasterDto> masters = masterService.findByIds(request.getMasterIds());
+        masterService.validateBulkMasters(masters, allowedPreviousActions, performOperation.name());
+        logger.info("Request validated successfully for operation : {}.", performOperation.name());
 
-        List<PayModeEntry> candidates = (payMode == PayMode.UPI)
-                ? List.of(options.upi().self(), options.upi().bhimQr())
-                : options.wallet();
+        masterService.performAction(request.getMasterIds(), performOperation);
+        logger.info(" {} : Operation performed successfully for master code: {}", performOperation.name(), masterCode);
 
-        String gtwMapsId = candidates.stream()
-                .filter(Objects::nonNull)
-                .filter(entry -> payProcId.equalsIgnoreCase(entry.payproc()))
-                .findFirst()
-                .map(PayModeEntry::aggregatorGatewayMapId)
-                .orElseThrow(() -> new TransactionException(INVALID_ERROR_CODE,
-                        MessageFormat.format(TransactionErrorConstants.INVALID_ERROR_MESSAGE,
-                                "gtwMapsId", "Could not resolve gtwMapsId for payProcId: " + payProcId)));
+        String remarks = StringUtils.isNotEmpty(request.getRemarks()) ? request.getRemarks() : MessageFormat.format(MASTER_ACTION_PERFORMED, performOperation.name());
+        List<MasterWorkFlowDto> masterWorkFlowDtos = masters.stream().map(master -> masterService.mapToMasterWorkFlowDto(master, performOperation, remarks)).toList();
+        masterWorkFlowService.save(masterWorkFlowDtos);
+        logger.info("Master flow record saved of :{}, for Operation : {}", masterCode, performOperation.name());
 
-        return new PayProcDetails(gtwMapsId, payProcId, ONUS);
+        return mapToResponse(MessageFormat.format(MASTER_ACTION_PERFORMED, performOperation.name()));
     }
 
-    private PaymentBookingResponse buildPaymentBookingResponse(OrderDto orderDto) {
-        return PaymentBookingResponse.builder()
-                .paymentMode(orderDto.getPayMode())
-                .transactionUrl(orderDto.getTransactionUrl())
-                .orderHash(orderDto.getOrderHash())
-                .orderRefNumber(orderDto.getOrderRefNumber())
-                .sbiOrderRefNumber(orderDto.getSbiOrderRefNumber())
-                .orderRetryCount(orderDto.getOrderRetryCount())
-                .expiry(orderDto.getExpiry())
-                .build();
+
+    private AdminPortalResponse<String> mapToResponse(String s) {
+        return AdminPortalResponse.<String>builder().status(SUCCESS_RESPONSE_CODE).data(List.of(s)).count(1L).total(1L).build();
     }
-}
---------------------------------------------------------------------------
 
-package com.yourorg.transaction.dto.admin;
-
-import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
-import com.fasterxml.jackson.annotation.JsonProperty;
-import lombok.AllArgsConstructor;
-import lombok.Getter;
-import lombok.NoArgsConstructor;
-import lombok.Setter;
-
-@Getter
-@Setter
-@NoArgsConstructor
-@AllArgsConstructor
-@JsonIgnoreProperties(ignoreUnknown = true)
-public class PayModesResponse {
-
-    @JsonProperty("preferredOptions")
-    private PaymentOptions preferredOptions;
-
-    @JsonProperty("otherPaymentOptions")
-    private PaymentOptions otherPaymentOptions;
-}
-
-package com.yourorg.transaction.dto.admin;
-
-import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
-import lombok.AllArgsConstructor;
-import lombok.Getter;
-import lombok.NoArgsConstructor;
-import lombok.Setter;
-
-import java.util.List;
-
-@Getter
-@Setter
-@NoArgsConstructor
-@AllArgsConstructor
-@JsonIgnoreProperties(ignoreUnknown = true)
-public class PaymentOptions {
-
-    private UpiOptions upi;
-
-    private CardOptions cards;
-
-    private List<PayModeEntry> wallet;
-
-    private List<PayModeEntry> inb;
-}
-
-package com.yourorg.transaction.dto.admin;
-
-import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
-import com.fasterxml.jackson.annotation.JsonProperty;
-import lombok.AllArgsConstructor;
-import lombok.Getter;
-import lombok.NoArgsConstructor;
-import lombok.Setter;
-
-import java.util.List;
-
-@Getter
-@Setter
-@NoArgsConstructor
-@AllArgsConstructor
-@JsonIgnoreProperties(ignoreUnknown = true)
-public class UpiOptions {
-
-    private List<String> apps;
-
-    private boolean vpa;
-
-    private boolean drawerIntent;
-
-    private PayModeEntry self;
-
-    @JsonProperty("BHIMQR")
-    private PayModeEntry bhimQr;
-}
-
-
-package com.yourorg.transaction.dto.admin;
-
-import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
-import lombok.AllArgsConstructor;
-import lombok.Getter;
-import lombok.NoArgsConstructor;
-import lombok.Setter;
-
-import java.util.List;
-
-@Getter
-@Setter
-@NoArgsConstructor
-@AllArgsConstructor
-@JsonIgnoreProperties(ignoreUnknown = true)
-public class CardOptions {
-
-    private List<PayModeEntry> cc;
-
-    private List<PayModeEntry> dc;
-
-    private List<PayModeEntry> pc;
-}
-
-
-package com.yourorg.transaction.dto.admin;
-
-import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
-import lombok.AllArgsConstructor;
-import lombok.Getter;
-import lombok.NoArgsConstructor;
-import lombok.Setter;
-
-@Getter
-@Setter
-@NoArgsConstructor
-@AllArgsConstructor
-@JsonIgnoreProperties(ignoreUnknown = true)
-public class PayModeEntry {
-
-    private String bankName;
-
-    private String bankId;
-
-    private String aggregatorGatewayMapId;
-
-    private String payproc;
-
-    private String payproctype;
-
-    private String payModeCode;
-
-    private String cardType;
-
-    private Boolean downtime;
-
-    private Boolean popular;
-}
-
-package com.yourorg.transaction.dto;
-
-import lombok.AllArgsConstructor;
-import lombok.Getter;
-import lombok.NoArgsConstructor;
-import lombok.Setter;
-
-@Getter
-@Setter
-@NoArgsConstructor
-@AllArgsConstructor
-public class PayProcDetails {
-
-    private String gtwMapsId;
-
-    private String payProcId;
-
-    private String payProcType;
-}
-
-@Component
-@RequiredArgsConstructor
-public class BookingDao {
-
-    private final OrderDao orderDao;
-    private final CustomerDao customerDao;
-    private final AdminDao adminDao;
-    private final TokenDao tokenDao;
-    private final MerchantDao merchantDao;
-    private final EPayTokenProvider ePayTokenProvider;
-    private final ObjectMapper objectMapper;
-
-    private final LoggerUtility logger =
-            LoggerFactoryUtility.getLogger(this.getClass());
-
-    public PayModesResponse getMerchantPayModes(String mId) {
-
-        JsonNode rawPayModes = adminDao.getMerchantPayModes(mId);
-
+    public AdminPortalResponse<MasterBulkUploadResponse> upload(String masterCode, MultipartFile file) {
+        BaseMasterService<BaseMasterDto> masterService = resolveMasterService(masterCode);
+        MasterBulkUploadConfig config= masterBulkUploadService.findConfigByMasterType(masterCode);
+        // validate file if csv or not
+        String checksum = masterBulkUploadService.generateChecksum(file);
+        bulkUploadValidation.validateFile(file, config,checksum);
+        // get master config and check if bulk upload is allowed or not.
+        BulkUploadFormatConfig formatConfig  =masterBulkUploadService.parseConfig(config.getFileFormatConfig());
+        // Upload file on s3
+        String s3Path= fileService.uploadFile(file);
+        //insert file details in masterBulkUploadFile Table.
+        MasterBulkUploadFile uploadFile= masterBulkUploadService.insertFileRecord(masterCode, file,s3Path,config.getId());
         try {
-            return objectMapper.treeToValue(rawPayModes, PayModesResponse.class);
-        } catch (JsonProcessingException e) {
+            List<Map<String, String>> records = masterBulkUploadService.readRecords(file, formatConfig);
+            processUploadRecords(masterCode, masterService, formatConfig, uploadFile, records);
+            return buildUploadResponse(uploadFile);
+        } catch (AdminPortalException  ex) {
+            markUploadAsFailed(uploadFile, ex.getMessage());
+            throw ex;
+        }
+    }
 
-            logger.error("Failed to parse payModes response for mId : {}", mId, e);
+    private void markUploadAsFailed(MasterBulkUploadFile uploadFile, String remark) {
+        uploadFile.setParsingStatus(BulkUploadParsingStatus.FAILED);
+        uploadFile.setFileStatus(BulkUploadFileStatus.FAILED);
+        String remarkMessage= MDC.get(CORRELATION_ID)+"||"+StringUtils.truncate(remark,800);
+        uploadFile.setRemark(StringUtils.defaultIfBlank(remarkMessage, "Bulk upload failed."));
+        masterBulkUploadService.updateFileRecord(uploadFile);
+    }
 
-            throw new TransactionException(
-                    INVALID_ERROR_CODE,
-                    MessageFormat.format(
-                            TransactionErrorConstants.INVALID_ERROR_MESSAGE,
-                            "payModes",
-                            "Unable to parse merchant pay modes response"));
+    private BaseMasterService<BaseMasterDto> resolveMasterService(String masterCode) {
+        MasterType masterType = MasterType.getMasterType(masterCode);
+        logger.info("Master request for: {}", masterType);
+        return masterHandlerFactory.getMasterService(masterType.getCode());
+    }
+
+    private void processUploadRecords(String masterCode, BaseMasterService<BaseMasterDto> masterService, BulkUploadFormatConfig formatConfig, MasterBulkUploadFile uploadFile, List<Map<String, String>> records) {
+        long successCount = 0;
+        long failedCount = 0;
+        int batchSize = adminPortalConfig.getMasterBulkUploadBatchSize();
+        for (int start = 0; start < records.size(); start += batchSize) {
+            int end = Math.min(start + batchSize, records.size());
+            List<Map<String, String>> batchRecords = records.subList(start, end);
+            BulkUploadProcessResult processResult = processBatch(masterCode, formatConfig, masterService, batchRecords);
+            List<BulkUploadRowResult> rowResults = processResult.getRowResults();
+            for (int index = 0; index < batchRecords.size(); index++) {
+                BulkUploadRowResult rowResult = rowResults.get(index);
+                if (BulkUploadRecordStatus.SUCCESS.name().equals(rowResult.getRecordStatus())) {
+                    successCount++;
+                } else {
+                    failedCount++;
+                }
+            }
+            if (processResult.getWorkflowDtos() != null && !processResult.getWorkflowDtos().isEmpty()) {
+                masterWorkFlowService.save(processResult.getWorkflowDtos());
+            }
+            masterBulkUploadService.saveMasterFileDtls(buildUploadFileDetails(uploadFile, batchRecords, rowResults));
+        }
+        updateMasterFile(uploadFile, records, successCount, failedCount);
+        logger.info("Bulk upload completed for master code: {}. total: {}, success: {}, failed: {}", masterCode, records.size(), successCount, failedCount);
+    }
+
+    private void updateMasterFile(MasterBulkUploadFile uploadFile, List<Map<String, String>> records, long successCount, long failedCount) {
+        uploadFile.setTotalRecords((long) records.size());
+        uploadFile.setSuccessRecords(successCount);
+        uploadFile.setFailedRecords(failedCount);
+        uploadFile.setParsingStatus(BulkUploadParsingStatus.COMPLETED);
+        uploadFile.setFileStatus(failedCount > 0 ? BulkUploadFileStatus.COMPLETED_WITH_ERRORS : BulkUploadFileStatus.COMPLETED);
+        uploadFile.setRemark(String.format("Bulk upload processed. Success records: %d, Failed records: %d", successCount, failedCount));
+        masterBulkUploadService.updateFileRecord(uploadFile);
+    }
+
+    private AdminPortalResponse<MasterBulkUploadResponse> buildUploadResponse(MasterBulkUploadFile uploadFile) {
+        MasterBulkUploadResponse data = MasterBulkUploadResponse.builder().uploadFileId(uploadFile.getId()).masterType(uploadFile.getMasterType()).filePath(uploadFile.getFilePath()).totalRecords(uploadFile.getTotalRecords()).successRecords(uploadFile.getSuccessRecords()).failedRecords(uploadFile.getFailedRecords()).parsingStatus(String.valueOf(uploadFile.getParsingStatus())).fileStatus(String.valueOf(uploadFile.getFileStatus())).remark(uploadFile.getRemark()).build();
+        return AdminPortalResponse.<MasterBulkUploadResponse>builder().status(SUCCESS_RESPONSE_CODE).data(List.of(data)).count(1L).total(1L).build();
+    }
+
+
+    private BulkUploadProcessResult processBatch(String masterType, BulkUploadFormatConfig formatConfig, BaseMasterService<BaseMasterDto> handler, List<Map<String, String>> records) {
+        List<BulkUploadRecordContext> contexts = records.stream().map(record -> BulkUploadRecordContext.builder().masterCode(masterType).record(record).formatConfig(formatConfig).build()).toList();
+        try {
+            return processRecords(handler, contexts);
+        } catch (AdminPortalException ex) {
+            return BulkUploadProcessResult.builder().rowResults(contexts.stream().map(context -> failureResult(ex.getMessage())).toList()).workflowDtos(List.of()).build();
+        }
+    }
+
+    private BulkUploadProcessResult processRecords(BaseMasterService<BaseMasterDto> handler, List<BulkUploadRecordContext> contexts) {
+        List<BulkUploadRowResult> rowResults = new ArrayList<>(Collections.nCopies(contexts.size(), null));
+        List<MasterWorkFlowDto> workflowDtos = new ArrayList<>();
+        List<PendingCreate> pendingCreates = new ArrayList<>();
+        List<PendingInactivation> pendingInactivations = new ArrayList<>();
+
+        for (int index = 0; index < contexts.size(); index++) {
+            BulkUploadRecordContext context = contexts.get(index);
+            BaseMasterDto dto = toDto(context.getRecord(), handler.getDtoClass());
+            String status = context.getRecord().get(STATUS);
+
+            try {
+                if (StringUtils.isBlank(status) || ACTIVE.equalsIgnoreCase(status)) {
+                    handler.validate(dto, WorkflowOperation.CREATE);
+                    if (handler.findExisting(dto).isPresent()) {
+                        rowResults.set(index, failureResult(RECORD_ALREADY_EXISTS));
+                    } else {
+                        pendingCreates.add(new PendingCreate(index, dto));
+                    }
+                    continue;
+                }
+
+                if (INACTIVE.equalsIgnoreCase(status)) {
+                    Optional<BaseMasterDto> activeRecord = handler.findActiveApproved(dto);
+                    if (activeRecord.isPresent()) {
+                        pendingInactivations.add(new PendingInactivation(index, activeRecord.get()));
+                    } else {
+                        rowResults.set(index, failureResult(NO_VALID_RECORDS));
+                    }
+                    continue;
+                }
+
+                rowResults.set(index, failureResult("Unsupported status value: " + status));
+            } catch (AdminPortalException ex) {
+                rowResults.set(index, failureResult(ex.getMessage()));
+            }
+        }
+
+        persistCreates(handler, pendingCreates, rowResults, workflowDtos);
+        persistInactivations(handler, pendingInactivations, rowResults, workflowDtos);
+        return BulkUploadProcessResult.builder().rowResults(rowResults).workflowDtos(workflowDtos).build();
+    }
+
+    private void persistCreates(BaseMasterService<BaseMasterDto> handler, List<PendingCreate> pendingCreates, List<BulkUploadRowResult> rowResults, List<MasterWorkFlowDto> workflowDtos) {
+        if (pendingCreates.isEmpty()) {
+            return;
+        }
+
+        List<BaseMasterDto> dtos = pendingCreates.stream().map(PendingCreate::getDto).toList();
+        List<BaseMasterDto> savedDtos = handler.saveAll(dtos);
+        for (int i = 0; i < pendingCreates.size(); i++) {
+            PendingCreate pendingCreate = pendingCreates.get(i);
+            BaseMasterDto savedDto = savedDtos.get(i);
+            workflowDtos.add(handler.mapToMasterWorkFlowDto(savedDto, WorkflowOperation.CREATE, MessageFormat.format("Bulk upload {0} action performed.", WorkflowOperation.CREATE.name())));
+            rowResults.set(pendingCreate.getIndex(), BulkUploadRowResult.builder()
+                    .recordStatus(BulkUploadRecordStatus.SUCCESS.name())
+                    .operation(WorkflowOperation.CREATE.name())
+                    .remark(CREATE_PENDING_REMARK)
+                    .masterRecordId(savedDto.getId())
+                    .build());
+        }
+    }
+
+    private void persistInactivations(BaseMasterService<BaseMasterDto> handler, List<PendingInactivation> pendingInactivations, List<BulkUploadRowResult> rowResults, List<MasterWorkFlowDto> workflowDtos) {
+        if (pendingInactivations.isEmpty()) {
+            return;
+        }
+
+        handler.performAction(pendingInactivations.stream().map(pendingInactivation -> pendingInactivation.getRecord().getId()).toList(), WorkflowOperation.INACTIVE);
+        for (PendingInactivation pendingInactivation : pendingInactivations) {
+            BaseMasterDto record = pendingInactivation.getRecord();
+            workflowDtos.add(handler.mapToMasterWorkFlowDto(record, WorkflowOperation.INACTIVE, MessageFormat.format("Bulk upload {0} action performed.", WorkflowOperation.INACTIVE.name())));
+            rowResults.set(pendingInactivation.getIndex(), BulkUploadRowResult.builder()
+                    .recordStatus(BulkUploadRecordStatus.SUCCESS.name())
+                    .operation(WorkflowOperation.INACTIVE.name())
+                    .remark(INACTIVE_PENDING_REMARK)
+                    .masterRecordId(record.getId())
+                    .build());
+        }
+    }
+
+    private BulkUploadRowResult failureResult(String message) {
+        return BulkUploadRowResult.builder().recordStatus(BulkUploadRecordStatus.FAILED.name()).remark(message).build();
+    }
+
+
+
+    private List<MasterBulkUploadFileDetail> buildUploadFileDetails(MasterBulkUploadFile uploadFile, List<Map<String, String>> records, List<BulkUploadRowResult> rowResults) {
+        List<MasterBulkUploadFileDetail> fileDetails = new ArrayList<>(records.size());
+        for (int index = 0; index < records.size(); index++) {
+            fileDetails.add(mapDetail(uploadFile, records.get(index), rowResults.get(index)));
+        }
+        return fileDetails;
+    }
+
+    private MasterBulkUploadFileDetail mapDetail(MasterBulkUploadFile uploadFile, Map<String, String> record, BulkUploadRowResult rowResult) {
+        MasterBulkUploadFileDetail detail = new MasterBulkUploadFileDetail();
+        detail.setMasterUploadFileId(uploadFile.getId());
+        detail.setRecordJson(toJson(record));
+        detail.setStatus(rowResult.getRecordStatus());
+        detail.setOperation(rowResult.getOperation());
+        detail.setRemark(rowResult.getRemark());
+        detail.setMasterRecordId(rowResult.getMasterRecordId());
+        return detail;
+    }
+
+    private static class PendingCreate {
+        private final int index;
+        private final BaseMasterDto dto;
+
+        private PendingCreate(int index, BaseMasterDto dto) {
+            this.index = index;
+            this.dto = dto;
+        }
+
+        private int getIndex() {
+            return index;
+        }
+
+        private BaseMasterDto getDto() {
+            return dto;
+        }
+    }
+
+    private static class PendingInactivation {
+        private final int index;
+        private final BaseMasterDto record;
+
+        private PendingInactivation(int index, BaseMasterDto record) {
+            this.index = index;
+            this.record = record;
+        }
+
+        private int getIndex() {
+            return index;
+        }
+
+        private BaseMasterDto getRecord() {
+            return record;
         }
     }
 }
 
-8. Changes in PaymentBookingService
 
-Remove this:
+===================================
+package admin.service;
 
-private record PayProcDetails(
-        String gtwMapsId,
-        String payProcId,
-        String payProcType) {
-}
+import com.epay.admin.portal.config.AdminPortalConfig;
+import com.epay.admin.portal.dto.BaseMasterDto;
+import com.epay.admin.portal.dto.master.CountryCurrencyDto;
+import com.epay.admin.portal.dto.master.MasterWorkFlowDto;
+import com.epay.admin.portal.entity.admin.master.MasterBulkUploadConfig;
+import com.epay.admin.portal.entity.admin.master.MasterBulkUploadFile;
+import com.epay.admin.portal.externalservice.FileService;
+import com.epay.admin.portal.model.request.master.BulkUploadFormatConfig;
+import com.epay.admin.portal.model.response.AdminPortalResponse;
+import com.epay.admin.portal.model.response.master.MasterBulkUploadResponse;
+import com.epay.admin.portal.service.master.AdminMasterService;
+import com.epay.admin.portal.service.master.BaseMasterService;
+import com.epay.admin.portal.service.master.MasterBulkUploadService;
+import com.epay.admin.portal.service.master.MasterHandlerFactory;
+import com.epay.admin.portal.service.master.MasterWorkFlowService;
+import com.epay.admin.portal.util.enums.BulkUploadFileStatus;
+import com.epay.admin.portal.util.enums.BulkUploadParsingStatus;
+import com.epay.admin.portal.util.enums.MasterType;
+import com.epay.admin.portal.util.enums.WorkflowOperation;
+import com.epay.admin.portal.validator.MasterBulkUploadValidation;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.mock.web.MockMultipartFile;
 
-Import the DTO instead.
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
 
-import com.yourorg.transaction.dto.PayProcDetails;
+import static com.epay.admin.portal.util.AdminPortalConstants.CREATE_PENDING_REMARK;
+import static com.epay.admin.portal.util.AdminPortalConstants.INACTIVE_PENDING_REMARK;
+import static com.epay.admin.portal.util.AdminPortalConstants.SUCCESS_RESPONSE_CODE;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
-Then update buildPaymentInitiationRequest().
+@ExtendWith(MockitoExtension.class)
+class AdminMasterServiceTest {
 
-Old:
+    @InjectMocks
+    private AdminMasterService adminMasterService;
 
-request.setGtwMapsId(payProcDetails.gtwMapsId());
-request.setPayProcId(payProcDetails.payProcId());
-request.setPayProcType(payProcDetails.payProcType());
+    @Mock
+    private MasterHandlerFactory<BaseMasterDto> masterHandlerFactory;
 
-New:
+    @Mock
+    private MasterWorkFlowService masterWorkFlowService;
 
-request.setGtwMapsId(payProcDetails.getGtwMapsId());
-request.setPayProcId(payProcDetails.getPayProcId());
-request.setPayProcType(payProcDetails.getPayProcType());
+    @Mock
+    private MasterBulkUploadService masterBulkUploadService;
 
-Everything else stays exactly the same because all methods already return
+    @Mock
+    private FileService fileService;
 
-return new PayProcDetails(
-        gtwMapsId,
-        payProcId,
-        payProcType);
+    @Mock
+    private AdminPortalConfig adminPortalConfig;
 
-which also works for a normal DTO since we've added an all-arguments constructor.
+    @Mock
+    private MasterBulkUploadValidation bulkUploadValidation;
 
-Alternative (Recommended for your project)
+    @Mock
+    private BaseMasterService<BaseMasterDto> countryCurrencyService;
 
-Since your project already appears to use Lombok builders extensively (for example, PaymentBookingResponse.builder()), you can make PayProcDetails consistent with the rest of the codebase:
+    @Test
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    void upload_shouldProcessCountryCurrencyCreateAndInactiveRows() {
+        UUID configId = UUID.randomUUID();
+        UUID uploadFileId = UUID.randomUUID();
+        UUID createdId = UUID.randomUUID();
+        UUID activeId = UUID.randomUUID();
+        MockMultipartFile file = new MockMultipartFile("file", "countryCurrency.csv", "text/csv",
+                "code,name,currencyCode,currencyName,status\nIN,India,INR,Rupee,ACTIVE\nUS,United States,USD,Dollar,INACTIVE\n".getBytes());
 
-@Getter
-@Setter
-@Builder
-@NoArgsConstructor
-@AllArgsConstructor
-public class PayProcDetails {
+        MasterBulkUploadConfig config = new MasterBulkUploadConfig();
+        config.setId(configId);
+        config.setMasterType(MasterType.COUNTRY_CURRENCY.getCode());
+        config.setBulkUploadAllowed(true);
+        config.setFileFormatConfig("{}");
 
-    private String gtwMapsId;
-    private String payProcId;
-    private String payProcType;
-}
+        BulkUploadFormatConfig formatConfig = new BulkUploadFormatConfig();
+        formatConfig.setHeaders(List.of("code", "name", "currencyCode", "currencyName", "status"));
 
-Then you can create instances like:
-
-return PayProcDetails.builder()
-        .gtwMapsId(gtwMapsId)
-        .payProcId(payProcId)
-        .payProcType(payProcType)
-        .build();
-
-This style is commonly used in Spring Boot projects and is more consistent with the rest of your codebase.
-
-
---------------------------------------------------------
--------------------------------------------------------
-
-/    -----------------------------------------------------------
-private static final String ONUS = "ONUS";
-    private static final String OFFUS = "OFFUS";
-    private static final String SELF = "SELF";
-    private static final String BHIMQR = "BHIMQR";
-    private static final String STATE_BANK_NEW_PG = "State Bank of India New PG";
-
-    private static final String OTHER_PAYMENT_OPTIONS = "otherPaymentOptions";
-    private static final String FIELD_GTW_MAPS_ID = "aggregatorGatewayMapId";
-    private static final String FIELD_PAYPROC = "payproc";
-
-    private final LoggerUtility logger = LoggerFactoryUtility.getLogger(this.getClass());
-    private final OrderService orderService;
-    private final BookingService bookingService;
-    private final PaymentInitiationValidator paymentInitiationValidator;
-    private final PaymentBookingDao paymentBookingDao;
-    private final BookingDao bookingDao;
-    private final CardVerificationDao cardVerificationDao;
-    private final PaymentBookingValidator paymentBookingValidator;
-
-    /**
-     * Holds the three fields (gtwMapsId, payProcId, payProcType) that must be
-     * resolved before payment-initiation validation can run.
-     */
-    private record PayProcDetails(String gtwMapsId, String payProcId, String payProcType) {}
-
-    public TransactionResponse<PaymentBookingResponse> initiatePaymentBooking(PaymentBookingRequest paymentBookingRequest) {
-        OrderDto orderDto = orderService.createMerchantOrder(paymentBookingRequest.getOrderDto(), paymentBookingRequest.getMId());
-        logger.info("Created order for mid :{}", orderDto.getMId());
-
-        paymentBookingValidator.validateMerchantHostedRequest(paymentBookingRequest);
-
-        bookingService.initiateOrderBooking(paymentBookingRequest.getOrderDto(), TransactionTokenType.PAYMENT);
-        logger.info("Book transaction done for mid: {}", orderDto.getMId());
-
-        buildPaymentInitiationRequest(paymentBookingRequest);
-
-        paymentInitiationValidator.validatePaymentRequest(paymentBookingRequest.getPaymentInitiationRequest(), orderDto, paymentBookingRequest.getPayMode());
-        logger.info("Payment initiation request validated successfully.");
-
-        paymentBookingDao.savePaymentBookingDetails(orderDto, paymentBookingRequest.getPaymentInitiationRequest(), paymentBookingRequest.getPayMode());
-        PaymentBookingResponse paymentBookingResponse = buildPaymentBookingResponse(orderDto);
-        return TransactionResponse.<PaymentBookingResponse>builder()
-                .status(TransactionConstant.RESPONSE_SUCCESS)
-                .data(List.of(paymentBookingResponse)).build();
-    }
-
-    private void buildPaymentInitiationRequest(PaymentBookingRequest paymentBookingRequest) {
-        PaymentInitiationRequest request = paymentBookingRequest.getPaymentInitiationRequest();
-        PayMode payMode = PayMode.getPayMode(paymentBookingRequest.getPayMode());
-        request.setOperatingMode(OperatingMode.DOM.name());
-
-        PayProcDetails payProcDetails = resolvePayProcDetails(payMode, request, paymentBookingRequest.getMId());
-
-        request.setGtwMapsId(payProcDetails.gtwMapsId());
-        request.setPayProcId(payProcDetails.payProcId());
-        request.setPayProcType(payProcDetails.payProcType());
-    }
-
-    private PayProcDetails resolvePayProcDetails(PayMode payMode, PaymentInitiationRequest request, String mId) {
-        return switch (payMode) {
-            case CC, DC, PC -> resolveCardPayProcDetails(request);
-            case NB -> resolveNetBankingPayProcDetails(request, mId);
-            case UPI, WALLET -> resolveUpiOrWalletPayProcDetails(payMode, request, mId);
-            default -> throw new TransactionException(INVALID_ERROR_CODE,
-                    MessageFormat.format(TransactionErrorConstants.INVALID_ERROR_MESSAGE,
-                            "payMode", "Unsupported PayMode for payProc resolution"));
-        };
-    }
-
-    // ---------- CC / DC / PC ----------
-
-    private PayProcDetails resolveCardPayProcDetails(PaymentInitiationRequest request) {
-        BinCheckRequest binCheckRequest = BinCheckRequest.builder()
-                .cardBin(StringUtils.left(request.getAltNumber(), CARD_BIN_LENGTH))
+        MasterBulkUploadFile uploadFile = MasterBulkUploadFile.builder()
+                .id(uploadFileId)
+                .masterType(MasterType.COUNTRY_CURRENCY.getCode())
+                .masterConfigId(configId)
+                .fileName(file.getOriginalFilename())
+                .filePath("s3://bucket/countryCurrency.csv")
+                .parsingStatus(BulkUploadParsingStatus.IN_PROGRESS)
+                .fileStatus(BulkUploadFileStatus.IN_PROGRESS)
                 .build();
-        BinCheckResponse binResponse = cardVerificationDao.validateBin(binCheckRequest);
 
-        String payProcId = binResponse.getCardProcessor();
-        String payProcType = STATE_BANK_NEW_PG.equals(binResponse.getBinIssuerId()) ? ONUS : OFFUS;
-        String gtwMapsId = resolveCardGatewayMapId(binResponse);
+        CountryCurrencyDto savedCreate = countryCurrency(createdId, "IN", "India", "INR", "Rupee");
+        CountryCurrencyDto activeRecord = countryCurrency(activeId, "US", "United States", "USD", "Dollar");
+        MasterWorkFlowDto createWorkflow = MasterWorkFlowDto.builder().entityId(createdId.toString()).action(WorkflowOperation.CREATE).build();
+        MasterWorkFlowDto inactiveWorkflow = MasterWorkFlowDto.builder().entityId(activeId.toString()).action(WorkflowOperation.INACTIVE).build();
 
-        return new PayProcDetails(gtwMapsId, payProcId, payProcType);
+        when(masterHandlerFactory.getMasterService(MasterType.COUNTRY_CURRENCY.getCode())).thenReturn(countryCurrencyService);
+        when(masterBulkUploadService.findConfigByMasterType(MasterType.COUNTRY_CURRENCY.getCode())).thenReturn(config);
+        when(masterBulkUploadService.generateChecksum(file)).thenReturn("checksum");
+        when(masterBulkUploadService.parseConfig(config.getFileFormatConfig())).thenReturn(formatConfig);
+        when(fileService.uploadFile(file)).thenReturn("s3://bucket/countryCurrency.csv");
+        when(masterBulkUploadService.insertFileRecord(MasterType.COUNTRY_CURRENCY.getCode(), file, "s3://bucket/countryCurrency.csv", configId)).thenReturn(uploadFile);
+        when(masterBulkUploadService.readRecords(file, formatConfig)).thenReturn(List.of(
+                Map.of("code", "IN", "name", "India", "currencyCode", "INR", "currencyName", "Rupee", "status", "ACTIVE"),
+                Map.of("code", "US", "name", "United States", "currencyCode", "USD", "currencyName", "Dollar", "status", "INACTIVE")
+        ));
+        when(adminPortalConfig.getMasterBulkUploadBatchSize()).thenReturn(10);
+        when(countryCurrencyService.getDtoClass()).thenReturn((Class) CountryCurrencyDto.class);
+        when(countryCurrencyService.saveAll(anyList())).thenReturn(List.of(savedCreate));
+        when(countryCurrencyService.findActiveApproved(any())).thenReturn(java.util.Optional.of(activeRecord));
+        when(countryCurrencyService.mapToMasterWorkFlowDto(eq(savedCreate), eq(WorkflowOperation.CREATE), any())).thenReturn(createWorkflow);
+        when(countryCurrencyService.mapToMasterWorkFlowDto(eq(activeRecord), eq(WorkflowOperation.INACTIVE), any())).thenReturn(inactiveWorkflow);
+
+        AdminPortalResponse<MasterBulkUploadResponse> response = adminMasterService.upload(MasterType.COUNTRY_CURRENCY.getCode(), file);
+
+        assertNotNull(response);
+        assertEquals(SUCCESS_RESPONSE_CODE, response.getStatus());
+        assertEquals(1L, response.getCount());
+        MasterBulkUploadResponse data = response.getData().getFirst();
+        assertEquals(uploadFileId, data.getUploadFileId());
+        assertEquals(2L, data.getTotalRecords());
+        assertEquals(2L, data.getSuccessRecords());
+        assertEquals(0L, data.getFailedRecords());
+        assertEquals(BulkUploadParsingStatus.COMPLETED.name(), data.getParsingStatus());
+        assertEquals(BulkUploadFileStatus.COMPLETED.name(), data.getFileStatus());
+
+        ArgumentCaptor<List> detailsCaptor = ArgumentCaptor.forClass(List.class);
+        verify(masterBulkUploadService).saveMasterFileDtls(detailsCaptor.capture());
+        assertEquals(2, detailsCaptor.getValue().size());
+        verify(countryCurrencyService).performAction(List.of(activeId), WorkflowOperation.INACTIVE);
+        verify(masterWorkFlowService).save(List.of(createWorkflow, inactiveWorkflow));
+        verify(masterBulkUploadService).updateFileRecord(uploadFile);
+        assertEquals(CREATE_PENDING_REMARK, ((com.epay.admin.portal.entity.admin.master.MasterBulkUploadFileDetail) detailsCaptor.getValue().getFirst()).getRemark());
+        assertEquals(INACTIVE_PENDING_REMARK, ((com.epay.admin.portal.entity.admin.master.MasterBulkUploadFileDetail) detailsCaptor.getValue().get(1)).getRemark());
     }
 
-    // TODO: Confirm with Admin-service team how to map a BinCheckResponse
-    // (binType / cardProcessor / binOpModeId / binIssuerId) back to an
-    // aggregatorGatewayMapId inside bookingDao.getMerchantPayModes(mId)'s
-    // cards.cc/dc/pc arrays. Likely candidate: match on payproc == cardProcessor
-    // within otherPaymentOptions.cards.<cc|dc|pc>, but needs confirmation.
-    private String resolveCardGatewayMapId(BinCheckResponse binResponse) {
-        return null;
+    private CountryCurrencyDto countryCurrency(UUID id, String code, String name, String currencyCode, String currencyName) {
+        CountryCurrencyDto dto = new CountryCurrencyDto();
+        dto.setId(id);
+        dto.setCode(code);
+        dto.setName(name);
+        dto.setCurrencyCode(currencyCode);
+        dto.setCurrencyName(currencyName);
+        return dto;
+    }
+}
+=============
+
+
+package admin.service;
+
+import com.epay.admin.portal.entity.admin.master.MasterBulkUploadConfig;
+import com.epay.admin.portal.entity.admin.master.MasterBulkUploadFile;
+import com.epay.admin.portal.entity.admin.master.MasterBulkUploadFileDetail;
+import com.epay.admin.portal.exceptions.AdminPortalException;
+import com.epay.admin.portal.exceptions.ValidationException;
+import com.epay.admin.portal.model.request.master.BulkUploadFormatConfig;
+import com.epay.admin.portal.repository.admin.master.MasterBulkUploadConfigRepository;
+import com.epay.admin.portal.repository.admin.master.MasterBulkUploadFileDetailRepository;
+import com.epay.admin.portal.repository.admin.master.MasterBulkUploadFileRepository;
+import com.epay.admin.portal.service.master.MasterBulkUploadService;
+import com.epay.admin.portal.util.enums.BulkUploadFileStatus;
+import com.epay.admin.portal.util.enums.BulkUploadParsingStatus;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.mock.web.MockMultipartFile;
+
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.UUID;
+
+import static com.epay.admin.portal.util.ErrorConstants.INVALID_ERROR_CODE;
+import static com.epay.admin.portal.util.ErrorConstants.NOT_FOUND_ERROR_CODE;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
+@ExtendWith(MockitoExtension.class)
+class MasterBulkUploadServiceTest {
+
+    @InjectMocks
+    private MasterBulkUploadService masterBulkUploadService;
+
+    @Mock
+    private MasterBulkUploadConfigRepository configRepository;
+
+    @Mock
+    private ObjectMapper objectMapper;
+
+    @Mock
+    private MasterBulkUploadFileRepository fileRepository;
+
+    @Mock
+    private MasterBulkUploadFileDetailRepository fileDetailRepository;
+
+    @Test
+    void findConfigByMasterType_shouldReturnAllowedConfig() {
+        MasterBulkUploadConfig config = new MasterBulkUploadConfig();
+        config.setMasterType("countryCurrency");
+        config.setBulkUploadAllowed(true);
+
+        when(configRepository.findByMasterTypeIgnoreCase("countryCurrency")).thenReturn(Optional.of(config));
+
+        MasterBulkUploadConfig result = masterBulkUploadService.findConfigByMasterType("countryCurrency");
+
+        assertEquals(config, result);
     }
 
-    // ---------- NB ----------
+    @Test
+    void findConfigByMasterType_shouldThrowWhenMissing() {
+        when(configRepository.findByMasterTypeIgnoreCase("countryCurrency")).thenReturn(Optional.empty());
 
-    private PayProcDetails resolveNetBankingPayProcDetails(PaymentInitiationRequest request, String mId) {
-        String gtwMapsId = request.getGtwMapsId();
-        JsonNode inbOptions = bookingDao.getMerchantPayModes(mId).path(OTHER_PAYMENT_OPTIONS).path("inb");
+        AdminPortalException exception = assertThrows(AdminPortalException.class,
+                () -> masterBulkUploadService.findConfigByMasterType("countryCurrency"));
 
-        String payProcId = streamArray(inbOptions)
-                .filter(node -> gtwMapsId.equals(textOrNull(node, FIELD_GTW_MAPS_ID)))
-                .findFirst()
-                .map(node -> textOrNull(node, FIELD_PAYPROC))
-                .orElseThrow(() -> new TransactionException(INVALID_ERROR_CODE,
-                        MessageFormat.format(TransactionErrorConstants.INVALID_ERROR_MESSAGE,
-                                "payProcId", "Could not resolve payProcId for gtwMapsId: " + gtwMapsId)));
-
-        String payProcType = SELF.equalsIgnoreCase(payProcId) ? ONUS : OFFUS;
-
-        return new PayProcDetails(gtwMapsId, payProcId, payProcType);
+        assertEquals(NOT_FOUND_ERROR_CODE, exception.getErrorCode());
     }
 
-    // ---------- UPI / WALLET ----------
+    @Test
+    void findConfigByMasterType_shouldThrowWhenBulkUploadDisabled() {
+        MasterBulkUploadConfig config = new MasterBulkUploadConfig();
+        config.setMasterType("countryCurrency");
+        config.setBulkUploadAllowed(false);
 
-    private PayProcDetails resolveUpiOrWalletPayProcDetails(PayMode payMode, PaymentInitiationRequest request, String mId) {
-        String payProcId = request.getPayProcId();
-        JsonNode paymentOptions = bookingDao.getMerchantPayModes(mId).path(OTHER_PAYMENT_OPTIONS);
+        when(configRepository.findByMasterTypeIgnoreCase("countryCurrency")).thenReturn(Optional.of(config));
 
-        Stream<JsonNode> candidates = (payMode == PayMode.UPI)
-                ? upiCandidates(paymentOptions.path("upi"))
-                : streamArray(paymentOptions.path("wallet"));
+        ValidationException exception = assertThrows(ValidationException.class,
+                () -> masterBulkUploadService.findConfigByMasterType("countryCurrency"));
 
-        String gtwMapsId = candidates
-                .filter(node -> payProcId.equalsIgnoreCase(textOrNull(node, FIELD_PAYPROC)))
-                .findFirst()
-                .map(node -> textOrNull(node, FIELD_GTW_MAPS_ID))
-                .orElseThrow(() -> new TransactionException(INVALID_ERROR_CODE,
-                        MessageFormat.format(TransactionErrorConstants.INVALID_ERROR_MESSAGE,
-                                "gtwMapsId", "Could not resolve gtwMapsId for payProcId: " + payProcId)));
-
-        return new PayProcDetails(gtwMapsId, payProcId, ONUS);
+        assertEquals(INVALID_ERROR_CODE, exception.getErrorCode());
     }
 
-    private Stream<JsonNode> upiCandidates(JsonNode upiNode) {
-        // "self" and "BHIMQR" are individual object fields, not an array.
-        return Stream.of(upiNode.path(SELF.toLowerCase()), upiNode.path(BHIMQR));
+    @Test
+    void readRecords_shouldParseCsvRowsAgainstConfiguredHeaders() {
+        BulkUploadFormatConfig formatConfig = new BulkUploadFormatConfig();
+        formatConfig.setHeaders(List.of("code", "name", "currencyCode", "currencyName", "status"));
+        MockMultipartFile file = new MockMultipartFile("file", "countryCurrency.csv", "text/csv",
+                "code,name,currencyCode,currencyName,status\nIN,India,INR,Rupee,ACTIVE\nUS,United States,USD,Dollar,INACTIVE\n".getBytes());
+
+        List<Map<String, String>> records = masterBulkUploadService.readRecords(file, formatConfig);
+
+        assertEquals(2, records.size());
+        assertEquals("IN", records.getFirst().get("code"));
+        assertEquals("Rupee", records.getFirst().get("currencyName"));
+        assertEquals("INACTIVE", records.get(1).get("status"));
     }
 
-    // ---------- shared JsonNode helpers ----------
+    @Test
+    void readRecords_shouldRejectInvalidHeaders() {
+        BulkUploadFormatConfig formatConfig = new BulkUploadFormatConfig();
+        formatConfig.setHeaders(List.of("code", "name"));
+        MockMultipartFile file = new MockMultipartFile("file", "countryCurrency.csv", "text/csv",
+                "wrong,name\nIN,India\n".getBytes());
 
-    private Stream<JsonNode> streamArray(JsonNode arrayNode) {
-        if (arrayNode == null || arrayNode.isMissingNode() || arrayNode.isNull()) {
-            return Stream.empty();
-        }
-        return StreamSupport.stream(
-                Spliterators.spliteratorUnknownSize(arrayNode.elements(), Spliterator.ORDERED), false);
+        AdminPortalException exception = assertThrows(AdminPortalException.class,
+                () -> masterBulkUploadService.readRecords(file, formatConfig));
+
+        assertEquals(INVALID_ERROR_CODE, exception.getErrorCode());
     }
 
-    private String textOrNull(JsonNode node, String fieldName) {
-        if (node == null || node.isMissingNode() || node.isNull()) {
-            return null;
-        }
-        JsonNode field = node.path(fieldName);
-        return (field.isMissingNode() || field.isNull()) ? null : field.asText();
+    @Test
+    void insertFileRecord_shouldCreateInProgressUploadRecord() {
+        UUID configId = UUID.randomUUID();
+        MockMultipartFile file = new MockMultipartFile("file", "countryCurrency.csv", "text/csv", new byte[]{1, 2});
+
+        when(fileRepository.save(any(MasterBulkUploadFile.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        MasterBulkUploadFile result = masterBulkUploadService.insertFileRecord("countryCurrency", file, "s3://file.csv", configId);
+
+        assertEquals("countryCurrency", result.getMasterType());
+        assertEquals(configId, result.getMasterConfigId());
+        assertEquals("countryCurrency.csv", result.getFileName());
+        assertEquals("s3://file.csv", result.getFilePath());
+        assertEquals(BulkUploadParsingStatus.IN_PROGRESS, result.getParsingStatus());
+        assertEquals(BulkUploadFileStatus.IN_PROGRESS, result.getFileStatus());
     }
 
-    private PaymentBookingResponse buildPaymentBookingResponse(OrderDto orderDto) {
-        return PaymentBookingResponse.builder()
-                .paymentMode(orderDto.getPayMode())
-                .transactionUrl(orderDto.getTransactionUrl())
-                .orderHash(orderDto.getOrderHash())
-                .orderRefNumber(orderDto.getOrderRefNumber())
-                .sbiOrderRefNumber(orderDto.getSbiOrderRefNumber())
-                .orderRetryCount(orderDto.getOrderRetryCount())
-                .expiry(orderDto.getExpiry())
+    @Test
+    void saveMasterFileDtls_shouldDelegateToRepository() {
+        List<MasterBulkUploadFileDetail> details = List.of(new MasterBulkUploadFileDetail());
+
+        masterBulkUploadService.saveMasterFileDtls(details);
+
+        verify(fileDetailRepository).saveAll(details);
+    }
+
+    @Test
+    void existsByFileChecksum_shouldDelegateToRepository() {
+        when(fileRepository.existsByFileChecksum("checksum")).thenReturn(true);
+
+        assertTrue(masterBulkUploadService.existsByFileChecksum("checksum"));
+        assertFalse(masterBulkUploadService.existsByFileChecksum("other"));
+    }
+}
+=============
+
+package admin.service;
+
+import com.epay.admin.portal.dto.master.CountryCurrencyDto;
+import com.epay.admin.portal.dto.master.MasterWorkFlowDto;
+import com.epay.admin.portal.entity.admin.master.MasterWorkFlow;
+import com.epay.admin.portal.mapper.admin.master.MasterWorkFlowMapper;
+import com.epay.admin.portal.repository.admin.master.MasterWorkFlowRepository;
+import com.epay.admin.portal.service.master.MasterWorkFlowService;
+import com.epay.admin.portal.util.enums.MasterType;
+import com.epay.admin.portal.util.enums.WorkflowOperation;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+
+import java.util.List;
+import java.util.UUID;
+
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
+@ExtendWith(MockitoExtension.class)
+class MasterWorkFlowServiceTest {
+
+    @InjectMocks
+    private MasterWorkFlowService masterWorkFlowService;
+
+    @Mock
+    private MasterWorkFlowRepository masterWorkFlowRepository;
+
+    @Mock
+    private MasterWorkFlowMapper masterWorkFlowMapper;
+
+    @Test
+    void save_shouldMapAndPersistWorkflow() {
+        MasterWorkFlowDto dto = workflowDto();
+        MasterWorkFlow entity = new MasterWorkFlow();
+
+        when(masterWorkFlowMapper.mapEntityToDto(dto)).thenReturn(entity);
+
+        masterWorkFlowService.save(dto);
+
+        verify(masterWorkFlowRepository).save(entity);
+    }
+
+    @Test
+    void saveList_shouldMapAndPersistAllWorkflows() {
+        MasterWorkFlowDto dto = workflowDto();
+        MasterWorkFlow entity = new MasterWorkFlow();
+
+        when(masterWorkFlowMapper.mapEntityToDto(dto)).thenReturn(entity);
+
+        masterWorkFlowService.save(List.of(dto));
+
+        verify(masterWorkFlowRepository).saveAll(List.of(entity));
+    }
+
+    @Test
+    void update_shouldPopulateOldAndNewValuesBeforePersisting() {
+        MasterWorkFlowDto workflowDto = workflowDto();
+        MasterWorkFlow entity = new MasterWorkFlow();
+        CountryCurrencyDto oldDto = countryCurrency("IN", "India");
+        CountryCurrencyDto newDto = countryCurrency("IN", "Bharat");
+
+        when(masterWorkFlowMapper.mapEntityToDto(workflowDto)).thenReturn(entity);
+
+        masterWorkFlowService.update(workflowDto, oldDto, newDto);
+
+        assertNotNull(workflowDto.getOldValue());
+        assertNotNull(workflowDto.getNewValue());
+        verify(masterWorkFlowRepository).save(entity);
+    }
+
+    private MasterWorkFlowDto workflowDto() {
+        return MasterWorkFlowDto.builder()
+                .masterCode(MasterType.COUNTRY_CURRENCY)
+                .action(WorkflowOperation.CREATE)
+                .entityId(UUID.randomUUID().toString())
+                .remark("remark")
                 .build();
     }
+
+    private CountryCurrencyDto countryCurrency(String code, String name) {
+        CountryCurrencyDto dto = new CountryCurrencyDto();
+        dto.setId(UUID.randomUUID());
+        dto.setCode(code);
+        dto.setName(name);
+        dto.setCurrencyCode("INR");
+        dto.setCurrencyName("Rupee");
+        return dto;
+    }
+}
+=============
+
+package admin.service;
+
+import com.epay.admin.portal.dao.admin.master.CountryCurrencyDao;
+import com.epay.admin.portal.dto.master.CountryCurrencyDto;
+import com.epay.admin.portal.dto.master.MasterWorkFlowDto;
+import com.epay.admin.portal.exceptions.AdminPortalException;
+import com.epay.admin.portal.model.request.master.MasterRequest;
+import com.epay.admin.portal.model.response.AdminPortalResponse;
+import com.epay.admin.portal.service.master.CountryCurrencyService;
+import com.epay.admin.portal.util.enums.MasterAction;
+import com.epay.admin.portal.util.enums.MasterType;
+import com.epay.admin.portal.util.enums.WorkflowOperation;
+import com.epay.admin.portal.validator.CountryCurrencyValidator;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
+
+import static com.epay.admin.portal.util.AdminPortalConstants.SUCCESS_RESPONSE_CODE;
+import static com.epay.admin.portal.util.ErrorConstants.INVALID_ERROR_CODE;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
+@ExtendWith(MockitoExtension.class)
+class CountryCurrencyServiceTest {
+
+    @InjectMocks
+    private CountryCurrencyService countryCurrencyService;
+
+    @Mock
+    private CountryCurrencyValidator countryCurrencyValidator;
+
+    @Mock
+    private CountryCurrencyDao countryCurrencyDao;
+
+    @Mock
+    private ObjectMapper objectMapper;
+
+    @Test
+    void mapToMasterDto_shouldConvertRequestDataToCountryCurrencyDto() {
+        MasterRequest request = new MasterRequest();
+        Map<String, Object> data = Map.of("code", "IN", "name", "India", "currencyCode", "INR", "currencyName", "Rupee");
+        request.setData(data);
+        CountryCurrencyDto dto = countryCurrency();
+
+        when(objectMapper.convertValue(data, CountryCurrencyDto.class)).thenReturn(dto);
+
+        assertEquals(dto, countryCurrencyService.mapToMasterDto(request));
+    }
+
+    @Test
+    void validate_shouldRouteCreateAndUpdateValidation() {
+        CountryCurrencyDto dto = countryCurrency();
+
+        countryCurrencyService.validate(dto, WorkflowOperation.CREATE);
+        countryCurrencyService.validate(dto, WorkflowOperation.UPDATE);
+
+        verify(countryCurrencyValidator).validateCreate(dto);
+        verify(countryCurrencyValidator).validateUpdate(dto);
+    }
+
+    @Test
+    void validate_shouldRejectUnsupportedOperation() {
+        AdminPortalException exception = assertThrows(AdminPortalException.class,
+                () -> countryCurrencyService.validate(countryCurrency(), WorkflowOperation.APPROVE));
+
+        assertEquals(INVALID_ERROR_CODE, exception.getErrorCode());
+    }
+
+    @Test
+    void save_shouldSetMakerCheckerStateAndCreateRecord() {
+        CountryCurrencyDto dto = countryCurrency();
+        CountryCurrencyDto savedDto = countryCurrency();
+
+        when(countryCurrencyDao.create(dto)).thenReturn(savedDto);
+
+        CountryCurrencyDto result = countryCurrencyService.save(dto, WorkflowOperation.CREATE);
+
+        assertEquals(savedDto, result);
+        assertEquals(MasterAction.INACTIVE.name(), dto.getStatus());
+        assertEquals(MasterAction.PENDING_FOR_APPROVAL.name(), dto.getAction());
+        verify(countryCurrencyDao).create(dto);
+    }
+
+    @Test
+    void performAction_shouldMapWorkflowOperationToMasterAction() {
+        UUID id = UUID.randomUUID();
+
+        countryCurrencyService.performAction(List.of(id), WorkflowOperation.APPROVE);
+        countryCurrencyService.performAction(List.of(id), WorkflowOperation.REJECT);
+        countryCurrencyService.performAction(List.of(id), WorkflowOperation.INACTIVE);
+
+        verify(countryCurrencyDao).performAction(List.of(id), MasterAction.APPROVED);
+        verify(countryCurrencyDao).performAction(List.of(id), MasterAction.PENDING_FOR_REJECTED);
+        verify(countryCurrencyDao).performAction(List.of(id), MasterAction.PENDING_FOR_INACTIVE);
+    }
+
+    @Test
+    void mapToMasterWorkFlowDto_shouldBuildCountryCurrencyWorkflowDto() {
+        CountryCurrencyDto dto = countryCurrency();
+        dto.setId(UUID.randomUUID());
+
+        MasterWorkFlowDto result = countryCurrencyService.mapToMasterWorkFlowDto(dto, WorkflowOperation.CREATE, "created");
+
+        assertEquals(MasterType.COUNTRY_CURRENCY, result.getMasterCode());
+        assertEquals(WorkflowOperation.CREATE, result.getAction());
+        assertEquals(dto.getId().toString(), result.getEntityId());
+        assertEquals("created", result.getRemark());
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void mapToResponse_shouldReturnConvertedMaps() {
+        CountryCurrencyDto dto = countryCurrency();
+        Map<String, Object> row = Map.of("code", "IN", "name", "India");
+
+        when(objectMapper.convertValue(any(CountryCurrencyDto.class), any(com.fasterxml.jackson.core.type.TypeReference.class))).thenReturn(row);
+
+        AdminPortalResponse<Map<String, Object>> response = countryCurrencyService.mapToResponse(List.of(dto), 3L);
+
+        assertEquals(SUCCESS_RESPONSE_CODE, response.getStatus());
+        assertEquals(1L, response.getCount());
+        assertEquals(3L, response.getTotal());
+        assertEquals(List.of(row), response.getData());
+    }
+
+    private CountryCurrencyDto countryCurrency() {
+        CountryCurrencyDto dto = new CountryCurrencyDto();
+        dto.setId(UUID.randomUUID());
+        dto.setCode("IN");
+        dto.setName("India");
+        dto.setCurrencyCode("INR");
+        dto.setCurrencyName("Rupee");
+        return dto;
+    }
+}
+
+=================
+
+package admin.dao;
+
+import com.epay.admin.portal.dao.admin.master.CountryCurrencyDao;
+import com.epay.admin.portal.dto.master.CountryCurrencyDto;
+import com.epay.admin.portal.entity.admin.master.CountryCurrency;
+import com.epay.admin.portal.exceptions.AdminPortalException;
+import com.epay.admin.portal.mapper.admin.master.MasterMapper;
+import com.epay.admin.portal.repository.admin.master.CountryCurrencyRepository;
+import com.epay.admin.portal.util.enums.MasterAction;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.jpa.domain.Specification;
+
+import java.util.List;
+import java.util.Optional;
+import java.util.UUID;
+
+import static com.epay.admin.portal.util.ErrorConstants.FAILED_ERROR_CODE;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.nullable;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
+@ExtendWith(MockitoExtension.class)
+class CountryCurrencyDaoTest {
+
+    @InjectMocks
+    private CountryCurrencyDao countryCurrencyDao;
+
+    @Mock
+    private MasterMapper<CountryCurrencyDto, CountryCurrency> masterMapper;
+
+    @Mock
+    private CountryCurrencyRepository countryCurrencyRepository;
+
+    @Test
+    void create_shouldMapSaveAndReturnDto() {
+        CountryCurrencyDto dto = countryCurrencyDto();
+        CountryCurrency entity = countryCurrencyEntity();
+        CountryCurrency savedEntity = countryCurrencyEntity();
+        CountryCurrencyDto savedDto = countryCurrencyDto();
+
+        when(masterMapper.mapDtoToEntity(dto)).thenReturn(entity);
+        when(countryCurrencyRepository.save(entity)).thenReturn(savedEntity);
+        when(masterMapper.mapEntityToDto(savedEntity)).thenReturn(savedDto);
+
+        CountryCurrencyDto result = countryCurrencyDao.create(dto);
+
+        assertEquals(savedDto, result);
+    }
+
+    @Test
+    void update_shouldThrowWhenRecordMissing() {
+        CountryCurrencyDto dto = countryCurrencyDto();
+
+        when(countryCurrencyRepository.findById(dto.getId())).thenReturn(Optional.empty());
+
+        AdminPortalException exception = assertThrows(AdminPortalException.class, () -> countryCurrencyDao.update(dto));
+
+        assertEquals(FAILED_ERROR_CODE, exception.getErrorCode());
+    }
+
+    @Test
+    void update_shouldApplyDtoAndSaveExistingEntity() {
+        CountryCurrencyDto dto = countryCurrencyDto();
+        CountryCurrency entity = countryCurrencyEntity();
+        CountryCurrencyDto savedDto = countryCurrencyDto();
+
+        when(countryCurrencyRepository.findById(dto.getId())).thenReturn(Optional.of(entity));
+        when(countryCurrencyRepository.save(entity)).thenReturn(entity);
+        when(masterMapper.mapEntityToDto(entity)).thenReturn(savedDto);
+
+        CountryCurrencyDto result = countryCurrencyDao.update(dto);
+
+        verify(masterMapper).updateEntityByDto(dto, entity);
+        assertEquals(savedDto, result);
+    }
+
+    @Test
+    void createList_shouldSetMakerCheckerStateBeforeSaving() {
+        CountryCurrencyDto dto = countryCurrencyDto();
+        CountryCurrency entity = countryCurrencyEntity();
+
+        when(masterMapper.mapDtoToEntity(List.of(dto))).thenReturn(List.of(entity));
+        when(countryCurrencyRepository.saveAll(List.of(entity))).thenReturn(List.of(entity));
+        when(masterMapper.mapEntityToDto(List.of(entity))).thenReturn(List.of(dto));
+
+        List<CountryCurrencyDto> result = countryCurrencyDao.create(List.of(dto));
+
+        assertEquals(List.of(dto), result);
+        assertEquals(MasterAction.INACTIVE.name(), dto.getStatus());
+        assertEquals(MasterAction.PENDING_FOR_APPROVAL.name(), dto.getAction());
+    }
+
+    @Test
+    void performAction_shouldUseApprovalQueryForApprovedAction() {
+        UUID id = UUID.randomUUID();
+
+        countryCurrencyDao.performAction(List.of(id), MasterAction.APPROVED);
+
+        verify(countryCurrencyRepository).approve(List.of(id), MasterAction.APPROVED.name());
+    }
+
+    @Test
+    void performAction_shouldUseGenericQueryForRejectAndInactiveActions() {
+        UUID id = UUID.randomUUID();
+
+        countryCurrencyDao.performAction(List.of(id), MasterAction.PENDING_FOR_REJECTED);
+        countryCurrencyDao.performAction(List.of(id), MasterAction.PENDING_FOR_INACTIVE);
+
+        verify(countryCurrencyRepository).performAction(List.of(id), MasterAction.PENDING_FOR_REJECTED.name());
+        verify(countryCurrencyRepository).performAction(List.of(id), MasterAction.PENDING_FOR_INACTIVE.name());
+    }
+
+    @Test
+    void findCountryCurrencyDtls_shouldFindActiveApprovedRecord() {
+        CountryCurrencyDto dto = countryCurrencyDto();
+        CountryCurrency entity = countryCurrencyEntity();
+
+        when(countryCurrencyRepository.findByCodeAndNameAndCurrencyCodeAndCurrencyNameAndStatusAndAction(
+                dto.getCode(), dto.getName(), dto.getCurrencyCode(), dto.getCurrencyName(), "ACTIVE", "APPROVED"))
+                .thenReturn(Optional.of(entity));
+        when(masterMapper.mapEntityToDto(entity)).thenReturn(dto);
+
+        Optional<CountryCurrencyDto> result = countryCurrencyDao.findCountryCurrencyDtls(dto);
+
+        assertTrue(result.isPresent());
+        assertEquals(dto, result.get());
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void findBySpecification_shouldMapPageContent() {
+        CountryCurrency entity = countryCurrencyEntity();
+        CountryCurrencyDto dto = countryCurrencyDto();
+        PageRequest pageable = PageRequest.of(0, 10);
+        Page<CountryCurrency> page = new PageImpl<>(List.of(entity), pageable, 1);
+
+        when(countryCurrencyRepository.findAll(nullable(Specification.class), eq(pageable))).thenReturn(page);
+        when(masterMapper.mapEntityToDto(entity)).thenReturn(dto);
+
+        Page<CountryCurrencyDto> result = countryCurrencyDao.findBySpecification(null, pageable);
+
+        assertEquals(1, result.getContent().size());
+        assertEquals(dto, result.getContent().getFirst());
+    }
+
+    private CountryCurrencyDto countryCurrencyDto() {
+        CountryCurrencyDto dto = new CountryCurrencyDto();
+        dto.setId(UUID.randomUUID());
+        dto.setCode("IN");
+        dto.setName("India");
+        dto.setCurrencyCode("INR");
+        dto.setCurrencyName("Rupee");
+        return dto;
+    }
+
+    private CountryCurrency countryCurrencyEntity() {
+        CountryCurrency entity = new CountryCurrency();
+        entity.setId(UUID.randomUUID());
+        entity.setCode("IN");
+        entity.setName("India");
+        entity.setCurrencyCode("INR");
+        entity.setCurrencyName("Rupee");
+        return entity;
+    }
+}
+==========
+
+package admin.controller;
+
+import com.epay.admin.portal.controller.admin.MasterController;
+import com.epay.admin.portal.model.response.AdminPortalResponse;
+import com.epay.admin.portal.model.response.master.MasterBulkUploadResponse;
+import com.epay.admin.portal.service.master.AdminMasterService;
+import com.epay.admin.portal.util.enums.MasterType;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.mock.web.MockMultipartFile;
+import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.setup.MockMvcBuilders;
+
+import java.util.List;
+import java.util.UUID;
+
+import static com.epay.admin.portal.util.AdminPortalConstants.SUCCESS_RESPONSE_CODE;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+
+@ExtendWith(MockitoExtension.class)
+class MasterControllerTest {
+
+    private MockMvc mockMvc;
+
+    @Mock
+    private AdminMasterService adminMasterService;
+
+    @BeforeEach
+    void setUp() {
+        mockMvc = MockMvcBuilders.standaloneSetup(new MasterController(adminMasterService)).build();
+    }
+
+    @Test
+    void bulkUpload_shouldAcceptCountryCurrencyMultipartFileAndReturnUploadResponse() throws Exception {
+        MockMultipartFile file = new MockMultipartFile("file", "countryCurrency.csv", "text/csv",
+                "code,name,currencyCode,currencyName,status\nIN,India,INR,Rupee,ACTIVE\n".getBytes());
+        MasterBulkUploadResponse uploadResponse = MasterBulkUploadResponse.builder()
+                .uploadFileId(UUID.randomUUID())
+                .masterType(MasterType.COUNTRY_CURRENCY.getCode())
+                .totalRecords(1L)
+                .successRecords(1L)
+                .failedRecords(0L)
+                .parsingStatus("COMPLETED")
+                .fileStatus("COMPLETED")
+                .build();
+        AdminPortalResponse<MasterBulkUploadResponse> response = AdminPortalResponse.<MasterBulkUploadResponse>builder()
+                .status(SUCCESS_RESPONSE_CODE)
+                .data(List.of(uploadResponse))
+                .count(1L)
+                .total(1L)
+                .build();
+
+        when(adminMasterService.upload(eq(MasterType.COUNTRY_CURRENCY.getCode()), eq(file))).thenReturn(response);
+
+        mockMvc.perform(multipart("/admin/master/bulk-upload/{masterCode}", MasterType.COUNTRY_CURRENCY.getCode()).file(file))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value(SUCCESS_RESPONSE_CODE))
+                .andExpect(jsonPath("$.data[0].masterType").value(MasterType.COUNTRY_CURRENCY.getCode()))
+                .andExpect(jsonPath("$.data[0].totalRecords").value(1))
+                .andExpect(jsonPath("$.data[0].failedRecords").value(0));
+
+        verify(adminMasterService).upload(MasterType.COUNTRY_CURRENCY.getCode(), file);
+    }
+}
+==========
