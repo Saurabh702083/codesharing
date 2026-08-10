@@ -1,3 +1,1058 @@
+
+/**
+ * Class Name: CountryCurrencyDao
+ * <p>
+ * Data access layer for {@link CountryCurrency} master records. Handles
+ * persistence operations (create, update, bulk create, search, and
+ * workflow-action updates) and delegates entity/DTO conversion to
+ * {@link MasterMapper}.
+ * <p>
+ * Author: V1018841(Saurabh Mahto)
+ * <p>
+ * Copyright (c) 2026 [State Bank of India]
+ * All rights reserved
+ * <p>
+ * Version:1.0
+ */
+@Component
+@RequiredArgsConstructor
+public class CountryCurrencyDao {
+
+    private final LoggerUtility logger = LoggerFactoryUtility.getLogger(this.getClass());
+    private final MasterMapper<CountryCurrencyDto, CountryCurrency> masterMapper;
+    private final CountryCurrencyRepository countryCurrencyRepository;
+
+    /**
+     * Persists a new CountryCurrency record.
+     *
+     * @param countryCurrencyDto the DTO containing the record to be created
+     * @return the persisted record mapped back to DTO, including generated fields (e.g. id)
+     */
+    public CountryCurrencyDto create(CountryCurrencyDto countryCurrencyDto) {
+        logger.info("Creating CountryCurrency record: {}", countryCurrencyDto);
+        CountryCurrency entity = countryCurrencyRepository.save(masterMapper.mapDtoToEntity(countryCurrencyDto));
+        logger.info("CountryCurrency record created successfully with id: {}", entity.getId());
+        return masterMapper.mapEntityToDto(entity);
+    }
+
+    /**
+     * Updates an existing CountryCurrency record identified by the DTO's id.
+     *
+     * @param dto the DTO containing the updated field values, must include a valid id
+     * @return the updated record mapped back to DTO
+     * @throws AdminPortalException if no record is found for the given id
+     */
+    public CountryCurrencyDto update(CountryCurrencyDto dto) {
+        logger.info("Updating CountryCurrency record with id: {}", dto.getId());
+        CountryCurrency entity = countryCurrencyRepository.findById(dto.getId())
+                .orElseThrow(() -> {
+                    logger.error("CountryCurrency record not found for id: {}", dto.getId());
+                    return new AdminPortalException(FAILED_ERROR_CODE, MessageFormat.format(FAILED_ERROR_MESSAGE_WITH_REASON, "CountryCurrency update", "CountryCurrency record not found for the masterId"));
+                });
+        masterMapper.updateEntityByDto(dto, entity);
+        CountryCurrency updatedCountryCurrency = countryCurrencyRepository.save(entity);
+        logger.info("CountryCurrency record updated successfully for id: {}", dto.getId());
+        return masterMapper.mapEntityToDto(updatedCountryCurrency);
+    }
+
+    /**
+     * Fetches multiple CountryCurrency records by their ids.
+     *
+     * @param ids the list of record ids to fetch
+     * @return list of matching records mapped to DTO; ids with no match are silently skipped
+     */
+    public List<CountryCurrencyDto> findAllById(List<UUID> ids) {
+        logger.info("Fetching CountryCurrency records for ids: {}", ids);
+        List<CountryCurrencyDto> result = countryCurrencyRepository.findAllById(ids).stream().map(masterMapper::mapEntityToDto).toList();
+        logger.info("Fetched {} CountryCurrency record(s) for {} requested id(s)", result.size(), ids.size());
+        return result;
+    }
+
+    /**
+     * Bulk-persists CountryCurrency records, typically used during CSV bulk upload.
+     * Each record is set to status INACTIVE and action PENDING_FOR_APPROVAL before saving.
+     *
+     * @param dtos the list of DTOs to be created
+     * @return the persisted records mapped back to DTOs
+     */
+    public List<CountryCurrencyDto> create(List<CountryCurrencyDto> dtos) {
+        logger.info("Bulk creating {} CountryCurrency record(s)", dtos.size());
+        dtos.forEach(dto -> {
+            dto.setStatus(MasterAction.INACTIVE.name());
+            dto.setAction(MasterAction.PENDING_FOR_APPROVAL.name());
+        });
+        List<CountryCurrency> entities = masterMapper.mapDtoToEntity(dtos);
+        List<CountryCurrency> savedEntities = countryCurrencyRepository.saveAll(entities);
+        logger.info("Bulk create completed. {} CountryCurrency record(s) persisted", savedEntities.size());
+        return masterMapper.mapEntityToDto(savedEntities);
+    }
+
+    /**
+     * Applies a workflow action (approve/reject/inactivate) to the given record ids.
+     *
+     * @param ids    the record ids to act upon
+     * @param action the workflow action to apply; unrecognized actions are no-ops
+     */
+    public void performAction(List<UUID> ids, MasterAction action) {
+        logger.info("Performing action: {} on {} CountryCurrency record(s)", action, ids.size());
+        switch (action) {
+            case APPROVED -> countryCurrencyRepository.approve(ids, MasterAction.APPROVED.name());
+            case PENDING_FOR_REJECTED -> countryCurrencyRepository.performAction(ids, MasterAction.PENDING_FOR_REJECTED.name());
+            case PENDING_FOR_INACTIVE -> countryCurrencyRepository.performAction(ids, MasterAction.PENDING_FOR_INACTIVE.name());
+        }
+        logger.info("Action: {} completed for CountryCurrency record(s)", action);
+    }
+
+    /**
+     * Searches CountryCurrency records matching the given specification, with pagination.
+     *
+     * @param specification the filter criteria to apply
+     * @param pageable      pagination and sorting details
+     * @return a page of matching records mapped to DTO
+     */
+    public Page<CountryCurrencyDto> findBySpecification(Specification<CountryCurrency> specification, Pageable pageable) {
+        logger.info("Searching CountryCurrency records with pagination: {}", pageable);
+        Page<CountryCurrency> page = countryCurrencyRepository.findAll(specification, pageable);
+        logger.info("Search returned {} record(s) out of {} total", page.getNumberOfElements(), page.getTotalElements());
+        return page.map(masterMapper::mapEntityToDto);
+    }
+
+    /**
+     * Finds an existing ACTIVE and APPROVED CountryCurrency record matching the given
+     * code, name, currency code, and currency name. Used to validate inactivation requests.
+     *
+     * @param dto the DTO carrying the lookup criteria (code, name, currencyCode, currencyName)
+     * @return the matching active/approved record, if present
+     */
+    public Optional<CountryCurrencyDto> findCountryCurrencyDtls(CountryCurrencyDto dto) {
+        logger.info("Finding active approved CountryCurrency for code: {}, currencyCode: {}", dto.getCode(), dto.getCurrencyCode());
+        Optional<CountryCurrency> countryCurrency = countryCurrencyRepository.findByCodeAndNameAndCurrencyCodeAndCurrencyNameAndStatusAndAction(
+                dto.getCode(), dto.getName(), dto.getCurrencyCode(), dto.getCurrencyName(), "ACTIVE", "APPROVED");
+        logger.info("Active approved CountryCurrency found: {}", countryCurrency.isPresent());
+        return countryCurrency.map(masterMapper::mapEntityToDto);
+    }
+
+    /**
+     * Finds an existing CountryCurrency record (regardless of status/action) matching
+     * the given code, name, currency code, and currency name. Used to detect duplicates
+     * before creation.
+     *
+     * @param dto the DTO carrying the lookup criteria (code, name, currencyCode, currencyName)
+     * @return the matching record, if present
+     */
+    public Optional<CountryCurrencyDto> findCountryCurrency(CountryCurrencyDto dto) {
+        logger.info("Checking existing CountryCurrency for code: {}, currencyCode: {}", dto.getCode(), dto.getCurrencyCode());
+        Optional<CountryCurrencyDto> result = countryCurrencyRepository.findByCodeAndNameAndCurrencyCodeAndCurrencyName(
+                dto.getCode(), dto.getName(), dto.getCurrencyCode(), dto.getCurrencyName()).map(masterMapper::mapEntityToDto);
+        logger.info("Existing CountryCurrency found: {}", result.isPresent());
+        return result;
+    }
+}
+
+
+
+
+---------
+
+/**
+ * Class Name: MasterBulkUploadService
+ * <p>
+ * Service layer supporting bulk upload of master data via CSV files.
+ * Handles bulk-upload config lookup, upload-file record bookkeeping,
+ * CSV parsing into row maps, and persistence of per-row upload details.
+ * <p>
+ * Author: V1018841(Saurabh Mahto)
+ * <p>
+ * Copyright (c) 2026 [State Bank of India]
+ * All rights reserved
+ * <p>
+ * Version:1.0
+ */
+@Service
+@RequiredArgsConstructor
+public class MasterBulkUploadService {
+
+    private final LoggerUtility logger = LoggerFactoryUtility.getLogger(this.getClass());
+    private final MasterBulkUploadConfigRepository configRepository;
+    private final MasterBulkUploadFileRepository fileRepository;
+    private final MasterBulkUploadFileDetailRepository fileDetailRepository;
+    private final MasterBulkUploadValidation bulkUploadValidation;
+
+    /**
+     * Fetches the bulk-upload configuration for the given master type and
+     * verifies that bulk upload is enabled for it.
+     *
+     * @param masterCode the master type code (e.g. COUNTRY_CURRENCY)
+     * @return the bulk upload configuration for the master type
+     * @throws AdminPortalException if no configuration exists for the master type
+     * @throws ValidationException  if bulk upload is not allowed for the master type
+     */
+    public MasterBulkUploadConfig findConfigByMasterType(String masterCode) {
+        logger.info("Fetching bulk upload config for masterType: {}", masterCode);
+        MasterBulkUploadConfig config = configRepository.findByMasterTypeIgnoreCase(masterCode)
+                .orElseThrow(() -> {
+                    logger.error("Bulk upload config not found for masterType: {}", masterCode);
+                    return new AdminPortalException(ErrorConstants.NOT_FOUND_ERROR_CODE, MessageFormat.format(ErrorConstants.NOT_FOUND_ERROR_MESSAGE, "Bulk upload config for " + masterCode));
+                });
+        if (!config.isBulkUploadAllowed()) {
+            logger.error("Bulk upload is not allowed for masterType: {}", masterCode);
+            throw new ValidationException(ErrorConstants.INVALID_ERROR_CODE, "Bulk upload is not allowed for masterType: " + masterCode);
+        }
+        logger.info("Bulk upload config fetched successfully for masterType: {}", masterCode);
+        return config;
+    }
+
+    /**
+     * Creates and persists a new {@link MasterBulkUploadFile} record representing
+     * an uploaded file, in IN_PROGRESS state, before parsing begins.
+     *
+     * @param masterCode    the master type code the file belongs to
+     * @param file          the uploaded multipart file
+     * @param s3Path        the path/key where the file was stored on S3
+     * @param masterConfigId the id of the associated bulk upload config
+     * @param checksum      the checksum of the file content, used for duplicate detection
+     * @return the persisted upload-file record
+     */
+    public MasterBulkUploadFile insertFileRecord(String masterCode, MultipartFile file, String s3Path, UUID masterConfigId, String checksum) {
+        logger.info("Inserting file record for masterType: {}, fileName: {}", masterCode, file.getOriginalFilename());
+        MasterBulkUploadFile uploadFile = MasterBulkUploadFile.builder().fileName(file.getOriginalFilename()).filePath(s3Path)
+                .parsingStatus(BulkUploadParsingStatus.IN_PROGRESS).fileStatus(BulkUploadFileStatus.IN_PROGRESS).remark("File parsing is in progress.")
+                .masterConfigId(masterConfigId).masterType(masterCode).fileChecksum(checksum).build();
+        MasterBulkUploadFile saved = fileRepository.save(uploadFile);
+        logger.info("File record inserted successfully with id: {}", saved.getId());
+        return saved;
+    }
+
+    /**
+     * Reads and parses a CSV upload file into a list of row maps keyed by header name.
+     * Validates that the file is non-empty and that its headers match the expected
+     * format configuration before parsing data rows. Blank lines and fully-blank
+     * rows are skipped.
+     *
+     * @param file         the uploaded CSV file
+     * @param formatConfig the expected file format configuration (headers, etc.)
+     * @return list of records, each represented as a map of header -> cell value
+     * @throws ValidationException     if the file is empty or headers are invalid
+     * @throws AdminPortalException    if the file cannot be read
+     */
+    public List<Map<String, String>> readRecords(MultipartFile file, BulkUploadFormatConfig formatConfig) {
+        logger.info("Reading records from uploaded file: {}", file.getOriginalFilename());
+        try (BufferedReader reader = new BufferedReader(new InputStreamReader(file.getInputStream(), StandardCharsets.UTF_8))) {
+            List<String> nonBlankLines = reader.lines().map(String::trim).filter(StringUtils::isNotBlank).toList();
+            if (nonBlankLines.isEmpty()) {
+                logger.error("Bulk upload file is empty: {}", file.getOriginalFilename());
+                throw new ValidationException(ErrorConstants.MANDATORY_ERROR_CODE, "Bulk upload file is empty.");
+            }
+            List<String> headers = parseCsvLine(nonBlankLines.getFirst());
+            // validate Header
+            bulkUploadValidation.validateHeaders(headers, formatConfig.getHeaders());
+            //  Get List of record.
+            List<Map<String, String>> records = new ArrayList<>();
+            for (int i = 1; i < nonBlankLines.size(); i++) {
+                List<String> values = parseCsvLine(nonBlankLines.get(i));
+                if (values.stream().allMatch(StringUtils::isBlank)) {
+                    continue;
+                }
+                Map<String, String> row = new LinkedHashMap<>();
+                for (int index = 0; index < headers.size(); index++) {
+                    row.put(headers.get(index), index < values.size() ? values.get(index).trim() : null);
+                }
+                records.add(row);
+            }
+            logger.info("Parsed {} record(s) from uploaded file: {}", records.size(), file.getOriginalFilename());
+            return records;
+        } catch (IOException e) {
+            logger.error("Failed to read uploaded file: {}. Reason: {}", file.getOriginalFilename(), e.getMessage());
+            throw new AdminPortalException(ErrorConstants.GENERIC_ERROR_CODE, ErrorConstants.GENERIC_ERROR_MESSAGE);
+        }
+    }
+
+    /**
+     * Persists the per-row processing details (status, remarks, linked master record id)
+     * for a batch of bulk-uploaded records.
+     *
+     * @param detailEntities the row detail entities to persist
+     */
+    public void saveMasterFileDtls(List<MasterBulkUploadFileDetail> detailEntities) {
+        logger.info("Saving {} bulk upload file detail record(s)", detailEntities.size());
+        fileDetailRepository.saveAll(detailEntities);
+        logger.info("Bulk upload file detail record(s) saved successfully");
+    }
+
+    /**
+     * Splits a single CSV line into its trimmed cell values. Preserves trailing
+     * empty cells (uses limit -1) so short rows aren't silently truncated.
+     *
+     * @param line the raw CSV line
+     * @return the list of trimmed cell values
+     */
+    private List<String> parseCsvLine(String line) {
+        return java.util.Arrays.stream(line.split(",", -1)).map(String::trim).toList();
+    }
+
+    /**
+     * Persists updates to an existing {@link MasterBulkUploadFile} record, typically
+     * used to update parsing/file status, remarks, and record counts.
+     *
+     * @param uploadFile the upload-file record with updated fields
+     * @return the persisted upload-file record
+     */
+    public MasterBulkUploadFile updateFileRecord(MasterBulkUploadFile uploadFile) {
+        logger.info("Updating file record with id: {}", uploadFile.getId());
+        MasterBulkUploadFile updated = fileRepository.save(uploadFile);
+        logger.info("File record updated successfully for id: {}", updated.getId());
+        return updated;
+    }
+
+    /**
+     * Generates a checksum for the given file's contents, used to detect duplicate uploads.
+     *
+     * @param file the uploaded multipart file
+     * @return the computed checksum string
+     */
+    public String generateChecksum(MultipartFile file) {
+        logger.info("Generating checksum for file: {}", file.getOriginalFilename());
+        String checksum = AdminPortalUtil.generateChecksum(AdminPortalUtil.readFileBytes(file));
+        logger.info("Checksum generated for file: {}", file.getOriginalFilename());
+        return checksum;
+    }
+
+    /**
+     * Checks whether the same file checksum already exists for the supplied master type.
+     *
+     * @param checksum file checksum
+     * @return {@code true} when a duplicate upload exists
+     */
+    public boolean existsByFileChecksum(String checksum) {
+        logger.info("Checking duplicate upload for checksum: {}", checksum);
+        boolean exists = fileRepository.existsByFileChecksum(checksum);
+        logger.info("Duplicate upload check result for checksum {}: {}", checksum, exists);
+        return exists;
+    }
+}
+
+--------------
+
+/**
+ * Class Name: AdminMasterService
+ * <p>
+ * Orchestrating service for all master-data operations exposed by the Admin
+ * Portal. Delegates master-specific behavior to the appropriate
+ * {@link BaseMasterService} implementation (resolved via
+ * {@link MasterHandlerFactory}), and coordinates create/update/search,
+ * maker-checker workflow actions (approve/reject/inactivate), and CSV
+ * bulk-upload processing.
+ * <p>
+ * Author: V1018841(Saurabh Mahto)
+ * <p>
+ * Copyright (c) 2026 [State Bank of India]
+ * All rights reserved
+ * <p>
+ * Version:1.0
+ */
+@Service
+@RequiredArgsConstructor
+public class AdminMasterService {
+    private final LoggerUtility logger = LoggerFactoryUtility.getLogger(this.getClass());
+    private final MasterHandlerFactory<BaseMasterDto> masterHandlerFactory;
+    private final MasterWorkFlowService masterWorkFlowService;
+    private final MasterBulkUploadService masterBulkUploadService;
+    private final FileService fileService;
+    private final AdminPortalConfig adminPortalConfig;
+    private final MasterBulkUploadValidation bulkUploadValidation;
+
+    /**
+     * Creates a new master record for the given master type. Validates the
+     * request, persists it in a pending state, and records the corresponding
+     * workflow entry.
+     *
+     * @param masterRequest the raw request payload for the master to create
+     * @param masterCode    the master type code identifying which master handler to use
+     * @return a success response
+     */
+    @Transactional
+    public AdminPortalResponse<String> create(MasterRequest masterRequest, String masterCode) {
+        BaseMasterService<BaseMasterDto> masterService = resolveMasterService(masterCode);
+
+        BaseMasterDto masterDto = masterService.mapToMasterDto(masterRequest);
+        logger.info("Create master request :{}", masterDto);
+
+        masterService.validate(masterDto, WorkflowOperation.CREATE);
+        logger.info("Request validated successfully.");
+
+        masterDto = masterService.save(masterDto, WorkflowOperation.CREATE);
+        logger.info("Record Created successfully for master code: {}", masterDto.getCode());
+
+        MasterWorkFlowDto masterWorkFlowDto = masterService.mapToMasterWorkFlowDto(masterDto, WorkflowOperation.CREATE, MessageFormat.format(MASTER_ACTION_PERFORMED, WorkflowOperation.CREATE.name()));
+        masterWorkFlowService.save(masterWorkFlowDto);
+        logger.info("Master flow record updated for :{}", masterDto.getCode());
+
+        return mapToResponse(MessageFormat.format(MASTER_ACTION_PERFORMED, WorkflowOperation.CREATE.name()));
+    }
+
+    /**
+     * Updates an existing master record for the given master type. Validates
+     * the request, persists the update, and records the corresponding
+     * workflow entry (comparing against the previously saved state).
+     *
+     * @param masterRequest the raw request payload with updated field values
+     * @param masterCode    the master type code identifying which master handler to use
+     * @return a success response
+     */
+    @Transactional
+    public AdminPortalResponse<String> update(MasterRequest masterRequest, String masterCode) {
+        BaseMasterService<BaseMasterDto> masterService = resolveMasterService(masterCode);
+
+        BaseMasterDto masterDto = masterService.mapToMasterDto(masterRequest);
+        logger.info("Create master request :{}", masterDto);
+
+        masterService.validate(masterDto, WorkflowOperation.UPDATE);
+        masterDto = masterService.save(masterDto, WorkflowOperation.UPDATE);
+        logger.info("Record update successfully for master code: {}", masterDto.getCode());
+
+        MasterWorkFlowDto masterWorkFlowDto = masterService.mapToMasterWorkFlowDto(masterDto, WorkflowOperation.UPDATE, MessageFormat.format(MASTER_ACTION_PERFORMED, WorkflowOperation.UPDATE.name()));
+        BaseMasterDto savedMasterDto = masterService.findByIds(List.of(masterDto.getId())).getFirst();
+        masterWorkFlowService.update(masterWorkFlowDto, savedMasterDto, masterDto);
+        logger.info("Master flow record updated for :{}", masterDto.getCode());
+
+        return mapToResponse(MessageFormat.format(MASTER_ACTION_PERFORMED, WorkflowOperation.UPDATE.name()));
+    }
+
+    /**
+     * Searches master records of the given type using dynamic filters and pagination.
+     *
+     * @param masterCode the master type code identifying which master handler to use
+     * @param request    the search filters
+     * @param pageable   pagination and sorting details
+     * @return a paged response of matching records
+     */
+    @Transactional(readOnly = true)
+    public AdminPortalResponse<Map<String, Object>> search(String masterCode, MasterSearchRequest request, Pageable pageable) {
+        logger.info("Searching master records for masterCode: {}", masterCode);
+        BaseMasterService<BaseMasterDto> masterService = resolveMasterService(masterCode);
+        Page<BaseMasterDto> page = masterService.search(request, pageable);
+        logger.info("Search returned {} record(s) out of {} total for masterCode: {}", page.getNumberOfElements(), page.getTotalElements(), masterCode);
+        return masterService.mapToResponse(page.getContent(), page.getTotalElements());
+    }
+
+    /**
+     * Approves the given master records that are currently pending approval,
+     * pending inactivation, or pending rejection.
+     *
+     * @param request    the bulk request
+
+
+
+------
+
+
+/**
+ * Class Name: CountryCurrencyService
+ * <p>
+ * {@link BaseMasterService} implementation for the COUNTRY_CURRENCY master.
+ * Handles DTO mapping, validation, persistence, workflow actions, and search
+ * for country-currency master records, delegating actual data access to
+ * {@link CountryCurrencyDao}.
+ * <p>
+ * Author: V1018841(Saurabh Mahto)
+ * <p>
+ * Copyright (c) 2026 [State Bank of India]
+ * All rights reserved
+ * <p>
+ * Version:1.0
+ */
+@Service("countryCurrencyService")
+@RequiredArgsConstructor
+public class CountryCurrencyService implements BaseMasterService<CountryCurrencyDto> {
+
+    private final LoggerUtility logger = LoggerFactoryUtility.getLogger(this.getClass());
+    private final CountryCurrencyValidator countryCurrencyValidator;
+    private final CountryCurrencyDao countryCurrencyDao;
+    private final ObjectMapper objectMapper;
+
+    /**
+     * @return the master type code handled by this service (COUNTRY_CURRENCY)
+     */
+    @Override
+    public MasterType getMasterCode() {
+        return MasterType.COUNTRY_CURRENCY;
+    }
+
+    /**
+     * @return the parent master type codes this master depends on; none for COUNTRY_CURRENCY
+     */
+    @Override
+    public List<MasterType> getParentCodes() {
+        return List.of();
+    }
+
+    /**
+     * @return the DTO class handled by this service
+     */
+    @Override
+    public Class<CountryCurrencyDto> getDtoClass() {
+        return CountryCurrencyDto.class;
+    }
+
+    /**
+     * Converts the generic incoming request payload into a {@link CountryCurrencyDto}.
+     *
+     * @param masterRequest the raw request payload
+     * @return the converted DTO
+     */
+    @Override
+    public CountryCurrencyDto mapToMasterDto(MasterRequest masterRequest) {
+        logger.info("Mapping MasterRequest to CountryCurrencyDto");
+        return objectMapper.convertValue(masterRequest.getData(), CountryCurrencyDto.class);
+    }
+
+    /**
+     * Builds a workflow entry describing an action performed on a country-currency record.
+     *
+     * @param dto              the country-currency record the action applies to
+     * @param workflowOperation the operation performed
+     * @param remark           the remark/reason to attach to the workflow entry
+     * @return the constructed workflow DTO
+     */
+    @Override
+    public MasterWorkFlowDto mapToMasterWorkFlowDto(CountryCurrencyDto dto, WorkflowOperation workflowOperation, String remark) {
+        return MasterWorkFlowDto.builder().masterCode(MasterType.COUNTRY_CURRENCY).action(workflowOperation).remark(remark).entityId(dto.getId().toString()).build();
+    }
+
+    /**
+     * Validates a country-currency DTO for the given workflow operation
+     * (CREATE or UPDATE only).
+     *
+     * @param dto              the DTO to validate
+     * @param workflowOperation the operation being performed
+     * @throws AdminPortalException if the operation is not CREATE or UPDATE
+     */
+    @Override
+    public void validate(CountryCurrencyDto dto, WorkflowOperation workflowOperation) {
+        logger.info("Validating CountryCurrencyDto for operation: {}", workflowOperation);
+        switch (workflowOperation) {
+            case CREATE -> countryCurrencyValidator.validateCreate(dto);
+            case UPDATE -> countryCurrencyValidator.validateUpdate(dto);
+            default ->
+                    throw new AdminPortalException(ErrorConstants.INVALID_ERROR_CODE, MessageFormat.format(ErrorConstants.INVALID_ENUM_ERROR_MESSAGE, workflowOperation.name()));
+        }
+        logger.info("CountryCurrencyDto validated successfully for operation: {}", workflowOperation);
+    }
+
+    /**
+     * Validates that a maker-checker action (approve/reject/inactivate) can be
+     * performed on the given bulk request.
+     *
+     * @param masters    the bulk request containing target record ids
+     * @param actionName the name of the action being performed
+     */
+    @Override
+    public void validateAction(MasterBulkRequest masters, String actionName) {
+        logger.info("Validating action: {} for CountryCurrency bulk request", actionName);
+        countryCurrencyValidator.validateAction(masters, actionName);
+    }
+
+    /**
+     * Validates that the given records are in an eligible prior state for the
+     * action being performed.
+     *
+     * @param masters         the records to validate
+     * @param workflowActions the allowed prior workflow actions/states
+     * @param performAction   the action about to be performed
+     */
+    @Override
+    public void validateBulkMasters(List<CountryCurrencyDto> masters, List<String> workflowActions, String performAction) {
+        logger.info("Validating {} CountryCurrency record(s) for action: {}", masters.size(), performAction);
+        countryCurrencyValidator.validateBulkMasters(masters, workflowActions, performAction);
+    }
+
+    /**
+     * Persists a country-currency record for CREATE or UPDATE, setting it to
+     * status INACTIVE and action PENDING_FOR_APPROVAL prior to save.
+     *
+     * @param dto    the DTO to persist
+     * @param action the operation being performed (CREATE or UPDATE)
+     * @return the persisted record
+     * @throws AdminPortalException if the action is not CREATE or UPDATE
+     */
+    @Override
+    public CountryCurrencyDto save(CountryCurrencyDto dto, WorkflowOperation action) {
+        logger.info("Saving CountryCurrencyDto for action: {}", action);
+        dto.setStatus(MasterAction.INACTIVE.name());
+        dto.setAction(MasterAction.PENDING_FOR_APPROVAL.name());
+        switch (action) {
+            case CREATE -> {
+                return countryCurrencyDao.create(dto);
+            }
+            case UPDATE -> {
+                return countryCurrencyDao.update(dto);
+            }
+        }
+        throw new AdminPortalException(ErrorConstants.INVALID_ERROR_CODE, MessageFormat.format(ErrorConstants.INVALID_ENUM_ERROR_MESSAGE, action.name()));
+    }
+
+    /**
+     * Applies a maker-checker workflow action to the given record ids.
+     *
+     * @param ids    the record ids to act upon
+     * @param action the workflow action to apply (APPROVE, REJECT, or INACTIVE)
+     * @throws AdminPortalException if the action is not supported
+     */
+    @Override
+    public void performAction(List<UUID> ids, WorkflowOperation action) {
+        logger.info("Performing action: {} on {} CountryCurrency record(s)", action, ids.size());
+        switch (action) {
+            case APPROVE -> countryCurrencyDao.performAction(ids, MasterAction.APPROVED);
+            case REJECT -> countryCurrencyDao.performAction(ids, MasterAction.PENDING_FOR_REJECTED);
+            case INACTIVE -> countryCurrencyDao.performAction(ids, MasterAction.PENDING_FOR_INACTIVE);
+            default ->
+                    throw new AdminPortalException(ErrorConstants.INVALID_ERROR_CODE, MessageFormat.format(ErrorConstants.INVALID_ENUM_ERROR_MESSAGE, action.name()));
+        }
+        logger.info("Action: {} completed successfully for {} record(s)", action, ids.size());
+    }
+
+    /**
+     * Fetches country-currency records by id.
+     *
+     * @param ids the record ids to fetch
+     * @return the matching records
+     */
+    @Override
+    public List<CountryCurrencyDto> findByIds(List<UUID> ids) {
+        logger.info("Fetching CountryCurrency record(s) for ids: {}", ids);
+        return countryCurrencyDao.findAllById(ids);
+    }
+
+    /**
+     * Searches country-currency records by the given filters, with pagination.
+     *
+     * @param request  the search filters
+     * @param pageable pagination and sorting details
+     * @return a page of matching records
+     */
+    @Override
+    public Page<CountryCurrencyDto> search(MasterSearchRequest request, Pageable pageable) {
+        logger.info("Searching CountryCurrency records with filters: {}", request.getFilters());
+        Specification<CountryCurrency> specification = MasterSpecification.buildCountryCurrency(request.getFilters());
+        return countryCurrencyDao.findBySpecification(specification, pageable);
+    }
+
+    /**
+     * Checks for an existing country-currency record matching the given DTO's
+     * code, name, currency code, and currency name (regardless of status/action),
+     * used to detect duplicates before creation.
+     *
+     * @param dto the DTO carrying the lookup criteria
+     * @return the matching record, if present
+     */
+    @Override
+    public Optional<CountryCurrencyDto> findExisting(CountryCurrencyDto dto) {
+        logger.info("Checking for existing CountryCurrency with code: {}", dto.getCode());
+        return countryCurrencyDao.findCountryCurrency(dto);
+    }
+
+    /**
+     * Finds an existing ACTIVE and APPROVED country-currency record matching the
+     * given DTO's code, name, currency code, and currency name. Used to validate
+     * inactivation requests.
+     *
+     * @param dto the DTO carrying the lookup criteria
+     * @return the matching active/approved record, if present
+     */
+    @Override
+    public Optional<CountryCurrencyDto> findActiveApproved(CountryCurrencyDto dto) {
+        logger.info("Checking for active approved CountryCurrency with code: {}", dto.getCode());
+        return countryCurrencyDao.findCountryCurrencyDtls(dto);
+    }
+
+    /**
+     * Bulk-persists a list of country-currency records, typically from a CSV
+     * bulk upload.
+     *
+     * @param dtos the DTOs to persist
+     * @return the persisted records
+     */
+    @Override
+    public List<CountryCurrencyDto> saveAll(List<CountryCurrencyDto> dtos) {
+        logger.info("Bulk saving {} CountryCurrency record(s)", dtos.size());
+        return countryCurrencyDao.create(dtos);
+    }
+
+    /**
+     * Maps a list of country-currency DTOs into the generic paged
+     * {@link AdminPortalResponse} format used across master endpoints.
+     *
+     * @param dtos  the records to include in the response
+     * @param total the total number of matching records (for pagination)
+     * @return the wrapped response
+     */
+    @Override
+    public AdminPortalResponse<Map<String, Object>> mapToResponse(List<CountryCurrencyDto> dtos, Long total) {
+        List<Map<String, Object>> masterResponse = dtos.stream().<Map<String, Object>>map(countryCurrencyDto -> objectMapper.convertValue(countryCurrencyDto, new TypeReference<>() {
+        })).collect(Collectors.toList());
+        return AdminPortalResponse.<Map<String, Object>>builder().status(SUCCESS_RESPONSE_CODE).data(masterResponse).count((long) dtos.size()).total(total).build();
+    }
+}
+
+
+
+--------
+
+/**
+ * Class Name: AdminMasterService
+ * <p>
+ * Orchestrating service for all master-data operations exposed by the Admin
+ * Portal. Delegates master-specific behavior to the appropriate
+ * {@link BaseMasterService} implementation (resolved via
+ * {@link MasterHandlerFactory}), and coordinates create/update/search,
+ * maker-checker workflow actions (approve/reject/inactivate), and CSV
+ * bulk-upload processing.
+ * <p>
+ * Author: V1018841(Saurabh Mahto)
+ * <p>
+ * Copyright (c) 2026 [State Bank of India]
+ * All rights reserved
+ * <p>
+ * Version:1.0
+ */
+@Service
+@RequiredArgsConstructor
+public class AdminMasterService {
+    private final LoggerUtility logger = LoggerFactoryUtility.getLogger(this.getClass());
+    private final MasterHandlerFactory<BaseMasterDto> masterHandlerFactory;
+    private final MasterWorkFlowService masterWorkFlowService;
+    private final MasterBulkUploadService masterBulkUploadService;
+    private final FileService fileService;
+    private final AdminPortalConfig adminPortalConfig;
+    private final MasterBulkUploadValidation bulkUploadValidation;
+
+    /**
+     * Creates a new master record for the given master type. Validates the
+     * request, persists it in a pending state, and records the corresponding
+     * workflow entry.
+     *
+     * @param masterRequest the raw request payload for the master to create
+     * @param masterCode    the master type code identifying which master handler to use
+     * @return a success response
+     */
+    @Transactional
+    public AdminPortalResponse<String> create(MasterRequest masterRequest, String masterCode) {
+        BaseMasterService<BaseMasterDto> masterService = resolveMasterService(masterCode);
+
+        BaseMasterDto masterDto = masterService.mapToMasterDto(masterRequest);
+        logger.info("Create master request :{}", masterDto);
+
+        masterService.validate(masterDto, WorkflowOperation.CREATE);
+        logger.info("Request validated successfully.");
+
+        masterDto = masterService.save(masterDto, WorkflowOperation.CREATE);
+        logger.info("Record Created successfully for master code: {}", masterDto.getCode());
+
+        MasterWorkFlowDto masterWorkFlowDto = masterService.mapToMasterWorkFlowDto(masterDto, WorkflowOperation.CREATE, MessageFormat.format(MASTER_ACTION_PERFORMED, WorkflowOperation.CREATE.name()));
+        masterWorkFlowService.save(masterWorkFlowDto);
+        logger.info("Master flow record updated for :{}", masterDto.getCode());
+
+        return mapToResponse(MessageFormat.format(MASTER_ACTION_PERFORMED, WorkflowOperation.CREATE.name()));
+    }
+
+    /**
+     * Updates an existing master record for the given master type. Validates
+     * the request, persists the update, and records the corresponding
+     * workflow entry (comparing against the previously saved state).
+     *
+     * @param masterRequest the raw request payload with updated field values
+     * @param masterCode    the master type code identifying which master handler to use
+     * @return a success response
+     */
+    @Transactional
+    public AdminPortalResponse<String> update(MasterRequest masterRequest, String masterCode) {
+        BaseMasterService<BaseMasterDto> masterService = resolveMasterService(masterCode);
+
+        BaseMasterDto masterDto = masterService.mapToMasterDto(masterRequest);
+        logger.info("Create master request :{}", masterDto);
+
+        masterService.validate(masterDto, WorkflowOperation.UPDATE);
+        masterDto = masterService.save(masterDto, WorkflowOperation.UPDATE);
+        logger.info("Record update successfully for master code: {}", masterDto.getCode());
+
+        MasterWorkFlowDto masterWorkFlowDto = masterService.mapToMasterWorkFlowDto(masterDto, WorkflowOperation.UPDATE, MessageFormat.format(MASTER_ACTION_PERFORMED, WorkflowOperation.UPDATE.name()));
+        BaseMasterDto savedMasterDto = masterService.findByIds(List.of(masterDto.getId())).getFirst();
+        masterWorkFlowService.update(masterWorkFlowDto, savedMasterDto, masterDto);
+        logger.info("Master flow record updated for :{}", masterDto.getCode());
+
+        return mapToResponse(MessageFormat.format(MASTER_ACTION_PERFORMED, WorkflowOperation.UPDATE.name()));
+    }
+
+    /**
+     * Searches master records of the given type using dynamic filters and pagination.
+     *
+     * @param masterCode the master type code identifying which master handler to use
+     * @param request    the search filters
+     * @param pageable   pagination and sorting details
+     * @return a paged response of matching records
+     */
+    @Transactional(readOnly = true)
+    public AdminPortalResponse<Map<String, Object>> search(String masterCode, MasterSearchRequest request, Pageable pageable) {
+        logger.info("Searching master records for masterCode: {}", masterCode);
+        BaseMasterService<BaseMasterDto> masterService = resolveMasterService(masterCode);
+        Page<BaseMasterDto> page = masterService.search(request, pageable);
+        logger.info("Search returned {} record(s) out of {} total for masterCode: {}", page.getNumberOfElements(), page.getTotalElements(), masterCode);
+        return masterService.mapToResponse(page.getContent(), page.getTotalElements());
+    }
+
+    /**
+     * Approves the given master records that are currently pending approval,
+     * pending inactivation, or pending rejection.
+     *
+     * @param request    the bulk request containing target master record ids and remarks
+     * @param masterCode the master type code identifying which master handler to use
+     * @return a success response
+     */
+    @Transactional
+    public AdminPortalResponse<String> approve(MasterBulkRequest request, String masterCode) {
+        return performAction(request, WorkflowOperation.APPROVE, List.of(MasterAction.PENDING_FOR_APPROVAL.name(), MasterAction.PENDING_FOR_INACTIVE.name(), MasterAction.PENDING_FOR_REJECTED.name()), masterCode);
+    }
+
+    /**
+     * Rejects the given master records that are currently pending approval
+     * or pending inactivation.
+     *
+     * @param request    the bulk request containing target master record ids and remarks
+     * @param masterCode the master type code identifying which master handler to use
+     * @return a success response
+     */
+    @Transactional
+    public AdminPortalResponse<String> reject(MasterBulkRequest request, String masterCode) {
+        return performAction(request, WorkflowOperation.REJECT, List.of(MasterAction.PENDING_FOR_APPROVAL.name(), MasterAction.PENDING_FOR_INACTIVE.name()), masterCode);
+    }
+
+    /**
+     * Marks the given master records, which are currently approved, as
+     * pending inactivation.
+     *
+     * @param request    the bulk request containing target master record ids and remarks
+     * @param masterCode the master type code identifying which master handler to use
+     * @return a success response
+     */
+    @Transactional
+    public AdminPortalResponse<String> inactive(MasterBulkRequest request, String masterCode) {
+        return performAction(request, WorkflowOperation.INACTIVE, List.of(MasterAction.APPROVED.name()), masterCode);
+    }
+
+    /**
+     * Shared implementation for maker-checker workflow actions (approve/reject/inactivate).
+     * Validates the action and the current state of the target records, applies the
+     * action, and records a workflow entry per affected record.
+     *
+     * @param request               the bulk request containing target master record ids and remarks
+     * @param performOperation      the workflow operation being performed
+     * @param allowedPreviousActions the set of prior states from which this operation is valid
+     * @param masterCode            the master type code identifying which master handler to use
+     * @return a success response
+     */
+    private AdminPortalResponse<String> performAction(MasterBulkRequest request, WorkflowOperation performOperation, List<String> allowedPreviousActions, String masterCode) {
+        BaseMasterService<BaseMasterDto> masterService = resolveMasterService(masterCode);
+        masterService.validateAction(request, performOperation.name());
+
+        List<BaseMasterDto> masters = masterService.findByIds(request.getMasterIds());
+        masterService.validateBulkMasters(masters, allowedPreviousActions, performOperation.name());
+        logger.info("Request validated successfully for operation : {}.", performOperation.name());
+
+        masterService.performAction(request.getMasterIds(), performOperation);
+        logger.info(" {} : Operation performed successfully for master code: {}", performOperation.name(), masterCode);
+
+        String remarks = StringUtils.isNotEmpty(request.getRemarks()) ? request.getRemarks() : MessageFormat.format(MASTER_ACTION_PERFORMED, performOperation.name());
+        List<MasterWorkFlowDto> masterWorkFlowDtos = masters.stream().map(master -> masterService.mapToMasterWorkFlowDto(master, performOperation, remarks)).toList();
+        masterWorkFlowService.save(masterWorkFlowDtos);
+        logger.info("Master flow record saved of :{}, for Operation : {}", masterCode, performOperation.name());
+
+        return mapToResponse(MessageFormat.format(MASTER_ACTION_PERFORMED, performOperation.name()));
+    }
+
+    /**
+     * Wraps a plain success message into the standard single-item {@link AdminPortalResponse}.
+     *
+     * @param s the message to wrap
+     * @return the wrapped success response
+     */
+    private AdminPortalResponse<String> mapToResponse(String s) {
+        return AdminPortalResponse.<String>builder().status(SUCCESS_RESPONSE_CODE).data(List.of(s)).count(1L).total(1L).build();
+    }
+
+    /**
+     * Bulk uploads master data via a CSV file: validates and stores the file,
+     * parses it into records, processes each record (create or inactivate,
+     * depending on its status column), and persists per-row and overall
+     * upload results.
+     *
+     * @param masterCode String
+     * @param file       multiPartFile
+     * @return MasterBulkUploadResponse
+     */
+    public AdminPortalResponse<MasterBulkUploadResponse> upload(String masterCode, MultipartFile file) {
+        logger.info("Starting bulk upload for masterCode: {}, fileName: {}", masterCode, file.getOriginalFilename());
+        BaseMasterService<BaseMasterDto> masterService = resolveMasterService(masterCode);
+        MasterBulkUploadConfig config = masterBulkUploadService.findConfigByMasterType(masterCode);
+        // validate file if csv or not
+        String checksum = masterBulkUploadService.generateChecksum(file);
+        bulkUploadValidation.validateFile(file, config, checksum);
+        // get master config and check if bulk upload is allowed or not.
+        BulkUploadFormatConfig formatConfig = stringToDto(config.getFileFormatConfig(), BulkUploadFormatConfig.class);
+        // Upload file on s3
+        String s3Path = fileService.uploadFile(file);
+        //insert file details in masterBulkUploadFile Table.
+        MasterBulkUploadFile uploadFile = masterBulkUploadService.insertFileRecord(masterCode, file, s3Path, config.getId(), checksum);
+        try {
+            List<Map<String, String>> records = masterBulkUploadService.readRecords(file, formatConfig);
+            processUploadRecords(masterCode, masterService, formatConfig, uploadFile, records);
+            logger.info("Bulk upload finished successfully for masterCode: {}, uploadFileId: {}", masterCode, uploadFile.getId());
+            return buildUploadResponse(uploadFile);
+        } catch (AdminPortalException ex) {
+            logger.error("Bulk upload failed for masterCode: {}, uploadFileId: {}. Reason: {}", masterCode, uploadFile.getId(), ex.getMessage());
+            markUploadAsFailed(uploadFile, ex.getMessage());
+            throw ex;
+        }
+    }
+
+    /**
+     * Marks the given upload-file record as FAILED and persists a truncated
+     * remark (prefixed with the current correlation id) explaining the failure.
+     *
+     * @param uploadFile the upload-file record to mark as failed
+     * @param remark     the failure reason
+     */
+    private void markUploadAsFailed(MasterBulkUploadFile uploadFile, String remark) {
+        uploadFile.setParsingStatus(BulkUploadParsingStatus.FAILED);
+        uploadFile.setFileStatus(BulkUploadFileStatus.FAILED);
+        String remarkMessage = MDC.get(CORRELATION_ID) + "||" + StringUtils.truncate(remark, 800);
+        uploadFile.setRemark(StringUtils.defaultIfBlank(remarkMessage, "Bulk upload failed."));
+        masterBulkUploadService.updateFileRecord(uploadFile);
+        logger.info("Upload file id: {} marked as FAILED", uploadFile.getId());
+    }
+
+    /**
+     * Resolves the {@link BaseMasterService} handler responsible for the given
+     * master type code.
+     *
+     * @param masterCode the master type code (e.g. COUNTRY_CURRENCY)
+     * @return the resolved master service handler
+     */
+    private BaseMasterService<BaseMasterDto> resolveMasterService(String masterCode) {
+        MasterType masterType = MasterType.getMasterType(masterCode);
+        logger.info("Master request for: {}", masterType);
+        return masterHandlerFactory.getMasterService(masterType.getCode());
+    }
+
+    /**
+     * Processes all parsed bulk-upload records in batches: for each batch, applies
+     * the create/inactivate logic per row, tallies success/failure counts, persists
+     * workflow entries and per-row detail records, then updates the overall upload
+     * file record with the final counts and status.
+     *
+     * @param masterCode   the master type code
+     * @param masterService the resolved master service handler
+     * @param formatConfig the expected file format configuration
+     * @param uploadFile   the upload-file record being processed
+     * @param records      the parsed CSV records
+     */
+    private void processUploadRecords(String masterCode, BaseMasterService<BaseMasterDto> masterService, BulkUploadFormatConfig formatConfig, MasterBulkUploadFile uploadFile, List<Map<String, String>> records) {
+        long successCount = 0;
+        long failedCount = 0;
+        int batchSize = adminPortalConfig.getMasterBulkUploadBatchSize();
+        logger.info("Processing {} record(s) for masterCode: {} in batches of {}", records.size(), masterCode, batchSize);
+        for (int start = 0; start < records.size(); start += batchSize) {
+            int end = Math.min(start + batchSize, records.size());
+            List<Map<String, String>> batchRecords = records.subList(start, end);
+            BulkUploadProcessResult processResult = processBatch(masterCode, formatConfig, masterService, batchRecords);
+            List<BulkUploadRowResult> rowResults = processResult.getRowResults();
+            for (int index = 0; index < batchRecords.size(); index++) {
+                BulkUploadRowResult rowResult = rowResults.get(index);
+                if (BulkUploadRecordStatus.SUCCESS.name().equals(rowResult.getRecordStatus())) {
+                    successCount++;
+                } else {
+                    failedCount++;
+                }
+            }
+            if (processResult.getWorkflowDtos() != null && !processResult.getWorkflowDtos().isEmpty()) {
+                masterWorkFlowService.save(processResult.getWorkflowDtos());
+            }
+            masterBulkUploadService.saveMasterFileDtls(buildUploadFileDetails(uploadFile, batchRecords, rowResults));
+        }
+        updateMasterFile(uploadFile, records, successCount, failedCount);
+        logger.info("Bulk upload completed for master code: {}. total: {}, success: {}, failed: {}", masterCode, records.size(), successCount, failedCount);
+    }
+
+    /**
+     * Updates the upload-file record with final total/success/failed counts and
+     * sets its parsing/file status accordingly.
+     *
+     * @param uploadFile   the upload-file record to update
+     * @param records      the full set of parsed records
+     * @param successCount number of successfully processed records
+     * @param failedCount  number of failed records
+     */
+    private void updateMasterFile(MasterBulkUploadFile uploadFile, List<Map<String, String>> records, long successCount, long failedCount) {
+        uploadFile.setTotalRecords((long) records.size());
+        uploadFile.setSuccessRecords(successCount);
+        uploadFile.setFailedRecords(failedCount);
+        uploadFile.setParsingStatus(BulkUploadParsingStatus.COMPLETED);
+        uploadFile.setFileStatus(failedCount > 0 ? BulkUploadFileStatus.COMPLETED_WITH_ERRORS : BulkUploadFileStatus.COMPLETED);
+        uploadFile.setRemark(String.format("Bulk upload processed. Success records: %d, Failed records: %d", successCount, failedCount));
+        masterBulkUploadService.updateFileRecord(uploadFile);
+        logger.info("Upload file id: {} updated with success: {}, failed: {}, status: {}", uploadFile.getId(), successCount, failedCount, uploadFile.getFileStatus());
+    }
+
+    /**
+     * Builds the client-facing bulk upload response from the final state of the
+     * upload-file record.
+     *
+     * @param uploadFile the completed upload-file record
+     * @return the wrapped bulk upload response
+     */
+    private AdminPortalResponse<MasterBulkUploadResponse> buildUploadResponse(MasterBulkUploadFile uploadFile) {
+        MasterBulkUploadResponse data = MasterBulkUploadResponse.builder().uploadFileId(uploadFile.getId()).masterType(uploadFile.getMasterType()).filePath(uploadFile.getFilePath()).totalRecords(uploadFile.getTotalRecords()).successRecords(uploadFile.getSuccessRecords()).failedRecords(uploadFile.getFailedRecords()).parsingStatus(String.valueOf(uploadFile.getParsingStatus())).fileStatus(String.valueOf(uploadFile.getFileStatus())).remark(uploadFile.getRemark()).build();
+        return AdminPortalResponse.<MasterBulkUploadResponse>builder().status(SUCCESS_RESPONSE_CODE).data(List.of(data)).count(1L).total(1L).build();
+    }
+
+    /**
+     * Processes a single batch of records for a given master handler, converting
+     * any unexpected {@link AdminPortalException} into a failure result for every
+     * row in the batch rather than aborting the whole upload.
+     *
+     * @param masterType  the master type code
+     * @param formatConfig the expected file format configuration
+     * @param handler     the resolved master service handler
+     * @param records     the batch of raw records
+     * @return the batch's row results and any workflow entries to persist
+     */
+    private BulkUploadProcessResult processBatch(String masterType, BulkUploadFormatConfig formatConfig, BaseMasterService<BaseMasterDto> handler, List<Map<String, String>> records) {
+        List<BulkUploadRecordContext> contexts = records.stream().map(record -> BulkUploadRecordContext.builder().masterCode(masterType).record(record).formatConfig(formatConfig).build()).toList();
+        try {
+            return processRecords(handler, contexts);
+        } catch (AdminPortalException ex) {
+            logger.error("Batch processing failed for masterType: {}. Reason: {}", masterType, ex.getMessage());
+            return BulkUploadProcessResult.builder().rowResults(contexts.stream().map(context -> failureResult(ex.getMessage())).toList()).workflowDtos(List.of()).build();
+        }
+    }
+
+    /**
+     * Evaluates each record in a batch, routing it to creation (when status is
+     * blank or ACTIVE) or inactivation (when status is INACTIVE), validating and
+     * checking for duplicates/existing active records along the way, then performs
+     * the accumulated create/inactivate operations.
+     *
+     * @param handler  the resolved master service handler
+     * @param contexts the batch's records paired with their master code and format config
+     * @return the batch's row results and workflow entries to persist
+     */
+    private BulkUploadProcessResult processRecords(BaseMasterService<BaseMasterDto> handler, List<BulkUploadRecordContext> contexts) {
+        List<BulkUploadRowResult> rowResults = new ArrayList<>(Collections.nCopies(contexts.size(), null));
+        
+
+
+
+///////////////////////
+
 /**
  * Class Name: AdminMasterService
  * *
