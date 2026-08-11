@@ -1,3 +1,62 @@
+ /**
+     * Reads and parses a CSV upload file into a list of row maps keyed by header name. Validates that the file is non-empty and that its headers match the expected
+     * format configuration before parsing data rows. Blank lines and fully-blank rows are skipped.
+     *
+     * @param file         the uploaded CSV file
+     * @param formatConfig the expected file format configuration (headers, etc.)
+     * @return list of records, each represented as a map of header -> cell value
+     * @throws ValidationException     if the file is empty or headers are invalid
+     * @throws AdminPortalException    if the file cannot be read
+     */
+    public List<Map<String, String>> readRecords(MultipartFile file, BulkUploadFormatConfig formatConfig) {
+        logger.info("Reading records from uploaded file: {}", file.getOriginalFilename());
+        try (BufferedReader reader = new BufferedReader(new InputStreamReader(file.getInputStream(), StandardCharsets.UTF_8))) {
+            List<String> nonBlankLines = reader.lines().map(String::trim).filter(StringUtils::isNotBlank).toList();
+            if (nonBlankLines.isEmpty()) {
+                logger.error("Bulk upload file is empty: {}", file.getOriginalFilename());
+                throw new ValidationException(ErrorConstants.MANDATORY_ERROR_CODE, "Bulk upload file is empty.");
+            }
+            List<String> headers = parseCsvLine(nonBlankLines.getFirst());
+            // validate Header
+            bulkUploadValidation.validateHeaders(headers, formatConfig.getHeaders());
+            //  Get List of record.
+            List<Map<String, String>> records = new ArrayList<>();
+            for (int i = 1; i < nonBlankLines.size(); i++) {
+                List<String> values = parseCsvLine(nonBlankLines.get(i));
+                if (values.stream().allMatch(StringUtils::isBlank)) {
+                    continue;
+                }
+                Map<String, String> row = new LinkedHashMap<>();
+                for (int index = 0; index < headers.size(); index++) {
+                    row.put(headers.get(index), index < values.size() ? values.get(index).trim() : null);
+                }
+                logger.info("Parsed {} record(s) from uploaded file: {}", records.size(), file.getOriginalFilename());
+                records.add(row);
+            }
+            return records;
+        } catch (IOException e) {
+            logger.error("Failed to read uploaded file: {}. Reason: {}", file.getOriginalFilename(), e.getMessage());
+            throw new AdminPortalException(ErrorConstants.GENERIC_ERROR_CODE, ErrorConstants.GENERIC_ERROR_MESSAGE);
+        }
+    }
+
+/**
+     * Splits a single CSV line into its trimmed cell values. Preserves trailing empty cells (uses limit -1) so short rows aren't silently truncated.
+     *
+     * @param line the raw CSV line
+     * @return the list of trimmed cell values
+     */
+    private List<String> parseCsvLine(String line) {
+        return java.util.Arrays.stream(line.split(",", -1)).map(String::trim).toList();
+    }
+
+@Getter
+@Setter
+public class BulkUploadFormatConfig {
+    private List<String> headers;
+    private List<String> mandatoryFields;
+}
+==========================================
 package com.epay.admin.portal.service.master;
 
 import com.epay.admin.portal.config.AdminPortalConfig;
