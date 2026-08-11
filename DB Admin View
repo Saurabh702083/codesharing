@@ -1,3 +1,184 @@
+public List<Map<String, String>> readRecords(
+        MultipartFile file,
+        BulkUploadFormatConfig formatConfig) {
+
+    String fileName = file.getOriginalFilename();
+    logger.info("Reading records from uploaded file: {}", fileName);
+
+    if (file.isEmpty()) {
+        logger.error("Bulk upload file is empty: {}", fileName);
+        throw new ValidationException(
+                ErrorConstants.MANDATORY_ERROR_CODE,
+                "Bulk upload file is empty."
+        );
+    }
+
+    try (
+            BufferedReader reader = new BufferedReader(
+                    new InputStreamReader(
+                            file.getInputStream(),
+                            StandardCharsets.UTF_8
+                    )
+            );
+            CSVParser csvParser = CSVFormat.DEFAULT.builder()
+                    .setTrim(true)
+                    .setIgnoreEmptyLines(true)
+                    .build()
+                    .parse(reader)
+    ) {
+
+        Iterator<CSVRecord> iterator = csvParser.iterator();
+
+        if (!iterator.hasNext()) {
+            logger.error("Bulk upload file contains no records: {}", fileName);
+            throw new ValidationException(
+                    ErrorConstants.MANDATORY_ERROR_CODE,
+                    "Bulk upload file is empty."
+            );
+        }
+
+        // Read and validate header
+        CSVRecord headerRecord = iterator.next();
+
+        List<String> headers = new ArrayList<>(headerRecord.size());
+
+        for (String header : headerRecord) {
+            headers.add(header.trim());
+        }
+
+        bulkUploadValidation.validateHeaders(
+                headers,
+                formatConfig.getHeaders()
+        );
+
+        List<Map<String, String>> records = new ArrayList<>();
+
+        while (iterator.hasNext()) {
+
+            CSVRecord csvRecord = iterator.next();
+
+            // Skip completely blank rows
+            if (isBlankRecord(csvRecord)) {
+                continue;
+            }
+
+            Map<String, String> row = new LinkedHashMap<>(headers.size());
+
+            for (int index = 0; index < headers.size(); index++) {
+                String value = index < csvRecord.size()
+                        ? csvRecord.get(index).trim()
+                        : null;
+
+                row.put(headers.get(index), value);
+            }
+
+            records.add(row);
+        }
+
+        logger.info(
+                "Parsed {} record(s) from uploaded file: {}",
+                records.size(),
+                fileName
+        );
+
+        return records;
+
+    } catch (IOException e) {
+        logger.error(
+                "Failed to read uploaded file: {}. Reason: {}",
+                fileName,
+                e.getMessage(),
+                e
+        );
+
+        throw new AdminPortalException(
+                ErrorConstants.GENERIC_ERROR_CODE,
+                ErrorConstants.GENERIC_ERROR_MESSAGE
+        );
+    }
+}
+
+
+private boolean isBlankRecord(CSVRecord record) {
+    for (String value : record) {
+        if (StringUtils.isNotBlank(value)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+implementation 'org.apache.commons:commons-csv:<version>'
+
+
+--------------------
+
+public List<Map<String, String>> readRecords(MultipartFile file, BulkUploadFormatConfig formatConfig) {
+    logger.info("Reading records from uploaded file: {}", file.getOriginalFilename());
+    try (BufferedReader reader = new BufferedReader(new InputStreamReader(file.getInputStream(), StandardCharsets.UTF_8))) {
+
+        // Find header line without materializing the whole file
+        String line;
+        String headerLine = null;
+        while ((line = reader.readLine()) != null) {
+            line = line.trim();
+            if (StringUtils.isNotBlank(line)) {
+                headerLine = line;
+                break;
+            }
+        }
+
+        if (headerLine == null) {
+            logger.error("Bulk upload file is empty: {}", file.getOriginalFilename());
+            throw new ValidationException(ErrorConstants.MANDATORY_ERROR_CODE, "Bulk upload file is empty.");
+        }
+
+        List<String> headers = parseCsvLine(headerLine);
+        bulkUploadValidation.validateHeaders(headers, formatConfig.getHeaders());
+        int headerCount = headers.size();
+
+        List<Map<String, String>> records = new ArrayList<>();
+        while ((line = reader.readLine()) != null) {
+            line = line.trim();
+            if (line.isEmpty()) {
+                continue;
+            }
+            List<String> values = parseCsvLine(line);
+            boolean allBlank = true;
+            for (String v : values) {
+                if (StringUtils.isNotBlank(v)) {
+                    allBlank = false;
+                    break;
+                }
+            }
+            if (allBlank) {
+                continue;
+            }
+
+            Map<String, String> row = new LinkedHashMap<>(headerCount * 2);
+            for (int index = 0; index < headerCount; index++) {
+                row.put(headers.get(index), index < values.size() ? values.get(index).trim() : null);
+            }
+            records.add(row);
+        }
+
+        logger.info("Parsed {} record(s) from uploaded file: {}", records.size(), file.getOriginalFilename());
+        return records;
+
+    } catch (IOException e) {
+        logger.error("Failed to read uploaded file: {}. Reason: {}", file.getOriginalFilename(), e.getMessage());
+        throw new AdminPortalException(ErrorConstants.GENERIC_ERROR_CODE, ErrorConstants.GENERIC_ERROR_MESSAGE);
+    }
+}
+
+private List<String> parseCsvLine(String line) {
+    return java.util.Arrays.stream(line.split(",", -1)).map(String::trim).toList();
+}
+
+
+
+--------------
+
  /**
      * Reads and parses a CSV upload file into a list of row maps keyed by header name. Validates that the file is non-empty and that its headers match the expected
      * format configuration before parsing data rows. Blank lines and fully-blank rows are skipped.
