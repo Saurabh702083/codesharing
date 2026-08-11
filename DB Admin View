@@ -1,3 +1,158 @@
+/**
+     * Download the list of bulk refund in CSV format based on search filters.
+     * @param response HttpServletResponse
+     * @param bulkId String
+     * @param status String
+     */
+    @PostMapping("/merchant/bulk-download/{bulkId}/{status}")
+    @Operation(summary = "Download bulk refund details for merchant panel")
+    @PreAuthorize("hasAnyRole('ADMIN','SUPER_ADMIN','USER')")
+    public void downloadBulkRefund(HttpServletResponse response, @PathVariable("bulkId") String bulkId, @PathVariable("status") String status) {
+        logger.info("Received request to download bulk refund for bulkId: {} and status: {}", bulkId,status);
+        refundService.downloadBulkRefund(response, bulkId,status);
+    }
+
+ /**
+     * Fetching list of bulk refund user and download the file in csv format
+     * @param response {@link HttpServletResponse} To set refund list as csv file content.
+     * @param  bulkId String
+     * @param  status String
+     */
+    public void downloadBulkRefund(HttpServletResponse response, String bulkId, String status) {
+        logger.info("Fetching list of bulk refund for bulkId: {} and status: {}", bulkId,status);
+        refundValidator.validateDownloadBulkRefund(bulkId,status);
+        List<BulkRefundBookingDetails> bulkRefundBookings = refundDao.getBulkRefundByBulkIdAndRefundStatus(bulkId,status);
+        logger.info("Returning list of bulk refund bookings {}", CollectionUtils.size(bulkRefundBookings));
+        List<List<Object>> fileData = bulkRefundBookings.stream().map(this::convertToListOfObject).toList();
+        CSVGenerator.downloadCsvFile(response, "Bulk_Refund_"+status,bulkId, BULK_REFUND_HEADER_LIST, fileData);
+        logger.info("Generated CSV file containing list of bulk refund bookings");
+    }
+
+ /**
+     * Get bulk refund details for requested parameters
+     *
+     * @return List<BulkRefundBookingDetails>
+     */
+    public List<BulkRefundBookingDetails> getBulkRefundByBulkIdAndRefundStatus(String bulkId, String refundStatus) {
+        List<BulkRefundBookingDetails> bulkRefundBookingDetailsList = BulkRefundRowStatus.ALL.name().equals(refundStatus) ? bulkRefundDetailsRepository.findByBulkId(bulkId) : bulkRefundDetailsRepository.findByBulkIdAndRefundStatus(bulkId, refundStatus);
+
+        if (bulkRefundBookingDetailsList == null || bulkRefundBookingDetailsList.isEmpty()) {
+            {
+                errorLogDao.logCustomerError(EPayIdentityUtil.getUserPrincipal().getMId(), EntityType.REFUND, null, null, null, null, NOT_FOUND_ERROR_CODE, MessageFormat.format(NOT_FOUND_ERROR_MESSAGE, "Data"));
+                throw new TransactionException(NOT_FOUND_ERROR_CODE, MessageFormat.format(NOT_FOUND_ERROR_MESSAGE, "Data"));
+            }
+        }
+        return bulkRefundBookingDetailsList;
+    }
+
+ /**
+     * Converting BulkRefundBookingDetails to List of its field values.
+     *
+     * @param bulkRefundBookingDetails {@link BulkRefundBookingDetails}
+     * @return List
+     */
+    protected List<Object> convertToListOfObject(BulkRefundBookingDetails bulkRefundBookingDetails) {
+        List<Object> objectList = new ArrayList<>();
+        objectList.add(StringUtils.isEmpty(bulkRefundBookingDetails.getRefundType()) ? StringUtils.EMPTY : bulkRefundBookingDetails.getRefundType());
+        objectList.add(StringUtils.isEmpty(bulkRefundBookingDetails.getMerchantOrderId()) ? StringUtils.EMPTY : bulkRefundBookingDetails.getMerchantOrderId());
+        objectList.add(StringUtils.isEmpty(bulkRefundBookingDetails.getAtrnNum()) ? StringUtils.EMPTY : bulkRefundBookingDetails.getAtrnNum());
+        objectList.add(Objects.isNull(bulkRefundBookingDetails.getRefundAmount()) ? StringUtils.EMPTY : bulkRefundBookingDetails.getRefundAmount());
+        objectList.add(StringUtils.isEmpty(bulkRefundBookingDetails.getRefundCurrency()) ? StringUtils.EMPTY : bulkRefundBookingDetails.getRefundCurrency());
+        objectList.add(StringUtils.isEmpty(bulkRefundBookingDetails.getComments()) ? StringUtils.EMPTY : bulkRefundBookingDetails.getComments());
+        objectList.add(StringUtils.isEmpty(bulkRefundBookingDetails.getRefundStatus()) ? StringUtils.EMPTY : bulkRefundBookingDetails.getRefundStatus());
+        objectList.add(StringUtils.isEmpty(bulkRefundBookingDetails.getRemark()) ? StringUtils.EMPTY : bulkRefundBookingDetails.getRemark());
+
+
+        return objectList;
+    }
+
+    /**
+     * Downloads the generated CSV file for the given report name and merchant ID.
+     *
+     * @param response - HTTP response to write the CSV to
+     * @param reportName - Name of the report
+     * @param mId - Merchant ID
+     * @param headerName - List of CSV headers
+     * @param objects - Data to populate the CSV
+     */
+    public static void downloadCsvFile(HttpServletResponse response, String reportName, String mId, List<String> headerName, List<List<Object>> objects) {
+        log.info("Started download CSV file for reportName: {}, headerName: {},  objects: {}", reportName, headerName, CollectionUtils.size(objects));
+        try {
+            String fileName = getFileName(reportName, mId);
+            String csvContent = generateCSV(headerName, objects);
+            TransactionUtil.setHeader(response, TransactionConstant.CONTENT_TYPE_CSV, fileName);
+            OutputStream outputStream = response.getOutputStream();
+            outputStream.write(csvContent.getBytes(StandardCharsets.UTF_8));
+            outputStream.flush();
+        } catch (Exception e) {
+            log.error("Error occurred during CSV File downloading : {}", e.getMessage());
+            throw new TransactionException(TransactionErrorConstants.FILE_GENERATION_ERROR_CODE, MessageFormat.format(TransactionErrorConstants.FILE_GENERATION_ERROR_MESSAGE, "csv", e.getMessage()));
+        }
+
+   /**
+     * Generates the CSV content as a string.
+     *
+     * @param headers - List of headers for the CSV
+     * @param objects - List of data rows for the CSV
+     * @return - CSV content as a string
+     */
+
+    private static String generateCSV(List<String> headers, List<List<Object>> objects) {
+        StringBuilder csvContent = new StringBuilder();
+        csvContent.append(String.join(",", headers)).append("\n");
+        for (List<Object> rowData : objects) {
+            String row = rowData.stream()
+                    .map(data -> ObjectUtils.isNotEmpty(data) ? data.toString() : StringUtils.EMPTY)
+                    .collect(Collectors.joining(","));
+            csvContent.append(row).append("\n");
+        }
+        return csvContent.toString();
+    }
+
+@EqualsAndHashCode(callSuper = true)
+@Data
+@Entity
+@AllArgsConstructor
+@NoArgsConstructor
+@SuperBuilder
+@Table(name = "BULK_REFUND_BOOKING_DTLS")
+public class BulkRefundBookingDetails extends AuditEntity {
+
+    @Id
+    @GeneratedValue(strategy = GenerationType.UUID)
+    private UUID id;
+    private String bulkId;
+    private Integer rowNumber;
+    private String refundStatus;
+    private String remark;
+
+    private String refundType;
+    private String merchantOrderId;
+    private String atrnNum;
+    private String refundAmount;
+    private String refundCurrency;
+    private String comments;
+
+}
+----------------------------
+@Getter
+@Setter
+@Entity
+@Table(name = "MASTER_BULK_UPLOAD_FILE_DTLS")
+public class MasterBulkUploadFileDetail extends AuditEntity {
+    @Id
+    @GeneratedValue
+    @UuidGenerator(style = UuidGenerator.Style.TIME)
+    private UUID id;
+    private UUID masterUploadFileId;
+    private UUID masterRecordId;
+    private String operation;
+    private String status;
+    @Lob
+    private String recordJson;
+    private String remark;
+}
+===============================
 public List<Map<String, String>> readRecords(
         MultipartFile file,
         BulkUploadFormatConfig formatConfig) {
