@@ -403,6 +403,7 @@ public class AdminMasterService {
 }
 
 =================================
+"
 package com.epay.admin.portal.service.master;
 
 import com.epay.admin.portal.config.AdminPortalConfig;
@@ -803,6 +804,7 @@ public class AdminMasterService {
         masterBulkUploadService.downloadBulkUploadMaster(response, bulkDownloadRequest.getBulkId(),bulkDownloadRequest.getBulkStatus(), bulkDownloadRequest.getMasterCode());
     }
 }
+"
 
 ===========================================================
     /**
