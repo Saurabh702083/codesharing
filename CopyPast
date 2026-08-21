@@ -1,3 +1,81 @@
+private void parentRecordMapping(String masterCode, List<Map<String, String>> records) {
+    MasterType masterType = MasterType.getMasterType(masterCode);
+    final boolean findByParentCode = true;
+
+    switch (masterType) {
+        case CIRCLE, CITY_PINCODE -> {
+            Map<String, String> stateRecords = resolveParentRecords(
+                    records, "stateCode", stateService, findByParentCode);
+            applyParentMapping(records, "stateCode", "stateId", stateRecords);
+        }
+        case BRANCH -> {
+            Map<String, String> bankRecords = resolveParentRecords(
+                    records, "bankCode", bankService, findByParentCode);
+            applyParentMapping(records, "bankCode", "bankId", bankRecords);
+            logger.info("BRANCH - Bank record parent ID set successfully!");
+
+            Map<String, String> circleRecords = resolveParentRecords(
+                    records, "circleName", circleService, findByParentCode);
+            applyParentMapping(records, "circleName", "circleId", circleRecords);
+            logger.info("BRANCH - Circle record parent ID set successfully!");
+
+            Map<String, String> cityRecords = resolveParentRecords(
+                    records, "pincode", cityPincodeService, findByParentCode);
+            applyParentMapping(records, "pincode", "cityId", cityRecords);
+            logger.info("BRANCH - City record parent ID set successfully!");
+        }
+        default -> {
+            return;
+        }
+    }
+}
+
+/**
+ * Pulls the distinct set of parent keys referenced in the batch and resolves
+ * them to a lookup map via the given service (single DB round trip instead
+ * of one call per record).
+ */
+private Map<String, String> resolveParentRecords(
+        List<Map<String, String>> records,
+        String parentField,
+        ParentCodeService service,
+        boolean findByParentCode) {
+
+    List<String> keyList = records.stream()
+            .map(record -> record.get(parentField))
+            .filter(Objects::nonNull)
+            .distinct()
+            .collect(Collectors.toList());
+
+    return service.getActiveCodeList(keyList, findByParentCode);
+}
+
+/**
+ * Applies the resolved parent id onto each record via direct map lookup
+ * (O(n)) instead of a nested forEach comparison (O(n*m)).
+ */
+private void applyParentMapping(
+        List<Map<String, String>> records,
+        String parentField,
+        String parentIdField,
+        Map<String, String> parentRecords) {
+
+    records.forEach(record -> {
+        String key = record.get(parentField);
+        if (key == null) {
+            return; // skip malformed rows rather than NPE
+        }
+        String parentId = parentRecords.get(key);
+        if (parentId != null) {
+            record.put(parentIdField, parentId);
+        }
+    });
+}
+
+
+
+
+--------------
 @Getter
 @Builder
 public class BulkUploadBatchContext {
