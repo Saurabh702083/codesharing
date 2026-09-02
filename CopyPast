@@ -1,3 +1,51 @@
+@Data
+@EqualsAndHashCode(callSuper = true)
+@NoArgsConstructor
+@AllArgsConstructor
+@Builder
+@Entity
+@Table(name = "MERCHANT_CURRENCY")
+public class MerchantCurrency extends AuditEntity {
+    @Id
+    @GeneratedValue(strategy = GenerationType.UUID)
+    private UUID id;
+    @Column(name = "MID", nullable = false)
+    private String mId;
+    private String currencyCode;
+    private String status;
+
+}
+
+@Getter
+@Setter
+@Audited
+@MappedSuperclass
+public class AuditEntity extends AuditEntityByDate implements Serializable {
+
+    @CreatedBy
+    private String createdBy;
+
+    @LastModifiedBy
+    private String updatedBy;
+
+}
+
+@Getter
+@Setter
+@MappedSuperclass
+@Audited
+@EntityListeners(AuditingEntityListener.class)
+public class AuditEntityByDate implements Serializable {
+
+    @CreatedDate
+    private Long createdAt;
+
+    @LastModifiedDate
+    private Long updatedAt;
+
+}
+
+
 
 @Builder
 @Data
