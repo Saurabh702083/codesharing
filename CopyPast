@@ -1,1 +1,63 @@
 
+@Builder
+@Data
+@AllArgsConstructor
+@RequiredArgsConstructor
+@JsonInclude(JsonInclude.Include.NON_NULL)
+public class OnboardingRequest implements Serializable {
+    @Valid
+    @NotNull(message = HIBERNATOR_MANDATORY_ERROR_MESSAGE)
+    private MerchantDto merchant;
+    @Valid
+    @NotNull(message = HIBERNATOR_MANDATORY_ERROR_MESSAGE)
+    private MerchantUserDto user;
+    private List<MerchantOnboardBankAccountDto> bankAccounts;
+    private OnboardingKeyDto onboardingKeyDto;
+    private MerchantCurrencyDto merchantCurrencyDto;
+}
+
+@Data
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
+public class MerchantCurrencyDto {
+    @JsonProperty("mId")
+    private String mId;
+    private List<CurrencyDto> currencyDtos;
+}
+
+@Data
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
+public class CurrencyDto {
+    private String currencyCode;
+    private String status;
+}
+
+ @Transactional
+    public OnboardingDto onboardMerchant(OnboardingRequest onboardingRequest) {
+        log.info("Onboarding request received");
+        // Step 1 : Onboard Merchant
+        MerchantInfo merchantInfo = mapper.mapMerchantDtoToEntity(onboardingRequest.getMerchant());
+        merchantInfo.setStatus(MerchantStatus.ACTIVE.name());
+        merchantInfo = merchantRepository.save(merchantInfo);
+        // Step 2 : Onboard Merchant User, user is mandatory for onboarding
+        MerchantUserDto merchantUserDto = merchantUserDao.saveMerchantUser(onboardingRequest.getUser(), merchantInfo.getMId());
+        // Step 3 : Onboard Merchant Bank Account, bank accounts are optional.
+        List<MerchantBankAccountDto> bankAccountDtos = Collections.emptyList();
+        if(CollectionUtils.isNotEmpty(onboardingRequest.getBankAccounts())) {
+            bankAccountDtos = merchantBankDao.saveOnboardingAccounts(onboardingRequest.getBankAccounts(), merchantInfo.getMId());
+        }
+
+        if(ObjectUtils.isNotEmpty(onboardingRequest.getMerchantCurrencyDto())){
+
+        }
+
+        if(Objects.nonNull(onboardingRequest.getOnboardingKeyDto())) {//For AdminPortal this will be null.
+            var kmsResponse = kmsClient.saveEncryptionKeys(merchantInfo.getMId(), onboardingRequest.getOnboardingKeyDto());
+            log.info("SBIePay1.0 MEK and KEK sent to KMS, KMS response: {}", kmsResponse);
+        }
+        // Step 4 : Build Onboarding response
+        return OnboardingDto.builder().merchant(mapper.mapMerchantInfoEntityToDto(merchantInfo)).user(merchantUserDto).bankAccounts(bankAccountDtos).build();
+    }
