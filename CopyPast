@@ -1,3 +1,51 @@
+@Component
+@RequiredArgsConstructor
+public class MerchantCurrencyDao {
+
+    private final MerchantCurrencyRepository merchantCurrencyRepository;
+    private final MerchantMapper mapper; // or wherever mapCurrencyDtosToEntities lives
+
+    public List<MerchantCurrencyDto> saveOnboardingCurrencies(MerchantCurrencyDto merchantCurrencyDto, String mId) {
+        List<MerchantCurrency> entities = mapper.mapCurrencyDtosToEntities(merchantCurrencyDto.getCurrencyDtos(), mId);
+        List<MerchantCurrency> saved = merchantCurrencyRepository.saveAll(entities);
+        // return however you want the response shaped - example below returns the same DTO back
+        return List.of(MerchantCurrencyDto.builder()
+                .mId(mId)
+                .currencyDtos(saved.stream()
+                        .map(e -> CurrencyDto.builder()
+                                .currencyCode(e.getCurrencyCode())
+                                .status(e.getStatus())
+                                .build())
+                        .collect(Collectors.toList()))
+                .build());
+    }
+}
+
+
+List<CurrencyDto> savedCurrencies = Collections.emptyList();
+if (ObjectUtils.isNotEmpty(onboardingRequest.getMerchantCurrencyDto())
+        && CollectionUtils.isNotEmpty(onboardingRequest.getMerchantCurrencyDto().getCurrencyDtos())) {
+    savedCurrencies = merchantCurrencyDao.saveOnboardingCurrencies(
+            onboardingRequest.getMerchantCurrencyDto(), merchantInfo.getMId());
+}
+
+
+@Mapping(target = "mId", source = "mId")
+MerchantCurrency mapCurrencyDtoToEntity(CurrencyDto dto, String mId);
+
+
+
+public List<MerchantCurrency> mapCurrencyDtosToEntities(List<CurrencyDto> currencyDtos, String mId) {
+    return currencyDtos.stream()
+            .map(dto -> MerchantCurrency.builder()
+                    .mId(mId)
+                    .currencyCode(dto.getCurrencyCode())
+                    .status(dto.getStatus())
+                    .build())
+            .collect(Collectors.toList());
+}
+
+------
 @Data
 @EqualsAndHashCode(callSuper = true)
 @NoArgsConstructor
