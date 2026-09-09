@@ -1,13 +1,33 @@
-@JsonInclude(JsonInclude.Include.NON_NULL)
-@Data
-@Builder
-public class OnboardingResponse {
-    private MerchantDto merchant;
-    private MerchantUserDto user;
-    private List<MerchantOnboardBankAccountDto> bankAccounts;
-    private MerchantOnboardKeyManagementDto onboardingKey;
-    private MerchantCurrencyDto merchantCurrencyDto;
-}
+protected OnboardingFailedMerchantDto onboardingMerchant(MerchantCurrencyDto merchantCurrencyDto) {
+        log.info("Started onboardingRequest for mId: {}",merchantCurrencyDto.getMId());
+        log.debug("Admin Merchant Info: {}", merchantCurrencyDto);
+        try {
+            var merchantCurrency = adminDao.getCurrencyCodeByMId(merchantCurrencyDto.getMId());
+
+            if (Objects.isNull(merchantCurrency)) {
+                // Step 1 : OnboardingRequest validation
+                onboardingValidator.validateMerchantCurrency(merchantCurrencyDto);
+                // Step 3 : Save the Merchant and Merchant User Data in DB
+                adminDao.onboardMerchantCurrency(merchantCurrencyDto);
+                // Step 4 : Build MerchantResponse and return to caller
+                log.info("Merchant Onboarded mId: {}", merchantCurrencyDto.getMId());
+            }
+        } catch (ValidationException | MerchantException |
+                 DataIntegrityViolationException | OptimisticLockingFailureException | JpaSystemException ex) {
+            log.error("Onboarding/update failed for mId: {}, errors: {}", merchantCurrencyDto.getMId(), ex.toString());
+            try {
+                return OnboardingFailedMerchantDto.builder()
+                        .mId(merchantCurrencyDto.getMId())
+                        .onboardingJson(objectMapper.writeValueAsString(merchantCurrencyDto))
+                        .reason(ex.toString())
+                        .correlationId(MDC.get(EPayAuthenticationConstant.CORRELATION_ID))
+                        .build();
+            } catch (JsonProcessingException e) {
+                log.error("Failed to convert merchantOnboarding in JSON string, error: {}", e.getMessage());
+            }
+        }
+        return null;
+    }
 
 @Data
 @Builder
@@ -19,177 +39,99 @@ public class MerchantCurrencyDto {
     private List<CurrencyDto> currencyDtos;
 }
 
-   /**
-     * @param fromDateEpochMilli Long
-     * @return List of OnboardingResponse
-     */
-    public List<OnboardingResponse> getListOfMerchant(Long fromDateEpochMilli) {
-        // 1. Create an Instant from UTC milliseconds
-        Instant instant = Instant.ofEpochMilli(fromDateEpochMilli);
-        // 2. Convert the Instant to ZonedDateTime in IST as ePay 1.0 has time in IST
-        ZonedDateTime zonedDateTimeIst = instant.atZone(ZoneId.of("Asia/Kolkata"));
-        // 3. Extract the LocalDateTime
-        LocalDateTime fromDate = zonedDateTimeIst.toLocalDateTime();
+@Data
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
+public class CurrencyDto {
+    private String currencyCode;
+    private String isActive;
+}
 
-        logger.info("Getting list of new merchant from date: {}", fromDate);
-        // 1. Fetch data efficiently
-        List<Merchant> merchantList = merchantRepository.getLatestAndUpdatedMerchants(fromDate);
+@Data
+@EqualsAndHashCode(callSuper = true)
+@NoArgsConstructor
+@AllArgsConstructor
+@Builder
+@Entity
+@Table(name = "MERCHANT_CURRENCY_MAPPING")
+public class MerchantCurrency extends AuditEntity {
+    @Id
+    @GeneratedValue(strategy = GenerationType.UUID)
+    private UUID id;
 
-        // If the initial list is empty, return early
-        if (merchantList.isEmpty()) {
-            return List.of();
+    @Column(name = "MID")
+    private String mId;
+    private String currencyCode;
+    private String status;
+
+}
+
+
+@Component
+@RequiredArgsConstructor
+public class AdminDao {
+
+    private final LoggerUtility log = LoggerFactoryUtility.getLogger(this.getClass());
+
+    private final MerchantRepository merchantRepository;
+    private final MerchantUserDao merchantUserDao;
+    private final MerchantEntityGroupRepository merchantEntityGroupRepository;
+    private final MerchantMapper mapper;
+    private final FooterRepository footerRepository;
+    private final AdminServicesClient adminServicesClient;
+    private final MerchantEntityUserRepository merchantEntityUserRepository;
+    private final MerchantUserRoleRepository merchantUserRoleRepository;
+    private final MerchantConfigRepository merchantConfigRepository;
+    private final MerchantBankDao merchantBankDao;
+    private final OnboardingFailedMerchantRepository onboardingFailedMerchantRepository;
+    private final MerchantCurrencyDao merchantCurrencyDao;
+  @Transactional
+    public void onboardMerchantCurrency(MerchantCurrencyDto merchantCurrencyDto) {
+        log.info("Onboarding request received");
+        if (ObjectUtils.isNotEmpty(merchantCurrencyDto) && CollectionUtils.isNotEmpty(merchantCurrencyDto.getCurrencyDtos())) {
+            merchantCurrencyDao.saveOnboardingCurrencies(merchantCurrencyDto, merchantCurrencyDto.getMId());
         }
-
-        // 2. Extract MIDs
-        List<String> mIds = merchantList.stream().map(Merchant::getMId).toList();
-
-        // 3. Fetch related users efficiently in a single batch call
-        List<MerchantUserView> users = merchantUserViewRepository.findBymIdInAndUserType(mIds, "SUPERUSER");
-
-        // 4. Convert the list of users into a Map<MId, MerchantUserView>
-        // Handles potential duplicates by keeping the existing entry if conflict occurs (though ideally MId should be unique for SUPERUSER)
-        Map<String, MerchantUserView> userLookupMap = users.stream()
-                .collect(Collectors.toMap(MerchantUserView::getMId, user -> user, (existing, replacement) -> existing));
-
-        // 5. Fetch related bank accounts
-        var bankAccounts = onboardBankAccountRepository.findAllByMerchantId(mIds);
-        Map<String, List<MerchantOnboardBankAccountView>> accLookupMap = bankAccounts.stream()
-                .collect(Collectors.groupingBy(acc -> acc.getMerchantAccountStatus().getMerchantId()));
-
-        // 6. Fetch MEKs and KEKs for given mId
-        var keys = merchantOnboardKeyManagementRepository.findAllByMerchantId(mIds);
-        Map<String, MerchantOnboardKeyManagementView> keyMap = keys.stream()
-                .collect(Collectors.toMap(MerchantOnboardKeyManagementView::getMId, key -> key, (existing, replacement) -> existing));
-
-        // 7. Build responses
-        return merchantList.stream()
-            .map(merchant ->
-                OnboardingResponse.builder()
-                        .merchant(merchantMapper.toMerchantDto(merchant))
-                        .user(merchantMapper.toUserDto(userLookupMap.get(merchant.getMId())))
-                        .bankAccounts(merchantMapper.toOnBoardAccounts(accLookupMap.get(merchant.getMId())))
-                        .onboardingKey(merchantMapper.toOnboardKey(keyMap.get(merchant.getMId())))
-                        .build()
-            )
-            .toList();
     }
 
+    public List<MerchantCurrency> getCurrencyCodeByMId(String mId) {
+        log.info("Fetch all currencyCode associated with mId: {}",mId);
+        return merchantCurrencyDao.getCurrencyCodesByMid(mId);
+    }
+}
+
+
+@Component
+@RequiredArgsConstructor
+public class MerchantCurrencyDao {
+    private final MerchantCurrencyRepository merchantCurrencyRepository;
+
+    public MerchantCurrencyDto saveOnboardingCurrencies(MerchantCurrencyDto merchantCurrencyDto, String mId) {
+        List<MerchantCurrency> entities=  merchantCurrencyDto.getCurrencyDtos().stream().map(dto-> MerchantCurrency.builder().mId(mId).currencyCode(dto.getCurrencyCode()).status(Y.equalsIgnoreCase(dto.getIsActive())? ACTIVE : INACTIVE).build()).toList();
+        List<MerchantCurrency> merchantCurrencyList= merchantCurrencyRepository.saveAll(entities);
+        return MerchantCurrencyDto.builder().mId(mId).currencyDtos(merchantCurrencyList.stream().map(currency -> CurrencyDto.builder().currencyCode(currency.getCurrencyCode()).isActive(currency.getStatus()).build()).collect(Collectors.toList())).build();
+    }
+
+    /**
+     * @param mId String
+     * @param currencyCode String
+     * @return boolean
+     */
+    public boolean isCurrencyCodeAvailable(String mId, String currencyCode){
+        return merchantCurrencyRepository.existsByMIdAndCurrencyCode(mId, currencyCode);
+    }
+
+    public List<MerchantCurrency> getCurrencyCodesByMid(String mId){
+        return merchantCurrencyRepository.findByMId(mId);
+    }
+
+}
 
 @Repository
-public interface MerchantRepository extends JpaRepository<Merchant, String> {
+public interface MerchantCurrencyRepository extends JpaRepository<MerchantCurrency, UUID> {
 
-    @Query(value = """
-            SELECT
-            MERCHANT_ID, ISACTIVE, BRAND_NAME, COUNTRY, MAX_ATRN_COUNT, CURRENCY,
-            PREFERRED_PAYMENT_MODE, PREFERRED_NETBANKING, ACCESS_TOKEN_EXPIRY_TIME,
-            MERCHANT_TANSACTION_INTERVAL, ORDER_EXPIRY_TIME, MERCHANT_VOL_VEL_FLAG,
-            MULTI_ACCOUNT_CREDIT, NUMBER_OF_ATTEMPTS_APPLICABLE, NUMBER_OF_ATTEMPTS,
-            IS_REFUND_APPLICABLE, REFUND_WINDOW_DAYS, MERCHANT_BUSINESS_URL, DVP_TYPE,
-            REFUND_ADJUSTMENT, MERCHANT_CATEGORY_CODE, PAYMENT_MODE_LOCKING, GATEWAY_MODE_LOCKING
-            FROM MERCHANT_INFO_VIEW WHERE MERCHANT_ID = :mId""",
-            nativeQuery = true)
-    Optional<MerchantProjection> findProjectedByIdNative(@Param("mId")String mId);
+    boolean existsByMIdAndCurrencyCode(String mId, String currencyCode);
 
-    @Query(value = """
-            SELECT
-            MERCHANT_ID, ISACTIVE, BRAND_NAME, COUNTRY, MAX_ATRN_COUNT, CURRENCY,
-            PREFERRED_PAYMENT_MODE, PREFERRED_NETBANKING, ACCESS_TOKEN_EXPIRY_TIME,
-            MERCHANT_TANSACTION_INTERVAL, ORDER_EXPIRY_TIME, MERCHANT_VOL_VEL_FLAG,
-            MULTI_ACCOUNT_CREDIT, NUMBER_OF_ATTEMPTS_APPLICABLE, NUMBER_OF_ATTEMPTS,
-            IS_REFUND_APPLICABLE, REFUND_WINDOW_DAYS, MERCHANT_BUSINESS_URL, DVP_TYPE,
-            REFUND_ADJUSTMENT, PAYMENT_MODE_LOCKING, MERCHANT_CATEGORY_CODE, GATEWAY_MODE_LOCKING
-            FROM MERCHANT_INFO_VIEW WHERE MERCHANT_ID = :mId""",
-            nativeQuery = true)
-    Optional<MerchantProjection> findProjectedByIdNativePML(@Param("mId")String mId);
-
-    @Query(value = """
-            SELECT
-            MERCHANT_ID, ISACTIVE, BRAND_NAME, COUNTRY, MAX_ATRN_COUNT, CURRENCY,
-            PREFERRED_PAYMENT_MODE, PREFERRED_NETBANKING, ACCESS_TOKEN_EXPIRY_TIME,
-            MERCHANT_TANSACTION_INTERVAL, ORDER_EXPIRY_TIME, MERCHANT_VOL_VEL_FLAG,
-            MULTI_ACCOUNT_CREDIT, NUMBER_OF_ATTEMPTS_APPLICABLE, NUMBER_OF_ATTEMPTS,
-            IS_REFUND_APPLICABLE, REFUND_WINDOW_DAYS, MERCHANT_BUSINESS_URL, DVP_TYPE,
-            REFUND_ADJUSTMENT, PAYMENT_MODE_LOCKING
-            FROM MERCHANT_INFO_VIEW WHERE MERCHANT_ID IN :mIds""",
-            nativeQuery = true)
-    List<MerchantProjection> findProjectedByIdNativeList(@Param("mIds") List<String> mIds);
-
-    @Query("SELECT m FROM Merchant m WHERE m.creationDate >= :fromDate OR m.modifiedDate >= :fromDate")
-    List<Merchant> getLatestAndUpdatedMerchants(LocalDateTime fromDate);
-
-    @Query("""
-             SELECT CASE WHEN COUNT(m) > 0 THEN true ELSE false END FROM Merchant m
-             WHERE m.mId = :mId AND m.merchIntegrationType = 'Merchant Hosted' AND m.isActive = 'Y'
-             """)
-    boolean isMerchantHosted(@Param("mId") String mId);
+    List<MerchantCurrency> findByMId(@Param("mId") String mId);
 
 }
-
-public interface MerchantProjection {
-    String getMerchantId();
-    String getIsactive();
-    String getBrandName();
-    String getCountry();
-    Integer getMaxAtrnCount();
-    String getCurrency();
-    String getPreferredPaymentMode();
-    String getPreferredNetbanking();
-    Long getAccessTokenExpiryTime();
-    Long getMerchantTansactionInterval();
-    Long getOrderExpiryTime();
-    String getMerchantVolVelFlag();
-    String getMultiAccountCredit();
-    String getMerchantCategoryCode();
-    String getNumberOfAttemptsApplicable();
-    String getNumberOfAttempts();
-    String getIsRefundApplicable();
-    Integer getRefundWindowDays();
-    String getMerchantBusinessUrl();
-    String getDvpType();
-    String getRefundAdjustment();
-    String getPaymentModeLocking();
-    String getGatewayModeLocking();
-}
-Table details :-
-
-RFCRULEID	VARCHAR2(10 BYTE)	No		1	
-AGGREGATORID	VARCHAR2(10 BYTE)	No		2	
-MERCHANTID	VARCHAR2(20 BYTE)	No		3	
-MERCHANTCATEGORYCODE	VARCHAR2(10 BYTE)	No		4	
-BUSINESSCATEGORY	VARCHAR2(10 BYTE)	No		5	
-OPERATINGMODEID	VARCHAR2(10 BYTE)	No		6	
-COUNTRYCODE	VARCHAR2(10 BYTE)	No		7	
-CURRENCYCODE	VARCHAR2(10 BYTE)	No		8	
-THRESHOLDAMOUNT	NUMBER(17,4)	No		9	
-THRESHOLDAMOUNTACTION	VARCHAR2(10 BYTE)	No		10	
-NEGATIVECARDACTION	VARCHAR2(10 BYTE)	No		11	
-NEGATIVEIPACTION	VARCHAR2(10 BYTE)	No		12	
-NEGATIVECOUNTRYACTION	VARCHAR2(10 BYTE)	No		13	
-NEGATIVESTATEACTION	VARCHAR2(10 BYTE)	No		14	
-NEGATIVECITYACTION	VARCHAR2(10 BYTE)	No		15	
-NEGATIVENAMEACTION	VARCHAR2(10 BYTE)	No		16	
-NEGATIVEEMAILACTION	VARCHAR2(10 BYTE)	No		17	
-NEGATIVECONTACTNOACTION	VARCHAR2(10 BYTE)	No		18	
-SDNLISTACION	VARCHAR2(10 BYTE)	No		19	
-OFACLISTACTION	VARCHAR2(10 BYTE)	No		20	
-PEPACTION	VARCHAR2(10 BYTE)	No		21	
-DAYCARDTXNCOUNT	VARCHAR2(10 BYTE)	No		22	
-DAYCARDTXNCOUNTACTION	VARCHAR2(10 BYTE)	No		23	
-DORMANCYDAYS	VARCHAR2(10 BYTE)	No		24	
-DORMANCYACTION	VARCHAR2(10 BYTE)	No		25	
-BINMODE	VARCHAR2(10 BYTE)	No		26	
-BINMODEACTION	VARCHAR2(10 BYTE)	No		27	
-ISACTIVE	CHAR(1 BYTE)	No		28	
-INSTRUCTIONTYPE	CHAR(1 BYTE)	No		29	
-RECORDSTATUS	CHAR(1 BYTE)	No		30	
-CREATIONDATE	DATE	No		31	
-CREATEDBY	VARCHAR2(100 BYTE)	No		32	
-CREATEDBYSESSIONID	VARCHAR2(100 BYTE)	No		33	
-MODIFIEDDATE	DATE	Yes		34	
-MODIFIEDBY	VARCHAR2(100 BYTE)	Yes		35	
-MODIFIEDBYSESSIONID	VARCHAR2(100 BYTE)	Yes		36	
-DAYCARDTXNAMOUNT	NUMBER(17,4)	No	0.0 	37	
-DAYCARDTXNAMOUNTACTION	VARCHAR2(10 BYTE)	No	'NA' 	38	
-CURRENCYMODE	VARCHAR2(10 BYTE)	Yes		39	
-
-
