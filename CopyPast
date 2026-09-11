@@ -1,4 +1,84 @@
 protected OnboardingFailedMerchantDto onboardingMerchant(MerchantCurrencyDto merchantCurrencyDto) {
+    log.info("Started onboardingRequest for mId: {}", merchantCurrencyDto.getMId());
+    log.debug("Admin Merchant Info: {}", merchantCurrencyDto);
+    try {
+        // Step 1 : OnboardingRequest validation
+        onboardingValidator.validateMerchantCurrency(merchantCurrencyDto);
+
+        List<MerchantCurrency> existingCurrencies = adminDao.getCurrencyCodeByMId(merchantCurrencyDto.getMId());
+        Map<String, MerchantCurrency> existingByCode = existingCurrencies.stream()
+                .collect(Collectors.toMap(MerchantCurrency::getCurrencyCode, Function.identity()));
+
+        List<CurrencyDto> toInsert = new ArrayList<>();
+        List<MerchantCurrency> toUpdate = new ArrayList<>();
+
+        for (CurrencyDto currencyDto : merchantCurrencyDto.getCurrencyDtos()) {
+            String requestedStatus = Y.equalsIgnoreCase(currencyDto.getIsActive()) ? ACTIVE : INACTIVE;
+            MerchantCurrency existing = existingByCode.get(currencyDto.getCurrencyCode());
+
+            if (existing == null) {
+                toInsert.add(currencyDto);
+            } else if (!existing.getStatus().equalsIgnoreCase(requestedStatus)) {
+                existing.setStatus(requestedStatus);
+                toUpdate.add(existing);
+            }
+            // else: code exists and status already matches -> no-op
+        }
+
+        // Step 3 : Save new + updated Merchant Currency Data in DB
+        adminDao.onboardMerchantCurrency(merchantCurrencyDto.getMId(), toInsert, toUpdate);
+
+        log.info("Merchant Onboarded mId: {}", merchantCurrencyDto.getMId());
+    } catch (ValidationException | MerchantException |
+             DataIntegrityViolationException | OptimisticLockingFailureException | JpaSystemException ex) {
+        log.error("Onboarding/update failed for mId: {}, errors: {}", merchantCurrencyDto.getMId(), ex.toString());
+        try {
+            return OnboardingFailedMerchantDto.builder()
+                    .mId(merchantCurrencyDto.getMId())
+                    .onboardingJson(objectMapper.writeValueAsString(merchantCurrencyDto))
+                    .reason(ex.toString())
+                    .correlationId(MDC.get(EPayAuthenticationConstant.CORRELATION_ID))
+                    .build();
+        } catch (JsonProcessingException e) {
+            log.error("Failed to convert merchantOnboarding in JSON string, error: {}", e.getMessage());
+        }
+    }
+    return null;
+}
+
+
+@Transactional
+public void onboardMerchantCurrency(String mId, List<CurrencyDto> toInsert, List<MerchantCurrency> toUpdate) {
+    log.info("Onboarding request received for mId: {}", mId);
+    if (CollectionUtils.isNotEmpty(toInsert)) {
+        merchantCurrencyDao.saveOnboardingCurrencies(toInsert, mId);
+    }
+    if (CollectionUtils.isNotEmpty(toUpdate)) {
+        merchantCurrencyDao.updateCurrencies(toUpdate);
+    }
+}
+
+
+public List<MerchantCurrency> saveOnboardingCurrencies(List<CurrencyDto> currencyDtos, String mId) {
+    List<MerchantCurrency> entities = currencyDtos.stream()
+            .map(dto -> MerchantCurrency.builder()
+                    .mId(mId)
+                    .currencyCode(dto.getCurrencyCode())
+                    .status(Y.equalsIgnoreCase(dto.getIsActive()) ? ACTIVE : INACTIVE)
+                    .build())
+            .toList();
+    return merchantCurrencyRepository.saveAll(entities);
+}
+
+public List<MerchantCurrency> updateCurrencies(List<MerchantCurrency> merchantCurrencies) {
+    return merchantCurrencyRepository.saveAll(merchantCurrencies);
+}
+
+----------------
+
+
+
+protected OnboardingFailedMerchantDto onboardingMerchant(MerchantCurrencyDto merchantCurrencyDto) {
         log.info("Started onboardingRequest for mId: {}",merchantCurrencyDto.getMId());
         log.debug("Admin Merchant Info: {}", merchantCurrencyDto);
         try {
