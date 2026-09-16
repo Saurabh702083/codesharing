@@ -1,3 +1,84 @@
+package com.epay.transaction.client.ApiClient;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.apache.hc.client5.http.config.RequestConfig;
+import org.apache.hc.client5.http.impl.classic.CloseableHttpClient;
+import org.apache.hc.client5.http.impl.win.WinHttpClients;
+import org.apache.hc.core5.http.HttpHost;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.client.reactive.HttpComponentsClientHttpConnector;
+import org.springframework.http.codec.json.Jackson2JsonDecoder;
+import org.springframework.http.codec.json.Jackson2JsonEncoder;
+import org.springframework.util.MimeTypeUtils;
+import org.springframework.web.reactive.function.client.ExchangeStrategies;
+import org.springframework.web.reactive.function.client.WebClient;
+
+import java.util.List;
+
+public class ApiClient {
+
+    private final LoggerUtility logger = LoggerFactoryUtility.getLogger(this.getClass());
+    private final String baseUrl;
+    private final WebClient webClient;
+
+    public ApiClient(String baseUrl, String corsOrigin, ObjectMapper objectMapper) {
+
+        this.baseUrl = baseUrl;
+
+        final ExchangeStrategies strategies = ExchangeStrategies.builder()
+                .codecs(configurer -> {
+                    configurer.defaultCodecs().jackson2JsonEncoder(
+                            new Jackson2JsonEncoder(objectMapper, MimeTypeUtils.APPLICATION_JSON));
+                    configurer.defaultCodecs().jackson2JsonDecoder(
+                            new Jackson2JsonDecoder(objectMapper, MimeTypeUtils.APPLICATION_JSON));
+                })
+                .build();
+
+        // Read proxy config from JVM system properties (same ones Gradle uses),
+        // e.g. set via VM options: -Dhttps.proxyHost=swg.sbi.co.in -Dhttps.proxyPort=9090
+        String proxyHost = System.getProperty("https.proxyHost");
+        String proxyPortStr = System.getProperty("https.proxyPort");
+
+        var winHttpClientBuilder = WinHttpClients.custom()
+                .setDefaultRequestConfig(RequestConfig.custom()
+                        .setProxyPreferredAuthSchemes(List.of("Negotiate", "NTLM"))
+                        .build());
+
+        if (proxyHost != null && !proxyHost.isBlank() && proxyPortStr != null) {
+            try {
+                int proxyPort = Integer.parseInt(proxyPortStr);
+                HttpHost proxy = new HttpHost("http", proxyHost, proxyPort);
+                winHttpClientBuilder.setProxy(proxy);
+                logger.info("Using proxy from system properties: {}:{}", proxyHost, proxyPort);
+            } catch (NumberFormatException e) {
+                logger.error("Invalid https.proxyPort value: {}. Proceeding without explicit proxy.", proxyPortStr);
+            }
+        } else {
+            logger.info("No proxy system properties found (https.proxyHost/https.proxyPort). " +
+                    "Relying on WinHttpClients auto-detection, if any.");
+        }
+
+        CloseableHttpClient httpClient = winHttpClientBuilder.build();
+
+        HttpComponentsClientHttpConnector connector =
+                new HttpComponentsClientHttpConnector(httpClient);
+
+        this.webClient = WebClient.builder()
+                .baseUrl(baseUrl)
+                .clientConnector(connector)
+                .defaultHeader(HttpHeaders.ORIGIN, corsOrigin)
+                .exchangeStrategies(strategies)
+                .build();
+    }
+
+    public WebClient getWebClient() {
+        return webClient;
+    }
+}
+
+
+
+-----------------
 dependencies {
     implementation 'org.springframework.boot:spring-boot-starter-webflux'
     implementation 'org.apache.httpcomponents.client5:httpclient5-win:5.4.1'
