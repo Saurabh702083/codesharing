@@ -1,3 +1,69 @@
+import io.netty.channel.ChannelOption;
+import io.netty.handler.proxy.HttpProxyHandler;
+import reactor.netty.http.client.HttpClient;
+import reactor.netty.transport.ProxyProvider;
+import org.springframework.http.client.reactive.ReactorClientHttpConnector;
+import org.springframework.web.reactive.function.client.WebClient;
+
+import java.net.*;
+import java.util.List;
+
+public class WebClientConfig {
+
+    public static WebClient buildWebClient(String targetUrl) throws Exception {
+        // Ensure JVM reads system-configured proxy (incl. PAC-resolved)
+        System.setProperty("java.net.useSystemProxies", "true");
+
+        ProxySelector selector = ProxySelector.getDefault();
+        List<Proxy> proxies = selector.select(new URI(targetUrl));
+
+        HttpClient httpClient = HttpClient.create();
+
+        for (Proxy proxy : proxies) {
+            if (proxy.type() == Proxy.Type.HTTP) {
+                InetSocketAddress addr = (InetSocketAddress) proxy.address();
+                String proxyHost = addr.getHostString();
+                int proxyPort = addr.getPort();
+
+                System.out.println("Using proxy: " + proxyHost + ":" + proxyPort);
+
+                httpClient = httpClient.proxy(spec -> spec
+                        .type(ProxyProvider.Proxy.HTTP)
+                        .host(proxyHost)
+                        .port(proxyPort));
+                break; // use first matching proxy
+            }
+            // If proxy.type() == Proxy.Type.DIRECT, no proxy needed for this URL
+        }
+
+        return WebClient.builder()
+                .clientConnector(new ReactorClientHttpConnector(httpClient))
+                .build();
+    }
+
+    public static void main(String[] args) throws Exception {
+        String intUrl = "https://your-int-environment-url.com/api/endpoint";
+        WebClient client = buildWebClient(intUrl);
+
+        client.get()
+                .uri(intUrl)
+                .retrieve()
+                .bodyToMono(String.class)
+                .doOnNext(System.out::println)
+                .doOnError(System.err::println)
+                .block();
+    }
+}
+
+
+
+
+
+
+
+
+
+
 protected OnboardingFailedMerchantDto onboardingMerchant(MerchantCurrencyDto merchantCurrencyDto) {
     log.info("Started onboardingRequest for mId: {}", merchantCurrencyDto.getMId());
     log.debug("Admin Merchant Info: {}", merchantCurrencyDto);
