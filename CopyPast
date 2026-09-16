@@ -1,3 +1,102 @@
+dependencies {
+    implementation 'org.springframework.boot:spring-boot-starter-webflux'
+    implementation 'org.apache.httpcomponents.client5:httpclient5-win:5.4.1'
+    implementation 'org.apache.httpcomponents.client5:httpclient5:5.4.1'
+}
+
+
+package com.epay.transaction.client.ApiClient;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.apache.hc.client5.http.config.RequestConfig;
+import org.apache.hc.client5.http.impl.classic.CloseableHttpClient;
+import org.apache.hc.client5.http.impl.win.WinHttpClients;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.client.reactive.HttpComponentsClientHttpConnector;
+import org.springframework.http.codec.json.Jackson2JsonDecoder;
+import org.springframework.http.codec.json.Jackson2JsonEncoder;
+import org.springframework.util.MimeTypeUtils;
+import org.springframework.web.reactive.function.client.ExchangeStrategies;
+import org.springframework.web.reactive.function.client.WebClient;
+
+import java.util.List;
+
+public class ApiClient {
+
+    private final LoggerUtility logger = LoggerFactoryUtility.getLogger(this.getClass());
+    private final String baseUrl;
+    private final WebClient webClient;
+
+    public ApiClient(String baseUrl, String corsOrigin, ObjectMapper objectMapper) {
+
+        this.baseUrl = baseUrl;
+
+        final ExchangeStrategies strategies = ExchangeStrategies.builder()
+                .codecs(configurer -> {
+                    configurer.defaultCodecs().jackson2JsonEncoder(
+                            new Jackson2JsonEncoder(objectMapper, MimeTypeUtils.APPLICATION_JSON));
+                    configurer.defaultCodecs().jackson2JsonDecoder(
+                            new Jackson2JsonDecoder(objectMapper, MimeTypeUtils.APPLICATION_JSON));
+                })
+                .build();
+
+        // WinHttpClients auto-detects Windows and uses the logged-in session
+        // for NTLM/Negotiate proxy auth automatically — same as Postman/browser.
+        // On non-Windows machines (e.g. CI/Linux servers), this falls back to a
+        // plain client with no proxy auth, so it's safe to leave in shared code.
+        CloseableHttpClient httpClient = WinHttpClients.custom()
+                .setDefaultRequestConfig(RequestConfig.custom()
+                        .setProxyPreferredAuthSchemes(List.of("Negotiate", "NTLM"))
+                        .build())
+                .build();
+
+        HttpComponentsClientHttpConnector connector =
+                new HttpComponentsClientHttpConnector(httpClient);
+
+        this.webClient = WebClient.builder()
+                .baseUrl(baseUrl)
+                .clientConnector(connector)
+                .defaultHeader(HttpHeaders.ORIGIN, corsOrigin)
+                .exchangeStrategies(strategies)
+                .build();
+    }
+
+    public WebClient getWebClient() {
+        return webClient;
+    }
+}
+
+
+
+public class TestNtlmProxy {
+    public static void main(String[] args) {
+        ApiClient client = new ApiClient(
+                "https://integration.sbiepay.sbiuat.bank.in",
+                "http://localhost",
+                new ObjectMapper());
+
+        client.getWebClient().get()
+                .uri("/kms/v1/key/validate/api") // swap for a real valid endpoint
+                .retrieve()
+                .bodyToMono(String.class)
+                .doOnNext(body -> System.out.println("RESPONSE: " + body))
+                .doOnError(err -> System.err.println("ERROR: " + err.getMessage()))
+                .block();
+    }
+}
+
+import org.apache.hc.client5.http.impl.classic.HttpClientBuilder;
+import org.apache.hc.core5.http.HttpHost;
+
+CloseableHttpClient httpClient = WinHttpClients.custom()
+        .setProxy(new HttpHost("http", "swg.sbi.co.in", 9090))
+        .setDefaultRequestConfig(RequestConfig.custom()
+                .setProxyPreferredAuthSchemes(List.of("Negotiate", "NTLM"))
+                .build())
+        .build();
+
+-------------------
+
 C:\Users\v1018400>curl -v --proxy-negotiate -U : -x http://swg.sbi.co.in:9090 https://integration.sbiepay.sbiuat.bank.in/kms/v1/key/validate/api
 * Host swg.sbi.co.in:9090 was resolved.
 * IPv6: (none)
