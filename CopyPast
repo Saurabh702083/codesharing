@@ -1,4 +1,63 @@
-
+C:\Users\v1018400>curl -v --proxy-negotiate -U : -x http://swg.sbi.co.in:9090 https://integration.sbiepay.sbiuat.bank.in/kms/v1/key/validate/api
+* Host swg.sbi.co.in:9090 was resolved.
+* IPv6: (none)
+* IPv4: 10.176.187.172
+*   Trying 10.176.187.172:9090...
+* CONNECT: no ALPN negotiated
+* Proxy auth using Negotiate with user ''
+* Establishing HTTP proxy tunnel to integration.sbiepay.sbiuat.bank.in:443
+> CONNECT integration.sbiepay.sbiuat.bank.in:443 HTTP/1.1
+> Host: integration.sbiepay.sbiuat.bank.in:443
+> Proxy-Authorization: Negotiate TlRMTVNTUAABAAAAt4II4gAAAAAAAAAAAAAAAAAAAAAKAPRlAAAADw==
+> User-Agent: curl/8.21.0
+> Proxy-Connection: Keep-Alive
+>
+< HTTP/1.1 407 Proxy Authentication Required
+< Proxy-Authenticate: NEGOTIATE TlRMTVNTUAACAAAADgAOADgAAAA1Aonge45SZ17gJxUAAAAAAAAAAHoAegBGAAAABQCTCAAAAA9HAEkAVABDAEQATwBNAAIADgBHAEkAVABDAEQATwBNAAEAHgBIAFkARABfAFMAVwBHAFYALQAzAEgAMgAyADUARAAEAAwAQQBEAC4AUwBCAEkAAwAuAGgAeQBkAF8AcwB3AGcAdgBtAF8AZABvAG0AXwAwADEALgBhAGQALgBzAGIAaQAAAAAA
+< Cache-Control: no-cache
+< X-XSS-Protection: 1
+< Connection: Keep-Alive
+< Content-Type: text/html; charset=utf-8
+< Content-Length: 1067
+< Pragma: no-cache
+<
+* Ignore 1067 bytes of response-body
+* Proxy auth using Negotiate with user ''
+* Establishing HTTP proxy tunnel to integration.sbiepay.sbiuat.bank.in:443
+> CONNECT integration.sbiepay.sbiuat.bank.in:443 HTTP/1.1
+> Host: integration.sbiepay.sbiuat.bank.in:443
+> Proxy-Authorization: Negotiate TlRMTVNTUAADAAAAGAAYAIoAAAA6AToBogAAAAgACABYAAAAEAAQAGAAAAAaABoAcAAAABAAEADcAQAANQKI4goA9GUAAAAPhJRXDa+3OITqwcuOvV9aWkMATwBSAFAAVgAxADAAMQA4ADQAMAAwAEcAVABTAEIASQBFAFAAQQBZADAAMQAyADEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAdaUNsgM/sVrYUcQz1ulUfwEBAAAAAAAAg9uRS9FF3QFRKl3TVJxNNwAAAAACAA4ARwBJAFQAQwBEAE8ATQABAB4ASABZAEQAXwBTAFcARwBWAC0AMwBIADIAMgA1AEQABAAMAEEARAAuAFMAQgBJAAMALgBoAHkAZABfAHMAdwBnAHYAbQBfAGQAbwBtAF8AMAAxAC4AYQBkAC4AcwBiAGkACABQAFAAAAAAAAAAAAAAAAAgAABCishPuEkrhy6nd6txvAlIenfMfZDHzlnvIbo1VY76UYyaCiHlmgh6boMWU0oBYTwd1DcB8f6Y42ee+AIYrhsxCgAQAAAAAAAAAAAAAAAAAAAAAAAJACQASABUAFQAUAAvAHMAdwBnAC4AcwBiAGkALgBjAG8ALgBpAG4AAAAAAAAAAAD32wyxQ4q6ODG9QEA0SGUP
+> User-Agent: curl/8.21.0
+> Proxy-Connection: Keep-Alive
+>
+< HTTP/1.1 200 Connection established
+<
+* CONNECT phase completed for HTTP proxy
+* CONNECT tunnel established, response 200
+* schannel: disabled automatic use of client certificate
+* ALPN: curl offers http/1.1
+* ALPN: server accepted http/1.1
+* Established connection to swg.sbi.co.in (10.176.187.172 port 9090) from 10.30.64.121 port 53831
+* using HTTP/1.x
+> GET /kms/v1/key/validate/api HTTP/1.1
+> Host: integration.sbiepay.sbiuat.bank.in
+> User-Agent: curl/8.21.0
+> Accept: */*
+>
+* Request completely sent off
+* schannel: remote party requests renegotiation
+* schannel: renegotiating SSL/TLS connection
+* schannel: SSL/TLS connection renegotiated
+< HTTP/1.1 404 Not Found
+< Content-Length: 0
+< date: Wed, 16 Sep 2026 11:48:31 GMT
+< Strict-Transport-Security: max-age=31536000
+< Connection: keep-alive
+< Set-Cookie: a92fc5948479da0b3b64d3b41c224e55=11fbbaa2f49d7726f0e6c7c380492122; path=/; HttpOnly; Secure; SameSite=None
+< Set-Cookie: KR0103a2b0=01890e9c1316c911c79d79541c4250ce99005b1889b704ab5e5d5765901ef7bf9c13c4acbbe74665f697c451e4e4021412a3ca1ab6188bb7511b56a590f7f0c152c222c63d; Path=/; Secure; HttpOnly
+<
+* Connection #0 to host integration.sbiepay.sbiuat.bank.in:443 left intact
+------------------------------
 curl -v --cert path\to\client-cert.pem --key path\to\client-key.pem https://integration.sbiepay.sbiuat.bank.in/kms/v1/key/validate/api
 
 
