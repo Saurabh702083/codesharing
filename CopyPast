@@ -1,3 +1,7 @@
+
+curl -v --cert path\to\client-cert.pem --key path\to\client-key.pem https://integration.sbiepay.sbiuat.bank.in/kms/v1/key/validate/api
+
+
 C:\Users\v1018400>curl -v https://integration.sbiepay.sbiuat.bank.in/kms/v1/key/validate/api
 * Host integration.sbiepay.sbiuat.bank.in:443 was resolved.
 * IPv6: (none)
