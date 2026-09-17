@@ -1,642 +1,327 @@
-package com.epay.transaction.client.ApiClient;
-
-import com.fasterxml.jackson.databind.ObjectMapper;
-import org.apache.hc.client5.http.config.RequestConfig;
-import org.apache.hc.client5.http.impl.classic.CloseableHttpClient;
-import org.apache.hc.client5.http.impl.win.WinHttpClients;
-import org.apache.hc.core5.http.HttpHost;
-import org.springframework.http.HttpHeaders;
-import org.springframework.http.client.reactive.HttpComponentsClientHttpConnector;
-import org.springframework.http.codec.json.Jackson2JsonDecoder;
-import org.springframework.http.codec.json.Jackson2JsonEncoder;
-import org.springframework.util.MimeTypeUtils;
-import org.springframework.web.reactive.function.client.ExchangeStrategies;
-import org.springframework.web.reactive.function.client.WebClient;
-
-import java.util.List;
-
-public class ApiClient {
-
-    private final LoggerUtility logger = LoggerFactoryUtility.getLogger(this.getClass());
-    private final String baseUrl;
-    private final WebClient webClient;
-
-    public ApiClient(String baseUrl, String corsOrigin, ObjectMapper objectMapper) {
-
-        this.baseUrl = baseUrl;
-
-        final ExchangeStrategies strategies = ExchangeStrategies.builder()
-                .codecs(configurer -> {
-                    configurer.defaultCodecs().jackson2JsonEncoder(
-                            new Jackson2JsonEncoder(objectMapper, MimeTypeUtils.APPLICATION_JSON));
-                    configurer.defaultCodecs().jackson2JsonDecoder(
-                            new Jackson2JsonDecoder(objectMapper, MimeTypeUtils.APPLICATION_JSON));
-                })
-                .build();
-
-        // Read proxy config from JVM system properties (same ones Gradle uses),
-        // e.g. set via VM options: -Dhttps.proxyHost=swg.sbi.co.in -Dhttps.proxyPort=9090
-        String proxyHost = System.getProperty("https.proxyHost");
-        String proxyPortStr = System.getProperty("https.proxyPort");
-
-        var winHttpClientBuilder = WinHttpClients.custom()
-                .setDefaultRequestConfig(RequestConfig.custom()
-                        .setProxyPreferredAuthSchemes(List.of("Negotiate", "NTLM"))
-                        .build());
-
-        if (proxyHost != null && !proxyHost.isBlank() && proxyPortStr != null) {
-            try {
-                int proxyPort = Integer.parseInt(proxyPortStr);
-                HttpHost proxy = new HttpHost("http", proxyHost, proxyPort);
-                winHttpClientBuilder.setProxy(proxy);
-                logger.info("Using proxy from system properties: {}:{}", proxyHost, proxyPort);
-            } catch (NumberFormatException e) {
-                logger.error("Invalid https.proxyPort value: {}. Proceeding without explicit proxy.", proxyPortStr);
-            }
-        } else {
-            logger.info("No proxy system properties found (https.proxyHost/https.proxyPort). " +
-                    "Relying on WinHttpClients auto-detection, if any.");
-        }
-
-        CloseableHttpClient httpClient = winHttpClientBuilder.build();
-
-        HttpComponentsClientHttpConnector connector =
-                new HttpComponentsClientHttpConnector(httpClient);
-
-        this.webClient = WebClient.builder()
-                .baseUrl(baseUrl)
-                .clientConnector(connector)
-                .defaultHeader(HttpHeaders.ORIGIN, corsOrigin)
-                .exchangeStrategies(strategies)
-                .build();
+ @PostMapping("merchant/search/{currencyCode}")
+    @Operation(summary = "Refund details search API for merchant panel", description = "This API is used to search the refund details for a particular search request used by merchant")
+    @PreAuthorize("hasAnyRole('ADMIN','SUPER_ADMIN','USER')")
+    public TransactionResponse<RefundResponse> searchRefundBooking(@Valid @RequestBody RefundSearchRequest refundSearchRequest,@PathVariable String currencyCode, @PageableDefault(size = TransactionConstant.DEFAULT_MAX_PAGE_SIZE) Pageable pageable) {
+        logger.info("Search refund request received in controller for refundDetailRequest: {}", refundSearchRequest);
+        return refundService.getRefundBookingSearchResponse(refundSearchRequest,currencyCode, pageable);
     }
 
-    public WebClient getWebClient() {
-        return webClient;
-    }
-}
-
-
-
------------------
-dependencies {
-    implementation 'org.springframework.boot:spring-boot-starter-webflux'
-    implementation 'org.apache.httpcomponents.client5:httpclient5-win:5.4.1'
-    implementation 'org.apache.httpcomponents.client5:httpclient5:5.4.1'
-}
-
-
-package com.epay.transaction.client.ApiClient;
-
-import com.fasterxml.jackson.databind.ObjectMapper;
-import org.apache.hc.client5.http.config.RequestConfig;
-import org.apache.hc.client5.http.impl.classic.CloseableHttpClient;
-import org.apache.hc.client5.http.impl.win.WinHttpClients;
-import org.springframework.http.HttpHeaders;
-import org.springframework.http.client.reactive.HttpComponentsClientHttpConnector;
-import org.springframework.http.codec.json.Jackson2JsonDecoder;
-import org.springframework.http.codec.json.Jackson2JsonEncoder;
-import org.springframework.util.MimeTypeUtils;
-import org.springframework.web.reactive.function.client.ExchangeStrategies;
-import org.springframework.web.reactive.function.client.WebClient;
-
-import java.util.List;
-
-public class ApiClient {
-
-    private final LoggerUtility logger = LoggerFactoryUtility.getLogger(this.getClass());
-    private final String baseUrl;
-    private final WebClient webClient;
-
-    public ApiClient(String baseUrl, String corsOrigin, ObjectMapper objectMapper) {
-
-        this.baseUrl = baseUrl;
-
-        final ExchangeStrategies strategies = ExchangeStrategies.builder()
-                .codecs(configurer -> {
-                    configurer.defaultCodecs().jackson2JsonEncoder(
-                            new Jackson2JsonEncoder(objectMapper, MimeTypeUtils.APPLICATION_JSON));
-                    configurer.defaultCodecs().jackson2JsonDecoder(
-                            new Jackson2JsonDecoder(objectMapper, MimeTypeUtils.APPLICATION_JSON));
-                })
-                .build();
-
-        // WinHttpClients auto-detects Windows and uses the logged-in session
-        // for NTLM/Negotiate proxy auth automatically — same as Postman/browser.
-        // On non-Windows machines (e.g. CI/Linux servers), this falls back to a
-        // plain client with no proxy auth, so it's safe to leave in shared code.
-        CloseableHttpClient httpClient = WinHttpClients.custom()
-                .setDefaultRequestConfig(RequestConfig.custom()
-                        .setProxyPreferredAuthSchemes(List.of("Negotiate", "NTLM"))
-                        .build())
-                .build();
-
-        HttpComponentsClientHttpConnector connector =
-                new HttpComponentsClientHttpConnector(httpClient);
-
-        this.webClient = WebClient.builder()
-                .baseUrl(baseUrl)
-                .clientConnector(connector)
-                .defaultHeader(HttpHeaders.ORIGIN, corsOrigin)
-                .exchangeStrategies(strategies)
-                .build();
+public TransactionResponse<RefundResponse> getRefundBookingSearchResponse(RefundSearchRequest refundSearchRequest,String currencyCode, Pageable pageable){
+        Page<RefundBookingDto> refundBookingDtoPage =  searchRefundBookings(refundSearchRequest, pageable);
+        return TransactionResponse.<RefundResponse>builder().data(refundMapper.dtoToResponse(refundBookingDtoPage.getContent())).status(TransactionConstant.RESPONSE_SUCCESS).total(refundBookingDtoPage.getTotalElements()).count((long) refundBookingDtoPage.getContent().size()).build();
     }
 
-    public WebClient getWebClient() {
-        return webClient;
+ public Page<RefundBookingDto> searchRefundBookings(RefundSearchRequest refundSearchRequest, Pageable pageable) {
+
+        logger.info("Get refund request received for refundDetailRequest: {}", refundSearchRequest);
+
+        //Step-1: Validate refund search request
+        refundValidator.validateRefundSearchRequest(refundSearchRequest);
+
+        //Step-2: Search refund request in db for requested parameters
+        return refundDao.searchRefundBookingRequest(refundSearchRequest, pageable);
     }
-}
-
-
-
-public class TestNtlmProxy {
-    public static void main(String[] args) {
-        ApiClient client = new ApiClient(
-                "https://integration.sbiepay.sbiuat.bank.in",
-                "http://localhost",
-                new ObjectMapper());
-
-        client.getWebClient().get()
-                .uri("/kms/v1/key/validate/api") // swap for a real valid endpoint
-                .retrieve()
-                .bodyToMono(String.class)
-                .doOnNext(body -> System.out.println("RESPONSE: " + body))
-                .doOnError(err -> System.err.println("ERROR: " + err.getMessage()))
-                .block();
-    }
-}
-
-import org.apache.hc.client5.http.impl.classic.HttpClientBuilder;
-import org.apache.hc.core5.http.HttpHost;
-
-CloseableHttpClient httpClient = WinHttpClients.custom()
-        .setProxy(new HttpHost("http", "swg.sbi.co.in", 9090))
-        .setDefaultRequestConfig(RequestConfig.custom()
-                .setProxyPreferredAuthSchemes(List.of("Negotiate", "NTLM"))
-                .build())
-        .build();
-
--------------------
-
-C:\Users\v1018400>curl -v --proxy-negotiate -U : -x http://swg.sbi.co.in:9090 https://integration.sbiepay.sbiuat.bank.in/kms/v1/key/validate/api
-* Host swg.sbi.co.in:9090 was resolved.
-* IPv6: (none)
-* IPv4: 10.176.187.172
-*   Trying 10.176.187.172:9090...
-* CONNECT: no ALPN negotiated
-* Proxy auth using Negotiate with user ''
-* Establishing HTTP proxy tunnel to integration.sbiepay.sbiuat.bank.in:443
-> CONNECT integration.sbiepay.sbiuat.bank.in:443 HTTP/1.1
-> Host: integration.sbiepay.sbiuat.bank.in:443
-> Proxy-Authorization: Negotiate TlRMTVNTUAABAAAAt4II4gAAAAAAAAAAAAAAAAAAAAAKAPRlAAAADw==
-> User-Agent: curl/8.21.0
-> Proxy-Connection: Keep-Alive
->
-< HTTP/1.1 407 Proxy Authentication Required
-< Proxy-Authenticate: NEGOTIATE TlRMTVNTUAACAAAADgAOADgAAAA1Aonge45SZ17gJxUAAAAAAAAAAHoAegBGAAAABQCTCAAAAA9HAEkAVABDAEQATwBNAAIADgBHAEkAVABDAEQATwBNAAEAHgBIAFkARABfAFMAVwBHAFYALQAzAEgAMgAyADUARAAEAAwAQQBEAC4AUwBCAEkAAwAuAGgAeQBkAF8AcwB3AGcAdgBtAF8AZABvAG0AXwAwADEALgBhAGQALgBzAGIAaQAAAAAA
-< Cache-Control: no-cache
-< X-XSS-Protection: 1
-< Connection: Keep-Alive
-< Content-Type: text/html; charset=utf-8
-< Content-Length: 1067
-< Pragma: no-cache
-<
-* Ignore 1067 bytes of response-body
-* Proxy auth using Negotiate with user ''
-* Establishing HTTP proxy tunnel to integration.sbiepay.sbiuat.bank.in:443
-> CONNECT integration.sbiepay.sbiuat.bank.in:443 HTTP/1.1
-> Host: integration.sbiepay.sbiuat.bank.in:443
-> Proxy-Authorization: Negotiate TlRMTVNTUAADAAAAGAAYAIoAAAA6AToBogAAAAgACABYAAAAEAAQAGAAAAAaABoAcAAAABAAEADcAQAANQKI4goA9GUAAAAPhJRXDa+3OITqwcuOvV9aWkMATwBSAFAAVgAxADAAMQA4ADQAMAAwAEcAVABTAEIASQBFAFAAQQBZADAAMQAyADEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAdaUNsgM/sVrYUcQz1ulUfwEBAAAAAAAAg9uRS9FF3QFRKl3TVJxNNwAAAAACAA4ARwBJAFQAQwBEAE8ATQABAB4ASABZAEQAXwBTAFcARwBWAC0AMwBIADIAMgA1AEQABAAMAEEARAAuAFMAQgBJAAMALgBoAHkAZABfAHMAdwBnAHYAbQBfAGQAbwBtAF8AMAAxAC4AYQBkAC4AcwBiAGkACABQAFAAAAAAAAAAAAAAAAAgAABCishPuEkrhy6nd6txvAlIenfMfZDHzlnvIbo1VY76UYyaCiHlmgh6boMWU0oBYTwd1DcB8f6Y42ee+AIYrhsxCgAQAAAAAAAAAAAAAAAAAAAAAAAJACQASABUAFQAUAAvAHMAdwBnAC4AcwBiAGkALgBjAG8ALgBpAG4AAAAAAAAAAAD32wyxQ4q6ODG9QEA0SGUP
-> User-Agent: curl/8.21.0
-> Proxy-Connection: Keep-Alive
->
-< HTTP/1.1 200 Connection established
-<
-* CONNECT phase completed for HTTP proxy
-* CONNECT tunnel established, response 200
-* schannel: disabled automatic use of client certificate
-* ALPN: curl offers http/1.1
-* ALPN: server accepted http/1.1
-* Established connection to swg.sbi.co.in (10.176.187.172 port 9090) from 10.30.64.121 port 53831
-* using HTTP/1.x
-> GET /kms/v1/key/validate/api HTTP/1.1
-> Host: integration.sbiepay.sbiuat.bank.in
-> User-Agent: curl/8.21.0
-> Accept: */*
->
-* Request completely sent off
-* schannel: remote party requests renegotiation
-* schannel: renegotiating SSL/TLS connection
-* schannel: SSL/TLS connection renegotiated
-< HTTP/1.1 404 Not Found
-< Content-Length: 0
-< date: Wed, 16 Sep 2026 11:48:31 GMT
-< Strict-Transport-Security: max-age=31536000
-< Connection: keep-alive
-< Set-Cookie: a92fc5948479da0b3b64d3b41c224e55=11fbbaa2f49d7726f0e6c7c380492122; path=/; HttpOnly; Secure; SameSite=None
-< Set-Cookie: KR0103a2b0=01890e9c1316c911c79d79541c4250ce99005b1889b704ab5e5d5765901ef7bf9c13c4acbbe74665f697c451e4e4021412a3ca1ab6188bb7511b56a590f7f0c152c222c63d; Path=/; Secure; HttpOnly
-<
-* Connection #0 to host integration.sbiepay.sbiuat.bank.in:443 left intact
-------------------------------
-curl -v --cert path\to\client-cert.pem --key path\to\client-key.pem https://integration.sbiepay.sbiuat.bank.in/kms/v1/key/validate/api
-
-
-C:\Users\v1018400>curl -v https://integration.sbiepay.sbiuat.bank.in/kms/v1/key/validate/api
-* Host integration.sbiepay.sbiuat.bank.in:443 was resolved.
-* IPv6: (none)
-* IPv4: 10.189.49.251
-*   Trying 10.189.49.251:443...
-* schannel: disabled automatic use of client certificate
-* ALPN: curl offers http/1.1
-* ALPN: server accepted http/1.1
-* Established connection to integration.sbiepay.sbiuat.bank.in (10.189.49.251 port 443) from 10.30.64.121 port 56417
-* using HTTP/1.x
-> GET /kms/v1/key/validate/api HTTP/1.1
-> Host: integration.sbiepay.sbiuat.bank.in
-> User-Agent: curl/8.21.0
-> Accept: */*
->
-* Request completely sent off
-* schannel: remote party requests renegotiation
-* schannel: renegotiating SSL/TLS connection
-* schannel: SSL/TLS connection renegotiated
-< HTTP/1.1 403 Forbidden
-< Content-Type: text/html
-< Content-Length: 2665
-< Connection: keep-alive
-< Strict-Transport-Security: max-age=31536000
-<
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Access Restricted</title>
-    <style>
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol";
-            background-color: #f0f2f5;
-            color: #333;
-            margin: 0;
-            padding: 0;
-            display: flex;
-            flex-direction: column;
-            justify-content: center;
-            align-items: center;
-            min-height: 100vh;
-            text-align: center;
-        }
-        .header {
-            padding: 20px;
-            width: 100%;
-            text-align: center;
-        }
-        .header img {
-            max-width: 150px; /* Adjust as needed */
-            height: auto;
-            margin-bottom: 20px;
-        }
-        .container {
-            background-color: #fff;
-            padding: 40px;
-            border-radius: 10px;
-            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
-            max-width: 500px;
-            margin: 20px;
-            flex-grow: 1;
-            display: flex;
-            flex-direction: column;
-            justify-content: center;
-            align-items: center;
-        }
-        .icon {
-            font-size: 60px;
-            color: #ff4500;
-            margin-bottom: 20px;
-        }
-        h1 {
-            font-size: 2em;
-            margin-top: 0;
-        }
-        p {
-            font-size: 1.1em;
-            line-height: 1.6;
-        }
-        .contact-info {
-            margin-top: 30px;
-            font-weight: bold;
-        }
-        footer {
-            margin-top: auto;
-            padding: 20px;
-            width: 100%;
-            text-align: center;
-            font-size: 0.9em;
-            color: #666;
-        }
-    </style>
-</head>
-<body>
-    <div class="header">
-        <img src="logo.png" alt="State Bank of India (SBI) Logo">
-    </div>
-    <div class="container">
-        <div class="icon">🔒</div>
-        <h1>Access Restricted</h1>
-        <p>This page is restricted. You don't have the required access.</p>
-        <p class="contact-info">Please contact the administrator for assistance.</p>
-    </div>
-    <footer>
-        <p>&copy; <span id="current-year"></span> State Bank of India (SBIePay). All Rights Reserved.</p>
-    </footer>
-    <script>
-        document.getElementById("current-year").textContent = new Date().getFullYear();
-    </script>
-</body>
-</html>
-* Connection #0 to host integration.sbiepay.sbiuat.bank.in:443 left intact
-
-------------------------------------
-import io.netty.channel.ChannelOption;
-import io.netty.handler.proxy.HttpProxyHandler;
-import reactor.netty.http.client.HttpClient;
-import reactor.netty.transport.ProxyProvider;
-import org.springframework.http.client.reactive.ReactorClientHttpConnector;
-import org.springframework.web.reactive.function.client.WebClient;
-
-import java.net.*;
-import java.util.List;
-
-public class WebClientConfig {
-
-    public static WebClient buildWebClient(String targetUrl) throws Exception {
-        // Ensure JVM reads system-configured proxy (incl. PAC-resolved)
-        System.setProperty("java.net.useSystemProxies", "true");
-
-        ProxySelector selector = ProxySelector.getDefault();
-        List<Proxy> proxies = selector.select(new URI(targetUrl));
-
-        HttpClient httpClient = HttpClient.create();
-
-        for (Proxy proxy : proxies) {
-            if (proxy.type() == Proxy.Type.HTTP) {
-                InetSocketAddress addr = (InetSocketAddress) proxy.address();
-                String proxyHost = addr.getHostString();
-                int proxyPort = addr.getPort();
-
-                System.out.println("Using proxy: " + proxyHost + ":" + proxyPort);
-
-                httpClient = httpClient.proxy(spec -> spec
-                        .type(ProxyProvider.Proxy.HTTP)
-                        .host(proxyHost)
-                        .port(proxyPort));
-                break; // use first matching proxy
-            }
-            // If proxy.type() == Proxy.Type.DIRECT, no proxy needed for this URL
-        }
-
-        return WebClient.builder()
-                .clientConnector(new ReactorClientHttpConnector(httpClient))
-                .build();
-    }
-
-    public static void main(String[] args) throws Exception {
-        String intUrl = "https://your-int-environment-url.com/api/endpoint";
-        WebClient client = buildWebClient(intUrl);
-
-        client.get()
-                .uri(intUrl)
-                .retrieve()
-                .bodyToMono(String.class)
-                .doOnNext(System.out::println)
-                .doOnError(System.err::println)
-                .block();
-    }
-}
-
-
-
-
-
-
-
-
-
-
-protected OnboardingFailedMerchantDto onboardingMerchant(MerchantCurrencyDto merchantCurrencyDto) {
-    log.info("Started onboardingRequest for mId: {}", merchantCurrencyDto.getMId());
-    log.debug("Admin Merchant Info: {}", merchantCurrencyDto);
-    try {
-        // Step 1 : OnboardingRequest validation
-        onboardingValidator.validateMerchantCurrency(merchantCurrencyDto);
-
-        List<MerchantCurrency> existingCurrencies = adminDao.getCurrencyCodeByMId(merchantCurrencyDto.getMId());
-        Map<String, MerchantCurrency> existingByCode = existingCurrencies.stream()
-                .collect(Collectors.toMap(MerchantCurrency::getCurrencyCode, Function.identity()));
-
-        List<CurrencyDto> toInsert = new ArrayList<>();
-        List<MerchantCurrency> toUpdate = new ArrayList<>();
-
-        for (CurrencyDto currencyDto : merchantCurrencyDto.getCurrencyDtos()) {
-            String requestedStatus = Y.equalsIgnoreCase(currencyDto.getIsActive()) ? ACTIVE : INACTIVE;
-            MerchantCurrency existing = existingByCode.get(currencyDto.getCurrencyCode());
-
-            if (existing == null) {
-                toInsert.add(currencyDto);
-            } else if (!existing.getStatus().equalsIgnoreCase(requestedStatus)) {
-                existing.setStatus(requestedStatus);
-                toUpdate.add(existing);
-            }
-            // else: code exists and status already matches -> no-op
-        }
-
-        // Step 3 : Save new + updated Merchant Currency Data in DB
-        adminDao.onboardMerchantCurrency(merchantCurrencyDto.getMId(), toInsert, toUpdate);
-
-        log.info("Merchant Onboarded mId: {}", merchantCurrencyDto.getMId());
-    } catch (ValidationException | MerchantException |
-             DataIntegrityViolationException | OptimisticLockingFailureException | JpaSystemException ex) {
-        log.error("Onboarding/update failed for mId: {}, errors: {}", merchantCurrencyDto.getMId(), ex.toString());
-        try {
-            return OnboardingFailedMerchantDto.builder()
-                    .mId(merchantCurrencyDto.getMId())
-                    .onboardingJson(objectMapper.writeValueAsString(merchantCurrencyDto))
-                    .reason(ex.toString())
-                    .correlationId(MDC.get(EPayAuthenticationConstant.CORRELATION_ID))
-                    .build();
-        } catch (JsonProcessingException e) {
-            log.error("Failed to convert merchantOnboarding in JSON string, error: {}", e.getMessage());
-        }
-    }
-    return null;
-}
-
-
-@Transactional
-public void onboardMerchantCurrency(String mId, List<CurrencyDto> toInsert, List<MerchantCurrency> toUpdate) {
-    log.info("Onboarding request received for mId: {}", mId);
-    if (CollectionUtils.isNotEmpty(toInsert)) {
-        merchantCurrencyDao.saveOnboardingCurrencies(toInsert, mId);
-    }
-    if (CollectionUtils.isNotEmpty(toUpdate)) {
-        merchantCurrencyDao.updateCurrencies(toUpdate);
-    }
-}
-
-
-public List<MerchantCurrency> saveOnboardingCurrencies(List<CurrencyDto> currencyDtos, String mId) {
-    List<MerchantCurrency> entities = currencyDtos.stream()
-            .map(dto -> MerchantCurrency.builder()
-                    .mId(mId)
-                    .currencyCode(dto.getCurrencyCode())
-                    .status(Y.equalsIgnoreCase(dto.getIsActive()) ? ACTIVE : INACTIVE)
-                    .build())
-            .toList();
-    return merchantCurrencyRepository.saveAll(entities);
-}
-
-public List<MerchantCurrency> updateCurrencies(List<MerchantCurrency> merchantCurrencies) {
-    return merchantCurrencyRepository.saveAll(merchantCurrencies);
-}
-
-----------------
-
-
-
-protected OnboardingFailedMerchantDto onboardingMerchant(MerchantCurrencyDto merchantCurrencyDto) {
-        log.info("Started onboardingRequest for mId: {}",merchantCurrencyDto.getMId());
-        log.debug("Admin Merchant Info: {}", merchantCurrencyDto);
-        try {
-            var merchantCurrency = adminDao.getCurrencyCodeByMId(merchantCurrencyDto.getMId());
-
-            if (Objects.isNull(merchantCurrency)) {
-                // Step 1 : OnboardingRequest validation
-                onboardingValidator.validateMerchantCurrency(merchantCurrencyDto);
-                // Step 3 : Save the Merchant and Merchant User Data in DB
-                adminDao.onboardMerchantCurrency(merchantCurrencyDto);
-                // Step 4 : Build MerchantResponse and return to caller
-                log.info("Merchant Onboarded mId: {}", merchantCurrencyDto.getMId());
-            }
-        } catch (ValidationException | MerchantException |
-                 DataIntegrityViolationException | OptimisticLockingFailureException | JpaSystemException ex) {
-            log.error("Onboarding/update failed for mId: {}, errors: {}", merchantCurrencyDto.getMId(), ex.toString());
-            try {
-                return OnboardingFailedMerchantDto.builder()
-                        .mId(merchantCurrencyDto.getMId())
-                        .onboardingJson(objectMapper.writeValueAsString(merchantCurrencyDto))
-                        .reason(ex.toString())
-                        .correlationId(MDC.get(EPayAuthenticationConstant.CORRELATION_ID))
-                        .build();
-            } catch (JsonProcessingException e) {
-                log.error("Failed to convert merchantOnboarding in JSON string, error: {}", e.getMessage());
-            }
-        }
-        return null;
-    }
-
-@Data
-@Builder
-@NoArgsConstructor
-@AllArgsConstructor
-public class MerchantCurrencyDto {
-    @JsonProperty("mId")
-    private String mId;
-    private List<CurrencyDto> currencyDtos;
-}
-
-@Data
-@Builder
-@NoArgsConstructor
-@AllArgsConstructor
-public class CurrencyDto {
-    private String currencyCode;
-    private String isActive;
-}
-
-@Data
-@EqualsAndHashCode(callSuper = true)
-@NoArgsConstructor
-@AllArgsConstructor
-@Builder
-@Entity
-@Table(name = "MERCHANT_CURRENCY_MAPPING")
-public class MerchantCurrency extends AuditEntity {
-    @Id
-    @GeneratedValue(strategy = GenerationType.UUID)
-    private UUID id;
-
-    @Column(name = "MID")
-    private String mId;
-    private String currencyCode;
-    private String status;
-
-}
-
 
 @Component
 @RequiredArgsConstructor
-public class AdminDao {
+public class RefundDao {
 
-    private final LoggerUtility log = LoggerFactoryUtility.getLogger(this.getClass());
-
-    private final MerchantRepository merchantRepository;
-    private final MerchantUserDao merchantUserDao;
-    private final MerchantEntityGroupRepository merchantEntityGroupRepository;
-    private final MerchantMapper mapper;
-    private final FooterRepository footerRepository;
-    private final AdminServicesClient adminServicesClient;
-    private final MerchantEntityUserRepository merchantEntityUserRepository;
-    private final MerchantUserRoleRepository merchantUserRoleRepository;
-    private final MerchantConfigRepository merchantConfigRepository;
-    private final MerchantBankDao merchantBankDao;
-    private final OnboardingFailedMerchantRepository onboardingFailedMerchantRepository;
-    private final MerchantCurrencyDao merchantCurrencyDao;
-  @Transactional
-    public void onboardMerchantCurrency(MerchantCurrencyDto merchantCurrencyDto) {
-        log.info("Onboarding request received");
-        if (ObjectUtils.isNotEmpty(merchantCurrencyDto) && CollectionUtils.isNotEmpty(merchantCurrencyDto.getCurrencyDtos())) {
-            merchantCurrencyDao.saveOnboardingCurrencies(merchantCurrencyDto, merchantCurrencyDto.getMId());
+    private final LoggerUtility logger = LoggerFactoryUtility.getLogger(this.getClass());
+    private final RefundRepository refundRepository;
+    private final RefundMapper refundMapper;
+    private final MerchantOrderPaymentDao merchantOrderPaymentDao;
+    private final BulkRefundRepository bulkRefundRepository;
+    private final BulkRefundDetailsRepository bulkRefundDetailsRepository;
+    private final KmsDao kmsDao;
+    private final ErrorLogDao errorLogDao;
+ public Page<RefundBookingDto> searchRefundBookingRequest(RefundSearchRequest refundSearchRequest, Pageable pageable) {
+        logger.info("Searching refund bookings - Merchant ID: {}", refundSearchRequest.getMId());
+        Specification<RefundBooking> specification = RefundBookingSpecification.searchRefund(refundSearchRequest);
+        Page<RefundBooking> refundBookingPage = refundRepository.findAll(specification, pageable);
+        if (refundBookingPage.getContent().isEmpty()) {
+            throw new TransactionException(TransactionErrorConstants.GENERIC_ERROR_CODE, TransactionErrorConstants.NO_RECORD_FOUND_ERROR_MESSAGE_FOR_MIS);
         }
-    }
-
-    public List<MerchantCurrency> getCurrencyCodeByMId(String mId) {
-        log.info("Fetch all currencyCode associated with mId: {}",mId);
-        return merchantCurrencyDao.getCurrencyCodesByMid(mId);
+        List<String> atrnNumbers = refundBookingPage.getContent().stream()
+                .map(RefundBooking::getAtrnNum)
+                .collect(Collectors.toList());
+        List<MerchantOrderPayment> merchantOrderPaymentList = merchantOrderPaymentDao.findAllByAtrnAndPaymode(atrnNumbers, refundSearchRequest.getPayMode());
+        return refundMapper.mapPageWithPaymentsToDto(refundBookingPage, merchantOrderPaymentList);
     }
 }
 
 
-@Component
-@RequiredArgsConstructor
-public class MerchantCurrencyDao {
-    private final MerchantCurrencyRepository merchantCurrencyRepository;
+@UtilityClass
+public class RefundBookingSpecification {
 
-    public MerchantCurrencyDto saveOnboardingCurrencies(MerchantCurrencyDto merchantCurrencyDto, String mId) {
-        List<MerchantCurrency> entities=  merchantCurrencyDto.getCurrencyDtos().stream().map(dto-> MerchantCurrency.builder().mId(mId).currencyCode(dto.getCurrencyCode()).status(Y.equalsIgnoreCase(dto.getIsActive())? ACTIVE : INACTIVE).build()).toList();
-        List<MerchantCurrency> merchantCurrencyList= merchantCurrencyRepository.saveAll(entities);
-        return MerchantCurrencyDto.builder().mId(mId).currencyDtos(merchantCurrencyList.stream().map(currency -> CurrencyDto.builder().currencyCode(currency.getCurrencyCode()).isActive(currency.getStatus()).build()).collect(Collectors.toList())).build();
+    public static Specification<RefundBooking> searchRefund(RefundSearchRequest refundSearchRequest) {
+
+        return (root, query, criteriaBuilder) -> {
+            assert query != null;
+            query.orderBy(criteriaBuilder.desc(root.get(CREATED_DATE)));
+
+            Predicate predicate = criteriaBuilder.conjunction();
+            predicate = criteriaBuilder.and(predicate, getMidPredicate(root, criteriaBuilder, refundSearchRequest.getMId()));
+
+            if (StringUtils.hasText(refundSearchRequest.getArrnNumber())) {
+                predicate = criteriaBuilder.and(predicate, getArrnPredicate(root, criteriaBuilder, refundSearchRequest.getArrnNumber()));
+            }
+
+            if (StringUtils.hasText(refundSearchRequest.getAtrnNumber())) {
+                predicate = criteriaBuilder.and(predicate, getAtrnPredicate(root, criteriaBuilder, refundSearchRequest.getAtrnNumber()));
+            }
+
+            if (StringUtils.hasText(refundSearchRequest.getSbiOrderRefNumber())) {
+                predicate = criteriaBuilder.and(predicate, getSbiOrderRefNumberPredicate(root, criteriaBuilder, refundSearchRequest.getSbiOrderRefNumber()));
+            }
+
+            if (StringUtils.hasText(refundSearchRequest.getRefundStatus())) {
+                predicate = criteriaBuilder.and(predicate, getRefundStatusPredicate(root, criteriaBuilder, refundSearchRequest.getRefundStatus()));
+            }
+
+            if (StringUtils.hasText(refundSearchRequest.getRefundType())) {
+                predicate = criteriaBuilder.and(predicate, getRefundTypePredicate(root, criteriaBuilder, refundSearchRequest.getRefundType()));
+            }
+
+            if (ObjectUtils.isNotEmpty(refundSearchRequest.getFrom())) {
+                predicate = criteriaBuilder.and(predicate, getFromDatePredicate(root, criteriaBuilder, refundSearchRequest.getFrom()));
+            }
+
+            if (ObjectUtils.isNotEmpty(refundSearchRequest.getTo())) {
+                predicate = criteriaBuilder.and(predicate, getToDatePredicate(root, criteriaBuilder, refundSearchRequest.getTo()));
+            }
+
+            return predicate;
+        };
     }
 
-    /**
-     * @param mId String
-     * @param currencyCode String
-     * @return boolean
-     */
-    public boolean isCurrencyCodeAvailable(String mId, String currencyCode){
-        return merchantCurrencyRepository.existsByMIdAndCurrencyCode(mId, currencyCode);
+    private static Predicate getMidPredicate(Root<RefundBooking> root, CriteriaBuilder criteriaBuilder, String mId) {
+        return criteriaBuilder.equal(root.get("mId"), mId);
     }
 
-    public List<MerchantCurrency> getCurrencyCodesByMid(String mId){
-        return merchantCurrencyRepository.findByMId(mId);
+    private static Predicate getArrnPredicate(Root<RefundBooking> root, CriteriaBuilder criteriaBuilder, String arrnNumber) {
+        return criteriaBuilder.like(criteriaBuilder.lower(root.get("arrnNum")), "%" + arrnNumber.toLowerCase() + "%");
+    }
+
+    private static Predicate getAtrnPredicate(Root<RefundBooking> root, CriteriaBuilder criteriaBuilder, String atrnNumber) {
+        return criteriaBuilder.like(criteriaBuilder.lower(root.get("atrnNum")), "%" + atrnNumber.toLowerCase() + "%");
+    }
+
+    private static Predicate getSbiOrderRefNumberPredicate(Root<RefundBooking> root, CriteriaBuilder criteriaBuilder, String sbiOrderRefNumber) {
+        return criteriaBuilder.like(criteriaBuilder.lower(root.get("sbiOrderRefNumber")), "%" + sbiOrderRefNumber.toLowerCase() + "%");
+    }
+
+    private static Predicate getRefundTypePredicate(Root<RefundBooking> root, CriteriaBuilder criteriaBuilder, String refundType) {
+        return criteriaBuilder.like(criteriaBuilder.lower(root.get("refundType")), "%" + refundType.toLowerCase() + "%");
+    }
+
+    private static Predicate getRefundStatusPredicate(Root<RefundBooking> root, CriteriaBuilder criteriaBuilder, String refundStatus) {
+        return criteriaBuilder.like(criteriaBuilder.lower(root.get("refundStatus")), "%" + refundStatus.toLowerCase() + "%");
+    }
+
+    private static Predicate getFromDatePredicate(Root<RefundBooking> root, CriteriaBuilder criteriaBuilder, Long fromDate) {
+        return criteriaBuilder.greaterThanOrEqualTo(root.get("createdDate"), fromDate);
+    }
+
+    private static Predicate getToDatePredicate(Root<RefundBooking> root, CriteriaBuilder criteriaBuilder, Long toDate) {
+        return criteriaBuilder.lessThanOrEqualTo(root.get("createdDate"), toDate);
     }
 
 }
 
 @Repository
-public interface MerchantCurrencyRepository extends JpaRepository<MerchantCurrency, UUID> {
+public interface RefundRepository extends JpaRepository<RefundBooking, UUID> {
 
-    boolean existsByMIdAndCurrencyCode(String mId, String currencyCode);
+    /**
+     * Retrieves a paginated list of RefundBooking entities that match the given specification.
+     *
+     * @param specification The criteria for filtering refund bookings.
+     * @param pageable      Pagination details for retrieving data in pages.
+     * @return A Page containing the filtered RefundBooking entities.
+     */
+    Page<RefundBooking> findAll(Specification<RefundBooking> specification, Pageable pageable);
+}
 
-    List<MerchantCurrency> findByMId(@Param("mId") String mId);
+ */
+@EqualsAndHashCode(callSuper = true)
+@Getter
+@Setter
+@SuperBuilder
+@NoArgsConstructor
+@AllArgsConstructor
+@Entity
+@Table(name = "REFUND_BOOKING")
+public class RefundBooking extends AuditEntity {
+
+    @Id
+    @GeneratedValue(strategy = GenerationType.UUID)
+    private UUID id;
+    @Column(name = "MERCHANT_ID")
+    private String mId;
+    private String sbiOrderRefNumber;
+    private String arrnNum;
+    private String atrnNum;
+    private BigDecimal refundAmount;
+    private String refundType;
+    private String refundStatus;
+    private String remark;
+    private String refundAdjusted;
+    private UUID payoutId;
+    private Integer refundRetry;
+    private Long refundAdjustedDate;
+    private Long refundProcessedDate;
+
+    /**
+     * custom generator, do not remove it
+     */
+    @PrePersist
+    protected void generatedARRN() {
+        this.arrnNum = TransactionUtil.createArrnNumber(mId, atrnNum.substring(0,2));
+    }
+
 
 }
+
+
+@Data
+@EqualsAndHashCode(callSuper = true)
+@Entity
+@Table(name = "MERCHANT_ORDER_PAYMENTS")
+public class MerchantOrderPayment extends AuditEntity {
+
+    @Id
+    @Column(name = "ATRN_NUM", nullable = false, updatable = false, unique = true)
+    private String atrnNumber;
+    @Column(name = "MERCHANT_ID")
+    private String mId;
+    private String orderRefNumber;
+    private String sbiOrderRefNumber;
+    private String bankReferenceNumber;
+    private String oldBankReferenceNumber;
+
+    private String currencyCode;
+    private BigDecimal orderAmount;
+    @Column(name = "DEBIT_AMT")
+    private BigDecimal debitAmount;
+    private BigDecimal availableRefundAmount;
+    private BigDecimal chargebackAmount;
+
+    private String gstIn;
+    private String channelBank;
+    @Enumerated(EnumType.STRING)
+    private PayMode payMode;
+    @Column(name = "GTW_MAP_ID")
+    private String pgBankCode;//this is gateway map id
+    private String payProcId; //this is pay proc id e.g. Visa, Master, Rupay
+    @Column(name = "PAY_PROC_TYPE")
+    private String paymodeType; //this is Pay proc type e.g. onus, offus
+    @Column(name = "GTW_ISSUE_MECODE")
+    private String gatewayIssueMECode; //merchant wise and/or payment wise ME code received from bank
+    private String cin;
+
+    @Enumerated(EnumType.STRING)
+    private PaymentStatus paymentStatus;
+    @Enumerated(EnumType.STRING)
+    private TransactionStatus transactionStatus;
+    @Enumerated(EnumType.STRING)
+    private SettlementStatus settlementStatus;
+    @Enumerated(EnumType.STRING)
+    private TransactionRefundStatus refundStatus;
+    @Enumerated(EnumType.STRING)
+    private CancellationStatus cancellationStatus;
+    private String chargebackStatus;
+
+    @Lob
+    private String pushResponse;
+    private Date paymentSuccessDate;
+    private String failReason;
+    private String pushStatus;
+
+    private UUID rfId;
+    private Long settlementTime;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "sbiOrderRefNumber", insertable = false, updatable = false)
+    private Order order;
+
+    /**
+     * Generate ATRN number dynamically for transaction.
+     */
+    @PrePersist
+    protected void generatedATRN() {
+        this.atrnNumber = TransactionUtil.createAtrnNumber(mId, payMode);
+    }
+
+}
+
+
+
+@Mapper(builder = @Builder(disableBuilder = true), componentModel = "spring", imports = DateTimeUtils.class)
+public interface RefundMapper {
+
+    /**
+     * Map refund booking dto to refund details response
+     *
+     * @param refundBookingDto RefundBookingDto
+     * @return RefundDetailResponse
+     */
+    @Mapping(source = "createdDate", target = "requestTime")
+    RefundResponse dtoToResponse(RefundBookingDto refundBookingDto);
+
+    /**
+     * Map list of refund booking dto to list refund details response
+     *
+     * @param refundBookingDtoList List<RefundBookingDto>
+     * @return List<RefundDetailResponse>
+     */
+    List<RefundResponse> dtoToResponse(List<RefundBookingDto> refundBookingDtoList);
+
+    /**
+     * Map refund booking dto to refund booking entity
+     *
+     * @param refundBookingDto RefundBookingDto
+     * @return RefundBooking
+     */
+    @Mapping(target = "id", ignore = true)
+    @Mapping(source = "arrnNumber", target = "arrnNum")
+    @Mapping(source = "atrnNumber", target = "atrnNum")
+    RefundBooking dtoToEntity(RefundBookingDto refundBookingDto);
+
+    /**
+     * Map refund booking entity to refund booking dto
+     *
+     * @param refundBooking RefundBooking
+     * @return RefundBookingDto
+     */
+    @Mapping(source = "arrnNum", target = "arrnNumber")
+    @Mapping(source = "atrnNum", target = "atrnNumber")
+    RefundBookingDto entityToDto(RefundBooking refundBooking);
+
+    /**
+     * Map pageable of refund booking entity to pageable of refund booking dto
+     *
+     * @param refundBookingPage merchantOrderPaymentList Page<RefundBooking> List<MerchantOrderPayment>
+     * @return Page<RefundBookingDto>
+     */
+    default Page<RefundBookingDto> mapPageWithPaymentsToDto(Page<RefundBooking> refundBookingPage,
+                                                            List<MerchantOrderPayment> payments) {
+
+        List<RefundBookingDto> refundBookingDtoList = getRfundBookingDtoList(refundBookingPage.getContent(), payments);
+
+        return new PageImpl<>(refundBookingDtoList, refundBookingPage.getPageable(), refundBookingDtoList.size());
+    }
+
+    default List<RefundBookingDto> getRfundBookingDtoList(List<RefundBooking> refundBookingPage,
+                                                          List<MerchantOrderPayment> payments) {
+        Map<String, MerchantOrderPayment> paymentDetailsMap = payments.stream()
+                .collect(Collectors.toMap(MerchantOrderPayment::getAtrnNumber, Function.identity()));
+
+        return refundBookingPage.stream()
+                .filter(RefundBooking -> paymentDetailsMap.containsKey(RefundBooking.getAtrnNum()))
+                .map(RefundBooking -> {
+                    RefundBookingDto refundBookingDto = entityToDto(RefundBooking);
+                    refundBookingDto.setPayMode(paymentDetailsMap.get(RefundBooking.getAtrnNum()).getPayMode());
+                    refundBookingDto.setTransactionDate(paymentDetailsMap.get(RefundBooking.getAtrnNum()).getCreatedDate());
+                    return refundBookingDto;
+                })
+                .toList();
+    }
