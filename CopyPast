@@ -1,27 +1,165 @@
- @PostMapping("merchant/search/{currencyCode}")
-    @Operation(summary = "Refund details search API for merchant panel", description = "This API is used to search the refund details for a particular search request used by merchant")
-    @PreAuthorize("hasAnyRole('ADMIN','SUPER_ADMIN','USER')")
-    public TransactionResponse<RefundResponse> searchRefundBooking(@Valid @RequestBody RefundSearchRequest refundSearchRequest,@PathVariable String currencyCode, @PageableDefault(size = TransactionConstant.DEFAULT_MAX_PAGE_SIZE) Pageable pageable) {
-        logger.info("Search refund request received in controller for refundDetailRequest: {}", refundSearchRequest);
-        return refundService.getRefundBookingSearchResponse(refundSearchRequest,currencyCode, pageable);
+@ExtendWith(MockitoExtension.class)
+class RefundDaoTest {
+
+    @InjectMocks
+    private RefundDao refundDao;
+    @Mock
+    private RefundMapper refundMapper;
+    @Mock
+    private RefundRepository refundRepository;
+    @Mock
+    private MerchantOrderPaymentDao merchantOrderPaymentDao;
+
+    private RefundBookingDto refundBookingDto;
+    private MerchantPaymentOrderDto merchantPaymentOrderDto;
+    private RefundBooking refundBooking;
+    private RefundResponse refundResponse;
+    private RefundSearchRequest refundSearchRequest;
+    private BulkRefundBooking bulkRefundBooking;
+    private BulkRefundBookingDetails bulkRefundBookingDetails;
+    private ReconDataDetailsDto reconDataDto;
+    @Mock
+    private Pageable pageable;
+    @Mock
+    private BulkRefundRepository bulkRefundRepository;
+    @Mock
+    private BulkRefundDetailsRepository bulkRefundDetailsRepository;
+    @Mock
+    private KmsDao kmsDao;
+    @Mock
+    private ErrorLogDao errorLogDao;
+   @BeforeEach
+    void setUp() {
+        refundBookingDto = new RefundBookingDto();
+        refundBookingDto.setRefundAmount(new BigDecimal("1000"));
+        merchantPaymentOrderDto = new MerchantPaymentOrderDto();
+        merchantPaymentOrderDto.setAvailableRefundAmount(new BigDecimal("12000"));
+        refundBooking = new RefundBooking();
+        refundResponse = RefundResponse.builder().build();
+        refundSearchRequest = new RefundSearchRequest();
+        bulkRefundBooking = new BulkRefundBooking();
+        bulkRefundBookingDetails = new BulkRefundBookingDetails();
+        reconDataDto = new ReconDataDetailsDto();
+
     }
 
-public TransactionResponse<RefundResponse> getRefundBookingSearchResponse(RefundSearchRequest refundSearchRequest,String currencyCode, Pageable pageable){
-        Page<RefundBookingDto> refundBookingDtoPage =  searchRefundBookings(refundSearchRequest, pageable);
-        return TransactionResponse.<RefundResponse>builder().data(refundMapper.dtoToResponse(refundBookingDtoPage.getContent())).status(TransactionConstant.RESPONSE_SUCCESS).total(refundBookingDtoPage.getTotalElements()).count((long) refundBookingDtoPage.getContent().size()).build();
+    @Test
+    void saveRefundBooking() {
+        when(refundMapper.dtoToEntity(refundBookingDto)).thenReturn(refundBooking);
+        when(refundRepository.save(refundBooking)).thenReturn(refundBooking);
+        when(refundMapper.entityToDto(refundBooking)).thenReturn(refundBookingDto);
+        when(merchantOrderPaymentDao.save(merchantPaymentOrderDto)).thenReturn(merchantPaymentOrderDto);
+        when(refundDao.updateMerchantPayment(refundBookingDto, merchantPaymentOrderDto)).thenReturn(merchantPaymentOrderDto);
+        when(refundMapper.mapToRefundResponse(refundBookingDto, merchantPaymentOrderDto)).thenReturn(refundResponse);
+        RefundResponse refundResponse = refundDao.saveRefundBooking(refundBookingDto, merchantPaymentOrderDto);
+        assertNotNull(refundResponse);
+
     }
 
- public Page<RefundBookingDto> searchRefundBookings(RefundSearchRequest refundSearchRequest, Pageable pageable) {
-
-        logger.info("Get refund request received for refundDetailRequest: {}", refundSearchRequest);
-
-        //Step-1: Validate refund search request
-        refundValidator.validateRefundSearchRequest(refundSearchRequest);
-
-        //Step-2: Search refund request in db for requested parameters
-        return refundDao.searchRefundBookingRequest(refundSearchRequest, pageable);
+    @Test
+    void findByAtrnNumber() {
+        String mId = "MID";
+        String atrnNo = "ATRN";
+        when(merchantOrderPaymentDao.findByAtrnNumber(anyString(), anyString())).thenReturn(merchantPaymentOrderDto);
+        MerchantPaymentOrderDto result = refundDao.findByAtrnNumber(mId, atrnNo);
+        assertNotNull(result);
     }
 
+
+@Test
+    void searchRefundBookingRequest() {
+
+        RefundSearchRequest request = new RefundSearchRequest();
+        request.setMId("MID123");
+        request.setPayMode(null);  // optional
+        Pageable pageable = PageRequest.of(0, 10);
+
+        RefundBooking booking = new RefundBooking();
+        booking.setAtrnNum("ATRN123");
+
+        Page<RefundBooking> refundBookingPage =
+                new PageImpl<>(List.of(booking), pageable, 1);
+
+        when(refundRepository.findAll(any(Specification.class), eq(pageable)))
+                .thenReturn(refundBookingPage);
+
+        MerchantOrderPayment payment = new MerchantOrderPayment();
+        payment.setAtrnNumber("ATRN123");
+
+        List<MerchantOrderPayment> paymentList = List.of(payment);
+
+        when(merchantOrderPaymentDao.findAllByAtrnAndPaymodeAndCurrencyCode(
+                anyList(),anyString(),
+                nullable(String.class)
+        )).thenReturn(paymentList);
+
+        Page<RefundBookingDto> dtoPage = new PageImpl<>(List.of(new RefundBookingDto()));
+
+       lenient(). when(refundMapper.mapPageWithPaymentsToDto(refundBookingPage, paymentList))
+                .thenReturn(dtoPage);
+
+        Page<RefundBookingDto> result =
+                refundDao.searchRefundBookingRequest(request,"INR", pageable);
+        assertNotNull(result);
+        assertEquals(1, result.getTotalElements());
+
+        // Verify interactions
+        verify(refundRepository).findAll(any(Specification.class), eq(pageable));
+        verify(merchantOrderPaymentDao).findAllByAtrnAndPaymodeAndCurrencyCode(anyList(),anyString(), nullable(String.class));
+        verify(refundMapper).mapPageWithPaymentsToDto(refundBookingPage, paymentList);
+    }
+}
+----------------------------------------
+package com.epay.transaction.dao;
+
+import com.epay.transaction.dto.*;
+import com.epay.transaction.entity.BulkRefundBooking;
+import com.epay.transaction.entity.BulkRefundBookingDetails;
+import com.epay.transaction.entity.MerchantOrderPayment;
+import com.epay.transaction.entity.RefundBooking;
+import com.epay.transaction.exceptions.TransactionException;
+import com.epay.transaction.exceptions.ValidationException;
+import com.epay.transaction.mapper.RefundMapper;
+import com.epay.transaction.model.request.RefundSearchRequest;
+import com.epay.transaction.model.response.RefundResponse;
+import com.epay.transaction.repository.BulkRefundDetailsRepository;
+import com.epay.transaction.repository.BulkRefundRepository;
+import com.epay.transaction.repository.RefundRepository;
+import com.epay.transaction.specification.RefundBookingSpecification;
+import com.epay.transaction.util.EPayIdentityUtil;
+import com.epay.transaction.util.TransactionErrorConstants;
+import com.epay.transaction.util.TransactionUtil;
+import com.epay.transaction.util.enums.*;
+import com.sbi.epay.logging.utility.LoggerFactoryUtility;
+import com.sbi.epay.logging.utility.LoggerUtility;
+import jakarta.transaction.Transactional;
+import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.jpa.domain.Specification;
+import org.springframework.stereotype.Component;
+
+import java.math.BigDecimal;
+import java.text.MessageFormat;
+import java.util.List;
+import java.util.UUID;
+import java.util.stream.Collectors;
+
+import static com.epay.transaction.util.TransactionErrorConstants.*;
+
+
+/**
+ * Class Name:RefundDao
+ * *
+ * Description:
+ * *
+ * Author:NIRMAL GURJAR
+ * <p>
+ * Copyright (c) 2025 [State Bank of India]
+ * All right reserved
+ * *
+ * Version:1.0
+ */
 @Component
 @RequiredArgsConstructor
 public class RefundDao {
@@ -34,7 +172,63 @@ public class RefundDao {
     private final BulkRefundDetailsRepository bulkRefundDetailsRepository;
     private final KmsDao kmsDao;
     private final ErrorLogDao errorLogDao;
- public Page<RefundBookingDto> searchRefundBookingRequest(RefundSearchRequest refundSearchRequest, Pageable pageable) {
+
+    /**
+     * Saves a new refund booking record and updates the corresponding merchant payment order.
+     *
+     * @param refundBookingDto        DTO containing refund booking details
+     * @param merchantPaymentOrderDto DTO containing merchant payment order details
+     * @return {@link RefundResponse} containing the saved refund and updated merchant order details
+     */
+    @Transactional
+    public RefundResponse saveRefundBooking(RefundBookingDto refundBookingDto, MerchantPaymentOrderDto merchantPaymentOrderDto) {
+
+        logger.info("Saving refund booking - ARRN: {}", refundBookingDto.getArrnNumber());
+        RefundBooking refundBooking = refundRepository.save(refundMapper.dtoToEntity(refundBookingDto));
+        refundBookingDto = refundMapper.entityToDto(refundBooking);
+
+        logger.info("Updating merchant payment order after refund - ARRN: {}", refundBookingDto.getArrnNumber());
+        merchantPaymentOrderDto = updateMerchantPayment(refundBookingDto, merchantPaymentOrderDto);
+
+        return refundMapper.mapToRefundResponse(refundBookingDto, merchantPaymentOrderDto);
+    }
+
+
+    /**
+     * Updates the merchant payment order based on the refund booking details.
+     *
+     * @param refundBookingDto        DTO containing refund booking details
+     * @param merchantPaymentOrderDto DTO containing merchant payment order details
+     * @return {@link MerchantPaymentOrderDto} updated merchant payment order details
+     */
+    public MerchantPaymentOrderDto updateMerchantPayment(RefundBookingDto refundBookingDto, MerchantPaymentOrderDto merchantPaymentOrderDto) {
+        logger.info("Updating merchant payment - ARRN: {}", refundBookingDto.getArrnNumber());
+        merchantPaymentOrderDto.setAvailableRefundAmount(merchantPaymentOrderDto.getAvailableRefundAmount().subtract(refundBookingDto.getRefundAmount()));
+        merchantPaymentOrderDto.setRefundStatus(merchantPaymentOrderDto.getAvailableRefundAmount().compareTo(BigDecimal.ZERO) > 0 ? TransactionRefundStatus.PARTIAL_REFUND_BOOKED : TransactionRefundStatus.FULL_REFUND_BOOKED);
+        return merchantOrderPaymentDao.save(merchantPaymentOrderDto);
+    }
+
+    /**
+     * Retrieves a merchant payment order by ATRN number.
+     *
+     * @param atrnNumber The ATRN number of the merchant payment order
+     * @return {@link MerchantPaymentOrderDto} containing payment order details
+     */
+
+    public MerchantPaymentOrderDto findByAtrnNumber(String mId, String atrnNumber) {
+        logger.info("Fetching merchant payment order - ATRN: {}", atrnNumber);
+        return merchantOrderPaymentDao.findByAtrnNumber(mId, atrnNumber);
+    }
+
+
+    /**
+     * Searches for refund bookings based on the provided search criteria.
+     *
+     * @param refundSearchRequest The search request containing filter parameters
+     * @param pageable            Pagination details
+     * @return {@link Page} of {@link RefundBookingDto} containing search results
+     */
+    public Page<RefundBookingDto> searchRefundBookingRequest(RefundSearchRequest refundSearchRequest,String currencyCode, Pageable pageable) {
         logger.info("Searching refund bookings - Merchant ID: {}", refundSearchRequest.getMId());
         Specification<RefundBooking> specification = RefundBookingSpecification.searchRefund(refundSearchRequest);
         Page<RefundBooking> refundBookingPage = refundRepository.findAll(specification, pageable);
@@ -44,284 +238,137 @@ public class RefundDao {
         List<String> atrnNumbers = refundBookingPage.getContent().stream()
                 .map(RefundBooking::getAtrnNum)
                 .collect(Collectors.toList());
-        List<MerchantOrderPayment> merchantOrderPaymentList = merchantOrderPaymentDao.findAllByAtrnAndPaymode(atrnNumbers, refundSearchRequest.getPayMode());
+        List<MerchantOrderPayment> merchantOrderPaymentList = merchantOrderPaymentDao.findAllByAtrnAndPaymodeAndCurrencyCode(atrnNumbers,currencyCode, refundSearchRequest.getPayMode());
         return refundMapper.mapPageWithPaymentsToDto(refundBookingPage, merchantOrderPaymentList);
     }
+
+    /**
+     * Get bulk refund details for requested parameters
+     *
+     * @return Page<BulkRefundBookingDto>
+     */
+    public Page<BulkRefundBookingDto> getBulkRefundBooking(String mId, Pageable pageable) {
+        logger.info("inside searchBulkRefundBooking for mId: {}", mId);
+        Page<BulkRefundBooking> bulkRefundBookingPage = bulkRefundRepository.findByMerchantId(mId, pageable);
+        return bulkRefundBookingPage.map(refundMapper::mapEntityToDto);
+    }
+
+
+    public BulkRefundBooking saveBulkRefundBooking(BulkRefundBooking bulkRefundBooking) {
+        return bulkRefundRepository.save(bulkRefundBooking);
+    }
+
+    public void saveBulkRefundBookingDetails(BulkRefundBookingDetails bulkRefundBookingDetails) {
+        bulkRefundDetailsRepository.save(bulkRefundBookingDetails);
+    }
+
+    /**
+     * Get bulk refund details for requested parameters
+     *
+     * @return List<BulkRefundBookingDetails>
+     */
+    public List<BulkRefundBookingDetails> getBulkRefundByBulkIdAndRefundStatus(String bulkId, String refundStatus) {
+        List<BulkRefundBookingDetails> bulkRefundBookingDetailsList = BulkRefundRowStatus.ALL.name().equals(refundStatus) ? bulkRefundDetailsRepository.findByBulkId(bulkId) : bulkRefundDetailsRepository.findByBulkIdAndRefundStatus(bulkId, refundStatus);
+
+        if (bulkRefundBookingDetailsList == null || bulkRefundBookingDetailsList.isEmpty()) {
+            {
+                errorLogDao.logCustomerError(EPayIdentityUtil.getUserPrincipal().getMId(), EntityType.REFUND, null, null, null, null, NOT_FOUND_ERROR_CODE, MessageFormat.format(NOT_FOUND_ERROR_MESSAGE, "Data"));
+                throw new TransactionException(NOT_FOUND_ERROR_CODE, MessageFormat.format(NOT_FOUND_ERROR_MESSAGE, "Data"));
+            }
+        }
+        return bulkRefundBookingDetailsList;
+    }
+
+    /**
+     * Get bulk refund details for requested parameters
+     *
+     * @return BulkRefundBookingDetails
+     */
+    public BulkRefundBookingDetails saveBulkRefundBookingDetailsForRow(BulkRefundBookingDetails bulkRefundBookingDetails) {
+        return bulkRefundDetailsRepository.save(bulkRefundBookingDetails);
+    }
+
+    public BulkRefundBookingDetails findBulkRefundBookingDetailsById(UUID detailsId) {
+        return bulkRefundDetailsRepository.findById(detailsId).orElseThrow(() -> new ValidationException(NOT_FOUND_ERROR_CODE, MessageFormat.format(NOT_FOUND_ERROR_MESSAGE, REFUND_BOOKING_DETAIL)));
+    }
+
+    public BulkRefundBooking findByBulkId(String bulkId) {
+        return bulkRefundRepository.findByBulkId(bulkId);
+    }
+
+
+    public Object[] getProcessedAndFailedCounts(String bulkId) {
+        return bulkRefundDetailsRepository.getProcessedAndFailedCounts(bulkId);
+    }
+
+    /**
+     * Method name : getMerchantMek
+     * Description : Fetches MEK from Key management Service
+     *
+     * @return a String
+     */
+    public String getMerchantMek() {
+        return kmsDao.getMerchantMekKey();
+    }
+
+    /**
+     * Searches for refund bookings based on the provided search criteria.
+     *
+     * @param refundSearchRequest The search request containing filter parameters
+     */
+    public List<RefundBookingDto> downloadRefundBookingRequest(RefundSearchRequest refundSearchRequest, String currencyCode) {
+        logger.info("Searching refund bookings - Merchant ID: {}", refundSearchRequest.getMId());
+        Specification<RefundBooking> specification = RefundBookingSpecification.searchRefund(refundSearchRequest);
+        List<RefundBooking> refundBookings = refundRepository.findAll(specification);
+
+        List<String> atrnNumbers = refundBookings.stream()
+                .map(RefundBooking::getAtrnNum)
+                .collect(Collectors.toList());
+        List<MerchantOrderPayment> merchantOrderPaymentList = merchantOrderPaymentDao.findAllByAtrnAndPaymodeAndCurrencyCode(atrnNumbers,currencyCode, refundSearchRequest.getPayMode());
+
+        return refundMapper.entityToDto(refundBookings, merchantOrderPaymentList);
+    }
+
+
+    public void saveDvpRefundBooking(MerchantPaymentOrderDto merchantPaymentOrderDto,ReconDataDetailsDto reconDataDetailsDto) {
+        refundRepository.save(buildDvpRefundBooking(merchantPaymentOrderDto,reconDataDetailsDto));
+    }
+
+
+    private RefundBooking buildDvpRefundBooking(MerchantPaymentOrderDto m, ReconDataDetailsDto reconDataDetailsDto) {
+        return RefundBooking.builder().mId(m.getMId()).sbiOrderRefNumber(m.getSbiOrderRefNumber()).atrnNum(m.getAtrnNumber()).arrnNum(TransactionUtil.createArrnNumber(m.getMId(), m.getAtrnNumber().substring(0, 2))).refundAmount(reconDataDetailsDto.getTransactionAmount()).refundType(RefundType.FULL.name()).refundStatus(RefundStatus.CANCELLATION_BOOKED.name()).remark("DVP Refund Booking").refundAdjusted("Y").refundRetry(3).build();
+    }
+
+    public void saveDuplicateRefundBooking(MerchantPaymentOrderDto merchantPaymentOrderDto) {
+        refundRepository.save(buildDuplicateRefundBooking(merchantPaymentOrderDto));
+    }
+
+
+    private RefundBooking buildDuplicateRefundBooking(MerchantPaymentOrderDto m) {
+        return RefundBooking.builder().mId(m.getMId()).sbiOrderRefNumber(m.getSbiOrderRefNumber()).atrnNum(m.getAtrnNumber()).arrnNum(TransactionUtil.createArrnNumber(m.getMId(), m.getAtrnNumber().substring(0, 2))).refundAmount(m.getDebitAmount()).refundType(RefundType.FULL.name()).refundStatus(RefundStatus.CANCELLATION_BOOKED.name()).remark("Duplicate Atrn Refund Booking").refundAdjusted("Y").refundRetry(3).build();
+    }
+
+    public void saveUnmatchedRefundBooking(MerchantPaymentOrderDto merchantPaymentOrderDto, ReconDataDetailsDto reconDataDetailsDto) {
+        refundRepository.save(buildUnmatchedRefundBooking(merchantPaymentOrderDto,reconDataDetailsDto));
+    }
+
+    private RefundBooking buildUnmatchedRefundBooking(MerchantPaymentOrderDto m,ReconDataDetailsDto reconDataDetailsDto) {
+        return RefundBooking.builder().mId(m.getMId()).sbiOrderRefNumber(m.getSbiOrderRefNumber()).atrnNum(m.getAtrnNumber()).arrnNum(TransactionUtil.createArrnNumber(m.getMId(), m.getAtrnNumber().substring(0, 2))).refundAmount(reconDataDetailsDto.getTransactionAmount()).refundType(RefundType.FULL.name()).refundStatus(RefundStatus.CANCELLATION_BOOKED.name()).remark("Transaction Amount Mismatch Refund Booking").refundAdjusted("Y").refundRetry(3).build();
+    }
+    /**
+     * updating refund adjust status by ATRN number.
+     *
+     * @param arrns The ARRN number of refund booking
+     * @return void
+     */
+
+    public void updateRefundAdjustStatus(UUID payoutId, List<String> arrns, Long adjustedTime) {
+        logger.info("updating refund adjusted for - ARRN: {}", arrns.toArray());
+        refundRepository.updateRefundAdjustStatus(payoutId, arrns, adjustedTime);
+    }
+
+    public BigDecimal sumPendingRefunds(String mId){
+        logger.info("Entering sumPendingRefunds for merchant {} ", mId);
+        return refundRepository.sumPendingRefunds(mId);
+    }
 }
-
-
-@UtilityClass
-public class RefundBookingSpecification {
-
-    public static Specification<RefundBooking> searchRefund(RefundSearchRequest refundSearchRequest) {
-
-        return (root, query, criteriaBuilder) -> {
-            assert query != null;
-            query.orderBy(criteriaBuilder.desc(root.get(CREATED_DATE)));
-
-            Predicate predicate = criteriaBuilder.conjunction();
-            predicate = criteriaBuilder.and(predicate, getMidPredicate(root, criteriaBuilder, refundSearchRequest.getMId()));
-
-            if (StringUtils.hasText(refundSearchRequest.getArrnNumber())) {
-                predicate = criteriaBuilder.and(predicate, getArrnPredicate(root, criteriaBuilder, refundSearchRequest.getArrnNumber()));
-            }
-
-            if (StringUtils.hasText(refundSearchRequest.getAtrnNumber())) {
-                predicate = criteriaBuilder.and(predicate, getAtrnPredicate(root, criteriaBuilder, refundSearchRequest.getAtrnNumber()));
-            }
-
-            if (StringUtils.hasText(refundSearchRequest.getSbiOrderRefNumber())) {
-                predicate = criteriaBuilder.and(predicate, getSbiOrderRefNumberPredicate(root, criteriaBuilder, refundSearchRequest.getSbiOrderRefNumber()));
-            }
-
-            if (StringUtils.hasText(refundSearchRequest.getRefundStatus())) {
-                predicate = criteriaBuilder.and(predicate, getRefundStatusPredicate(root, criteriaBuilder, refundSearchRequest.getRefundStatus()));
-            }
-
-            if (StringUtils.hasText(refundSearchRequest.getRefundType())) {
-                predicate = criteriaBuilder.and(predicate, getRefundTypePredicate(root, criteriaBuilder, refundSearchRequest.getRefundType()));
-            }
-
-            if (ObjectUtils.isNotEmpty(refundSearchRequest.getFrom())) {
-                predicate = criteriaBuilder.and(predicate, getFromDatePredicate(root, criteriaBuilder, refundSearchRequest.getFrom()));
-            }
-
-            if (ObjectUtils.isNotEmpty(refundSearchRequest.getTo())) {
-                predicate = criteriaBuilder.and(predicate, getToDatePredicate(root, criteriaBuilder, refundSearchRequest.getTo()));
-            }
-
-            return predicate;
-        };
-    }
-
-    private static Predicate getMidPredicate(Root<RefundBooking> root, CriteriaBuilder criteriaBuilder, String mId) {
-        return criteriaBuilder.equal(root.get("mId"), mId);
-    }
-
-    private static Predicate getArrnPredicate(Root<RefundBooking> root, CriteriaBuilder criteriaBuilder, String arrnNumber) {
-        return criteriaBuilder.like(criteriaBuilder.lower(root.get("arrnNum")), "%" + arrnNumber.toLowerCase() + "%");
-    }
-
-    private static Predicate getAtrnPredicate(Root<RefundBooking> root, CriteriaBuilder criteriaBuilder, String atrnNumber) {
-        return criteriaBuilder.like(criteriaBuilder.lower(root.get("atrnNum")), "%" + atrnNumber.toLowerCase() + "%");
-    }
-
-    private static Predicate getSbiOrderRefNumberPredicate(Root<RefundBooking> root, CriteriaBuilder criteriaBuilder, String sbiOrderRefNumber) {
-        return criteriaBuilder.like(criteriaBuilder.lower(root.get("sbiOrderRefNumber")), "%" + sbiOrderRefNumber.toLowerCase() + "%");
-    }
-
-    private static Predicate getRefundTypePredicate(Root<RefundBooking> root, CriteriaBuilder criteriaBuilder, String refundType) {
-        return criteriaBuilder.like(criteriaBuilder.lower(root.get("refundType")), "%" + refundType.toLowerCase() + "%");
-    }
-
-    private static Predicate getRefundStatusPredicate(Root<RefundBooking> root, CriteriaBuilder criteriaBuilder, String refundStatus) {
-        return criteriaBuilder.like(criteriaBuilder.lower(root.get("refundStatus")), "%" + refundStatus.toLowerCase() + "%");
-    }
-
-    private static Predicate getFromDatePredicate(Root<RefundBooking> root, CriteriaBuilder criteriaBuilder, Long fromDate) {
-        return criteriaBuilder.greaterThanOrEqualTo(root.get("createdDate"), fromDate);
-    }
-
-    private static Predicate getToDatePredicate(Root<RefundBooking> root, CriteriaBuilder criteriaBuilder, Long toDate) {
-        return criteriaBuilder.lessThanOrEqualTo(root.get("createdDate"), toDate);
-    }
-
-}
-
-@Repository
-public interface RefundRepository extends JpaRepository<RefundBooking, UUID> {
-
-    /**
-     * Retrieves a paginated list of RefundBooking entities that match the given specification.
-     *
-     * @param specification The criteria for filtering refund bookings.
-     * @param pageable      Pagination details for retrieving data in pages.
-     * @return A Page containing the filtered RefundBooking entities.
-     */
-    Page<RefundBooking> findAll(Specification<RefundBooking> specification, Pageable pageable);
-}
-
- */
-@EqualsAndHashCode(callSuper = true)
-@Getter
-@Setter
-@SuperBuilder
-@NoArgsConstructor
-@AllArgsConstructor
-@Entity
-@Table(name = "REFUND_BOOKING")
-public class RefundBooking extends AuditEntity {
-
-    @Id
-    @GeneratedValue(strategy = GenerationType.UUID)
-    private UUID id;
-    @Column(name = "MERCHANT_ID")
-    private String mId;
-    private String sbiOrderRefNumber;
-    private String arrnNum;
-    private String atrnNum;
-    private BigDecimal refundAmount;
-    private String refundType;
-    private String refundStatus;
-    private String remark;
-    private String refundAdjusted;
-    private UUID payoutId;
-    private Integer refundRetry;
-    private Long refundAdjustedDate;
-    private Long refundProcessedDate;
-
-    /**
-     * custom generator, do not remove it
-     */
-    @PrePersist
-    protected void generatedARRN() {
-        this.arrnNum = TransactionUtil.createArrnNumber(mId, atrnNum.substring(0,2));
-    }
-
-
-}
-
-
-@Data
-@EqualsAndHashCode(callSuper = true)
-@Entity
-@Table(name = "MERCHANT_ORDER_PAYMENTS")
-public class MerchantOrderPayment extends AuditEntity {
-
-    @Id
-    @Column(name = "ATRN_NUM", nullable = false, updatable = false, unique = true)
-    private String atrnNumber;
-    @Column(name = "MERCHANT_ID")
-    private String mId;
-    private String orderRefNumber;
-    private String sbiOrderRefNumber;
-    private String bankReferenceNumber;
-    private String oldBankReferenceNumber;
-
-    private String currencyCode;
-    private BigDecimal orderAmount;
-    @Column(name = "DEBIT_AMT")
-    private BigDecimal debitAmount;
-    private BigDecimal availableRefundAmount;
-    private BigDecimal chargebackAmount;
-
-    private String gstIn;
-    private String channelBank;
-    @Enumerated(EnumType.STRING)
-    private PayMode payMode;
-    @Column(name = "GTW_MAP_ID")
-    private String pgBankCode;//this is gateway map id
-    private String payProcId; //this is pay proc id e.g. Visa, Master, Rupay
-    @Column(name = "PAY_PROC_TYPE")
-    private String paymodeType; //this is Pay proc type e.g. onus, offus
-    @Column(name = "GTW_ISSUE_MECODE")
-    private String gatewayIssueMECode; //merchant wise and/or payment wise ME code received from bank
-    private String cin;
-
-    @Enumerated(EnumType.STRING)
-    private PaymentStatus paymentStatus;
-    @Enumerated(EnumType.STRING)
-    private TransactionStatus transactionStatus;
-    @Enumerated(EnumType.STRING)
-    private SettlementStatus settlementStatus;
-    @Enumerated(EnumType.STRING)
-    private TransactionRefundStatus refundStatus;
-    @Enumerated(EnumType.STRING)
-    private CancellationStatus cancellationStatus;
-    private String chargebackStatus;
-
-    @Lob
-    private String pushResponse;
-    private Date paymentSuccessDate;
-    private String failReason;
-    private String pushStatus;
-
-    private UUID rfId;
-    private Long settlementTime;
-
-    @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "sbiOrderRefNumber", insertable = false, updatable = false)
-    private Order order;
-
-    /**
-     * Generate ATRN number dynamically for transaction.
-     */
-    @PrePersist
-    protected void generatedATRN() {
-        this.atrnNumber = TransactionUtil.createAtrnNumber(mId, payMode);
-    }
-
-}
-
-
-
-@Mapper(builder = @Builder(disableBuilder = true), componentModel = "spring", imports = DateTimeUtils.class)
-public interface RefundMapper {
-
-    /**
-     * Map refund booking dto to refund details response
-     *
-     * @param refundBookingDto RefundBookingDto
-     * @return RefundDetailResponse
-     */
-    @Mapping(source = "createdDate", target = "requestTime")
-    RefundResponse dtoToResponse(RefundBookingDto refundBookingDto);
-
-    /**
-     * Map list of refund booking dto to list refund details response
-     *
-     * @param refundBookingDtoList List<RefundBookingDto>
-     * @return List<RefundDetailResponse>
-     */
-    List<RefundResponse> dtoToResponse(List<RefundBookingDto> refundBookingDtoList);
-
-    /**
-     * Map refund booking dto to refund booking entity
-     *
-     * @param refundBookingDto RefundBookingDto
-     * @return RefundBooking
-     */
-    @Mapping(target = "id", ignore = true)
-    @Mapping(source = "arrnNumber", target = "arrnNum")
-    @Mapping(source = "atrnNumber", target = "atrnNum")
-    RefundBooking dtoToEntity(RefundBookingDto refundBookingDto);
-
-    /**
-     * Map refund booking entity to refund booking dto
-     *
-     * @param refundBooking RefundBooking
-     * @return RefundBookingDto
-     */
-    @Mapping(source = "arrnNum", target = "arrnNumber")
-    @Mapping(source = "atrnNum", target = "atrnNumber")
-    RefundBookingDto entityToDto(RefundBooking refundBooking);
-
-    /**
-     * Map pageable of refund booking entity to pageable of refund booking dto
-     *
-     * @param refundBookingPage merchantOrderPaymentList Page<RefundBooking> List<MerchantOrderPayment>
-     * @return Page<RefundBookingDto>
-     */
-    default Page<RefundBookingDto> mapPageWithPaymentsToDto(Page<RefundBooking> refundBookingPage,
-                                                            List<MerchantOrderPayment> payments) {
-
-        List<RefundBookingDto> refundBookingDtoList = getRfundBookingDtoList(refundBookingPage.getContent(), payments);
-
-        return new PageImpl<>(refundBookingDtoList, refundBookingPage.getPageable(), refundBookingDtoList.size());
-    }
-
-    default List<RefundBookingDto> getRfundBookingDtoList(List<RefundBooking> refundBookingPage,
-                                                          List<MerchantOrderPayment> payments) {
-        Map<String, MerchantOrderPayment> paymentDetailsMap = payments.stream()
-                .collect(Collectors.toMap(MerchantOrderPayment::getAtrnNumber, Function.identity()));
-
-        return refundBookingPage.stream()
-                .filter(RefundBooking -> paymentDetailsMap.containsKey(RefundBooking.getAtrnNum()))
-                .map(RefundBooking -> {
-                    RefundBookingDto refundBookingDto = entityToDto(RefundBooking);
-                    refundBookingDto.setPayMode(paymentDetailsMap.get(RefundBooking.getAtrnNum()).getPayMode());
-                    refundBookingDto.setTransactionDate(paymentDetailsMap.get(RefundBooking.getAtrnNum()).getCreatedDate());
-                    return refundBookingDto;
-                })
-                .toList();
-    }
