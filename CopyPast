@@ -1,4 +1,59 @@
 @Test
+void getRefundBookingSearchResponse_WithNullRequest() {
+    // Arrange
+    Pageable pageable = PageRequest.of(0, 50);
+    String currencyCode = "INR";
+
+    Page<RefundBookingDto> refundPage =
+            new PageImpl<>(List.of(), pageable, 0);
+
+    when(refundDao.searchRefundBookingRequest(
+            isNull(),
+            eq(currencyCode),
+            eq(pageable)
+    )).thenReturn(refundPage);
+
+    when(refundMapper.dtoToResponse(refundPage.getContent()))
+            .thenReturn(List.of());
+
+    // Act
+    TransactionResponse<RefundResponse> result =
+            refundService.getRefundBookingSearchResponse(
+                    null,
+                    currencyCode,
+                    pageable
+            );
+
+    // Assert
+    assertNotNull(result);
+    assertEquals(TransactionConstant.RESPONSE_SUCCESS, result.getStatus());
+    assertNotNull(result.getData());
+
+    verify(refundDao, times(1)).searchRefundBookingRequest(
+            isNull(),
+            eq(currencyCode),
+            eq(pageable)
+    );
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+@Test
     void getRefundBookingSearchResponse_WithNullRequest() {
         // Arrange
         RefundSearchRequest nullRequest = null;
