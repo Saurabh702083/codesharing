@@ -1,84 +1,49 @@
 @Test
-void getRefundBookingSearchResponse_Success() {
-    // Arrange
-    Pageable pageable = PageRequest.of(0, 50);
-    String currencyCode = "INR";
-
-    Page<RefundBookingDto> refundPage =
-            new PageImpl<>(List.of(testRefundBookingDto), pageable, 1);
-
-    when(refundDao.searchRefundBookingRequest(
-            eq(testRefundSearchRequest),
-            eq(currencyCode),
-            eq(pageable)
-    )).thenReturn(refundPage);
-
-    when(refundMapper.dtoToResponse(refundPage.getContent()))
-            .thenReturn(List.of(testRefundResponse));
-
-    // Act
-    TransactionResponse<RefundResponse> result =
-            refundService.getRefundBookingSearchResponse(
-                    testRefundSearchRequest,
-                    currencyCode,
-                    pageable
-            );
-
-    // Assert
-    assertNotNull(result);
-    assertEquals(TransactionConstant.RESPONSE_SUCCESS, result.getStatus());
-    assertNotNull(result.getData());
-
-    verify(refundDao, times(1)).searchRefundBookingRequest(
-            eq(testRefundSearchRequest),
-            eq(currencyCode),
-            eq(pageable)
-    );
-
-    verify(refundMapper, times(1))
-            .dtoToResponse(refundPage.getContent());
-}
-
-
-
-
-
-
-
-
-
-
- @Test
-    void getRefundBookingSearchResponse_Success() {
+    void getRefundBookingSearchResponse_WithNullRequest() {
         // Arrange
+        RefundSearchRequest nullRequest = null;
         Pageable pageable = PageRequest.of(0, 50);
-//        String currencyCode="INR";
-        Page<RefundBookingDto> refundPage = new PageImpl<>(List.of(testRefundBookingDto), pageable, 1);
-        when(refundMapper.dtoToResponse(refundPage.getContent())).thenReturn(List.of());
-        lenient().when(refundDao.searchRefundBookingRequest(any(RefundSearchRequest.class),anyString(), any(Pageable.class))).thenReturn(refundPage);
+
         // Act
-
-        TransactionResponse<RefundResponse> result = refundService.getRefundBookingSearchResponse(eq(testRefundSearchRequest),anyString(), eq(pageable));
-
-        // Assert
-        assertNotNull(result);
-        assertEquals(TransactionConstant.RESPONSE_SUCCESS, result.getStatus());
-        assertNotNull(result.getData());
-
-        verify(refundDao, times(1)).searchRefundBookingRequest(any(RefundSearchRequest.class),anyString(), any(Pageable.class));
+        assertThrows(InvalidUseOfMatchersException.class, () -> {
+            refundService.getRefundBookingSearchResponse(nullRequest,anyString(), pageable);
+        });
+        verify(refundDao, times(1)).searchRefundBookingRequest(nullRequest,anyString(), any(Pageable.class));
     }
 
-public TransactionResponse<RefundResponse> getRefundBookingSearchResponse(RefundSearchRequest refundSearchRequest,String currencyCode, Pageable pageable){
-        Page<RefundBookingDto> refundBookingDtoPage =  searchRefundBookings(refundSearchRequest,currencyCode, pageable);
-        return TransactionResponse.<RefundResponse>builder().data(refundMapper.dtoToResponse(refundBookingDtoPage.getContent())).status(TransactionConstant.RESPONSE_SUCCESS).total(refundBookingDtoPage.getTotalElements()).count((long) refundBookingDtoPage.getContent().size()).build();
-    }
+Invalid use of argument matchers!
+3 matchers expected, 2 recorded:
+-> at com.epay.transaction.service.RefundServiceTest.getRefundBookingSearchResponse_WithNullRequest(RefundServiceTest.java:346)
+-> at com.epay.transaction.service.RefundServiceTest.getRefundBookingSearchResponse_WithNullRequest(RefundServiceTest.java:346)
 
+This exception may occur if matchers are combined with raw values:
+    //incorrect:
+    someMethod(any(), "raw String");
+When using matchers, all arguments have to be provided by matchers.
+For example:
+    //correct:
+    someMethod(any(), eq("String by matcher"));
 
-Cannot invoke "org.springframework.data.domain.Page.getContent()" because "refundBookingDtoPage" is null
-java.lang.NullPointerException: Cannot invoke "org.springframework.data.domain.Page.getContent()" because "refundBookingDtoPage" is null
-	at com.epay.transaction.service.RefundService.getRefundBookingSearchResponse(RefundService.java:212)
-	at com.epay.transaction.service.RefundService.getRefundBookingSearchResponse(RefundService.java:211)
-	at com.epay.transaction.service.RefundServiceTest.getRefundBookingSearchResponse_Success(RefundServiceTest.java:308)
+For more info see javadoc for Matchers class.
+
+org.mockito.exceptions.misusing.InvalidUseOfMatchersException: 
+Invalid use of argument matchers!
+3 matchers expected, 2 recorded:
+-> at com.epay.transaction.service.RefundServiceTest.getRefundBookingSearchResponse_WithNullRequest(RefundServiceTest.java:346)
+-> at com.epay.transaction.service.RefundServiceTest.getRefundBookingSearchResponse_WithNullRequest(RefundServiceTest.java:346)
+
+This exception may occur if matchers are combined with raw values:
+    //incorrect:
+    someMethod(any(), "raw String");
+When using matchers, all arguments have to be provided by matchers.
+For example:
+    //correct:
+    someMethod(any(), eq("String by matcher"));
+
+For more info see javadoc for Matchers class.
+
+	at com.epay.transaction.dao.RefundDao.searchRefundBookingRequest(RefundDao.java:120)
+	at com.epay.transaction.service.RefundServiceTest.getRefundBookingSearchResponse_WithNullRequest(RefundServiceTest.java:346)
 	at java.base/java.lang.reflect.Method.invoke(Method.java:580)
 	at java.base/java.util.ArrayList.forEach(ArrayList.java:1596)
 	at java.base/java.util.ArrayList.forEach(ArrayList.java:1596)
