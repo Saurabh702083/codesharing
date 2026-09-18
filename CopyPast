@@ -1,149 +1,34 @@
-@ExtendWith(MockitoExtension.class)
-class RefundServiceTest {
+ @Test
+    void getRefundBookingSearchResponse_Success() {
+        // Arrange
+        Pageable pageable = PageRequest.of(0, 50);
+//        String currencyCode="INR";
+        Page<RefundBookingDto> refundPage = new PageImpl<>(List.of(testRefundBookingDto), pageable, 1);
+        when(refundMapper.dtoToResponse(refundPage.getContent())).thenReturn(List.of());
+        lenient().when(refundDao.searchRefundBookingRequest(any(RefundSearchRequest.class),anyString(), any(Pageable.class))).thenReturn(refundPage);
+        // Act
 
-    private final BulkRefundBooking bulkRefundBooking = new BulkRefundBooking();
-    @Mock
-    EPayPrincipal mockEPayPrincipal = mock(EPayPrincipal.class);
-    @Mock
-    private RefundMapper refundMapper;
-    @Mock
-    private RefundValidator refundValidator;
-    @Mock
-    private MerchantPaymentOrderDto mockMerchantPaymentOrderDto;
-    @Mock
-    private RefundDao refundDao;
-    @Mock
-    private S3Service s3Service;
-    private String filePath;
-    @Mock
-    private RefundBookingDetailsProducer refundBookingDetailsProducer;
-    @Mock
-    private ErrorLogDao errorLogDao;
-    @Mock
-    private BulkRefundProducer bulkRefundProducer;
-    @Mock
-    private LoggerUtility logger;
-    @Mock
-    private HttpServletResponse response;
-    @Spy
-    @InjectMocks
-    private RefundService refundService;
-    private MerchantPaymentOrderDto merchantPaymentOrderDto;
-    private EncryptedRequest testEncryptedRequest;
-    private RefundBookRequest testRefundBookRequest;
-    private RefundSearchRequest testRefundSearchRequest;
-    private RefundBookingDto testRefundBookingDto;
-    private RefundResponse testRefundResponse;
-    private BulkRefundBookingDto testBulkRefundBookingDto;
-    private String testMerchantId;
-    private String testMek;
-    private MultipartFile testFile;
-    private BulkRefundBookingDetails testBulkRefundBookingDetails;
-    private ByteArrayOutputStream byteArrayOutputStream;
-    @Mock
-    private ObjectMapper objectMapper;
+        TransactionResponse<RefundResponse> result = refundService.getRefundBookingSearchResponse(eq(testRefundSearchRequest),anyString(), eq(pageable));
 
+        // Assert
+        assertNotNull(result);
+        assertEquals(TransactionConstant.RESPONSE_SUCCESS, result.getStatus());
+        assertNotNull(result.getData());
 
-    @BeforeEach
-    void setUp() {
-        testEncryptedRequest = new EncryptedRequest();
-        testEncryptedRequest.setEncryptedRequest("encrypted-payment-data");
+        verify(refundDao, times(1)).searchRefundBookingRequest(any(RefundSearchRequest.class),anyString(), any(Pageable.class));
+    }
 
-        bulkRefundBooking.setBulkId("123");
-        bulkRefundBooking.setTotalRecords(1);
-        bulkRefundBooking.setMerchantId("443551");
-
-        testRefundBookRequest = RefundBookRequest.builder().atrnNumber("1").refundType("23").mId("123").refundAmount(BigDecimal.valueOf(100.0)).remark("INR").build();
-
-        testRefundSearchRequest = RefundSearchRequest.builder().build();
-
-        testRefundBookingDto = RefundBookingDto.builder().refundAmount(BigDecimal.valueOf(213)).atrnNumber("1").refundStatus(String.valueOf(RefundStatus.CANCELLATION_BOOKED)).build();
-
-        testRefundResponse = RefundResponse.builder().refundAmount(BigDecimal.valueOf(23)).refundStatus("PENDING").build();
-
-        testBulkRefundBookingDto = BulkRefundBookingDto.builder().bulkId("test-bulk-id").bulkRefundStatus("PROCESSING").build();
-
-        testBulkRefundBookingDetails = BulkRefundBookingDetails.builder().refundType("23").atrnNum("1").comments("INR").refundAmount(String.valueOf(BigDecimal.valueOf(100.0))).bulkId("123").build();
-
-        merchantPaymentOrderDto = MerchantPaymentOrderDto.builder().build();
-
-        testMerchantId = "test-merchant-id";
-        testMek = "test-mek-key";
-
-        testFile = new MockMultipartFile("file", "test.csv", "text/csv", "test,data".getBytes());
+public TransactionResponse<RefundResponse> getRefundBookingSearchResponse(RefundSearchRequest refundSearchRequest,String currencyCode, Pageable pageable){
+        Page<RefundBookingDto> refundBookingDtoPage =  searchRefundBookings(refundSearchRequest,currencyCode, pageable);
+        return TransactionResponse.<RefundResponse>builder().data(refundMapper.dtoToResponse(refundBookingDtoPage.getContent())).status(TransactionConstant.RESPONSE_SUCCESS).total(refundBookingDtoPage.getTotalElements()).count((long) refundBookingDtoPage.getContent().size()).build();
     }
 
 
-
-
-@Test
-    void getRefundBookingSearchResponse_WithEncryptedRequest_Success() {
-        try (MockedStatic<TransactionUtil> mockTransactionUtil = mockStatic(TransactionUtil.class); MockedStatic<EPayIdentityUtil> mockEPayIdentityUtil = mockStatic(EPayIdentityUtil.class); MockedStatic<EncryptionDecryptionUtil> mockEncryptionDecryptionUtil = mockStatic(EncryptionDecryptionUtil.class)) {
-
-            mockTransactionUtil.when(() -> TransactionUtil.buildRequestByEncryptRequest(anyString(), anyString(), eq(RefundSearchRequest.class))).thenReturn(testRefundSearchRequest);
-
-            SecurityContextHolder.getContext().setAuthentication(mock(Authentication.class));
-            mockEPayIdentityUtil.when(EPayIdentityUtil::getUserPrincipal).thenReturn(mockEPayPrincipal);
-            when(mockEPayPrincipal.getMId()).thenReturn("123");
-
-            mockTransactionUtil.when(() -> TransactionUtil.toJson(anyList())).thenReturn("encrypted-response");
-            mockEncryptionDecryptionUtil.when(() -> EncryptionDecryptionUtil.encryptValue(anyString(), anyString())).thenReturn("gcygdfcydfchgf");
-
-            // Arrange
-            Pageable pageable = PageRequest.of(0, 50);
-            Page<RefundBookingDto> refundPage = new PageImpl<>(List.of(testRefundBookingDto), pageable, 1);
-            when(refundDao.getMerchantMek()).thenReturn(testMek);
-            when(refundDao.searchRefundBookingRequest(testRefundSearchRequest,anyString(), pageable)).thenReturn(refundPage);
-
-            // Act
-            TransactionResponse<String> result = refundService.getRefundBookingSearchResponse(testEncryptedRequest.getEncryptedRequest(), pageable);
-
-            // Assert
-            assertNotNull(result);
-            assertEquals(TransactionConstant.RESPONSE_SUCCESS, result.getStatus());
-            assertNotNull(result.getData());
-            assertEquals(1, result.getData().size());
-
-            verify(refundDao, times(1)).getMerchantMek();
-            verify(refundDao, times(1)).searchRefundBookingRequest(testRefundSearchRequest,"INR", pageable);
-        }
-    }
-
-
-
-    Invalid use of argument matchers!
-3 matchers expected, 1 recorded:
--> at com.epay.transaction.service.RefundServiceTest.getRefundBookingSearchResponse_WithEncryptedRequest_Success(RefundServiceTest.java:578)
-
-This exception may occur if matchers are combined with raw values:
-    //incorrect:
-    someMethod(any(), "raw String");
-When using matchers, all arguments have to be provided by matchers.
-For example:
-    //correct:
-    someMethod(any(), eq("String by matcher"));
-
-For more info see javadoc for Matchers class.
-
-org.mockito.exceptions.misusing.InvalidUseOfMatchersException: 
-Invalid use of argument matchers!
-3 matchers expected, 1 recorded:
--> at com.epay.transaction.service.RefundServiceTest.getRefundBookingSearchResponse_WithEncryptedRequest_Success(RefundServiceTest.java:578)
-
-This exception may occur if matchers are combined with raw values:
-    //incorrect:
-    someMethod(any(), "raw String");
-When using matchers, all arguments have to be provided by matchers.
-For example:
-    //correct:
-    someMethod(any(), eq("String by matcher"));
-
-For more info see javadoc for Matchers class.
-
-	at com.epay.transaction.dao.RefundDao.searchRefundBookingRequest(RefundDao.java:120)
-	at com.epay.transaction.service.RefundServiceTest.getRefundBookingSearchResponse_WithEncryptedRequest_Success(RefundServiceTest.java:578)
+Cannot invoke "org.springframework.data.domain.Page.getContent()" because "refundBookingDtoPage" is null
+java.lang.NullPointerException: Cannot invoke "org.springframework.data.domain.Page.getContent()" because "refundBookingDtoPage" is null
+	at com.epay.transaction.service.RefundService.getRefundBookingSearchResponse(RefundService.java:212)
+	at com.epay.transaction.service.RefundService.getRefundBookingSearchResponse(RefundService.java:211)
+	at com.epay.transaction.service.RefundServiceTest.getRefundBookingSearchResponse_Success(RefundServiceTest.java:308)
 	at java.base/java.lang.reflect.Method.invoke(Method.java:580)
 	at java.base/java.util.ArrayList.forEach(ArrayList.java:1596)
 	at java.base/java.util.ArrayList.forEach(ArrayList.java:1596)
-
- 
