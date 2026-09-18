@@ -1,3 +1,148 @@
+package com.epay.transaction.dao;
+
+import com.epay.transaction.dto.MerchantPaymentOrderDto;
+import com.epay.transaction.dto.RefundBookingDto;
+import com.epay.transaction.dto.ReconDataDetailsDto;
+import com.epay.transaction.dto.BulkRefundBookingDto;
+import com.epay.transaction.entity.BulkRefundBooking;
+import com.epay.transaction.entity.BulkRefundBookingDetails;
+import com.epay.transaction.entity.MerchantOrderPayment;
+import com.epay.transaction.entity.RefundBooking;
+import com.epay.transaction.mapper.RefundMapper;
+import com.epay.transaction.model.request.RefundSearchRequest;
+import com.epay.transaction.model.response.RefundResponse;
+import com.epay.transaction.repository.BulkRefundDetailsRepository;
+import com.epay.transaction.repository.BulkRefundRepository;
+import com.epay.transaction.repository.RefundRepository;
+
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.jpa.domain.Specification;
+
+import java.math.BigDecimal;
+import java.util.List;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.mockito.ArgumentMatchers.*;
+import static org.mockito.Mockito.*;
+
+@ExtendWith(MockitoExtension.class)
+class RefundDaoTest {
+
+    @InjectMocks
+    private RefundDao refundDao;
+    @Mock
+    private RefundMapper refundMapper;
+    @Mock
+    private RefundRepository refundRepository;
+    @Mock
+    private MerchantOrderPaymentDao merchantOrderPaymentDao;
+    @Mock
+    private BulkRefundRepository bulkRefundRepository;
+    @Mock
+    private BulkRefundDetailsRepository bulkRefundDetailsRepository;
+    @Mock
+    private KmsDao kmsDao;
+    @Mock
+    private ErrorLogDao errorLogDao;
+
+    private RefundBookingDto refundBookingDto;
+    private MerchantPaymentOrderDto merchantPaymentOrderDto;
+    private RefundBooking refundBooking;
+
+    @BeforeEach
+    void setUp() {
+        refundBookingDto = new RefundBookingDto();
+        refundBookingDto.setRefundAmount(new BigDecimal("1000"));
+
+        merchantPaymentOrderDto = new MerchantPaymentOrderDto();
+        merchantPaymentOrderDto.setAvailableRefundAmount(new BigDecimal("12000"));
+
+        refundBooking = new RefundBooking();
+    }
+
+    @Test
+    void saveRefundBooking() {
+        when(refundMapper.dtoToEntity(refundBookingDto)).thenReturn(refundBooking);
+        when(refundRepository.save(refundBooking)).thenReturn(refundBooking);
+        when(refundMapper.entityToDto(refundBooking)).thenReturn(refundBookingDto);
+        // NOTE: updateMerchantPayment() is a real method on the object under test (refundDao),
+        // not a mock, so it cannot be stubbed with when(...). It's allowed to run for real,
+        // using the mocked merchantOrderPaymentDao below.
+        when(merchantOrderPaymentDao.save(merchantPaymentOrderDto)).thenReturn(merchantPaymentOrderDto);
+        when(refundMapper.mapToRefundResponse(refundBookingDto, merchantPaymentOrderDto))
+                .thenReturn(RefundResponse.builder().build());
+
+        RefundResponse result = refundDao.saveRefundBooking(refundBookingDto, merchantPaymentOrderDto);
+
+        assertNotNull(result);
+        verify(merchantOrderPaymentDao).save(merchantPaymentOrderDto);
+    }
+
+    @Test
+    void findByAtrnNumber() {
+        String mId = "MID";
+        String atrnNo = "ATRN";
+        when(merchantOrderPaymentDao.findByAtrnNumber(anyString(), anyString())).thenReturn(merchantPaymentOrderDto);
+
+        MerchantPaymentOrderDto result = refundDao.findByAtrnNumber(mId, atrnNo);
+
+        assertNotNull(result);
+    }
+
+    @Test
+    void searchRefundBookingRequest() {
+        RefundSearchRequest request = new RefundSearchRequest();
+        request.setMId("MID123");
+        request.setPayMode(null); // optional
+        Pageable pageable = PageRequest.of(0, 10);
+
+        RefundBooking booking = new RefundBooking();
+        booking.setAtrnNum("ATRN123");
+
+        Page<RefundBooking> refundBookingPage = new PageImpl<>(List.of(booking), pageable, 1);
+
+        when(refundRepository.findAll(any(Specification.class), eq(pageable)))
+                .thenReturn(refundBookingPage);
+
+        MerchantOrderPayment payment = new MerchantOrderPayment();
+        payment.setAtrnNumber("ATRN123");
+        List<MerchantOrderPayment> paymentList = List.of(payment);
+
+        when(merchantOrderPaymentDao.findAllByAtrnAndPaymodeAndCurrencyCode(
+                anyList(), anyString(), nullable(String.class)))
+                .thenReturn(paymentList);
+
+        Page<RefundBookingDto> dtoPage = new PageImpl<>(List.of(new RefundBookingDto()));
+        when(refundMapper.mapPageWithPaymentsToDto(refundBookingPage, paymentList))
+                .thenReturn(dtoPage);
+
+        Page<RefundBookingDto> result = refundDao.searchRefundBookingRequest(request, "INR", pageable);
+
+        assertNotNull(result);
+        assertEquals(1, result.getTotalElements());
+
+        verify(refundRepository).findAll(any(Specification.class), eq(pageable));
+        verify(merchantOrderPaymentDao)
+                .findAllByAtrnAndPaymodeAndCurrencyCode(anyList(), anyString(), nullable(String.class));
+        verify(refundMapper).mapPageWithPaymentsToDto(refundBookingPage, paymentList);
+    }
+}
+
+
+
+
+
+----------------
 @ExtendWith(MockitoExtension.class)
 class RefundDaoTest {
 
