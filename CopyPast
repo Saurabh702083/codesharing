@@ -1,3 +1,67 @@
+
+@Test
+void getMerchantOrderPayments_Success() {
+    // Arrange
+    Page<OrderResponse> orderPage = new PageImpl<>(
+            Collections.singletonList(testOrderResponse),
+            testPageable,
+            1
+    );
+
+    when(merchantOrderPaymentDao.findBySpecification(
+            eq(testMerchantId),
+            any(MerchantOrderPaymentSearchRequest.class),
+            anyString(),
+            eq(testPageable)
+    )).thenReturn(orderPage);
+
+    // Act
+    TransactionResponse<OrderResponse> result =
+            orderService.getMerchantOrderPayments(
+                    testMerchantId,
+                    testSearchRequest,
+                    testMek,
+                    testPageable,
+                    false
+            );
+
+    // Assert
+    assertNotNull(result);
+    assertEquals(TransactionConstant.RESPONSE_SUCCESS, result.getStatus());
+    assertNotNull(result.getData());
+    assertEquals(1, result.getData().size());
+    assertEquals(testOrderResponse, result.getData().get(0));
+    assertEquals(1L, result.getCount());
+    assertEquals(1L, result.getTotal());
+
+    verify(orderValidator, times(1))
+            .validateMerchantOrderPaymentsRequest(
+                    testSearchRequest,
+                    testMerchantId,
+                    testPageable,
+                    false
+            );
+
+    verify(merchantOrderPaymentDao, times(1))
+            .findBySpecification(
+                    eq(testMerchantId),
+                    any(MerchantOrderPaymentSearchRequest.class),
+                    anyString(),
+                    eq(testPageable)
+            );
+}
+
+
+
+
+
+
+
+
+
+
+
+-----------------
 @ExtendWith(MockitoExtension.class)
 class OrderServiceTest {
 
