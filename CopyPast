@@ -1,3 +1,59 @@
+
+@Test
+void downloadMerchantOrderPaymentReport_WithEmptyMerchantId() {
+    // Arrange
+    String emptyMerchantId = "";
+
+    Page<OrderResponse> orderPage = new PageImpl<>(
+            Collections.singletonList(testOrderResponse),
+            testPageable,
+            1
+    );
+
+    when(transactionConfig.getReportPageSize()).thenReturn(1000);
+
+    when(merchantOrderPaymentDao.findBySpecification(
+            eq(emptyMerchantId),
+            any(MerchantOrderPaymentSearchRequest.class),
+            anyString(),
+            any(Pageable.class)
+    )).thenReturn(orderPage);
+
+    // Act
+    orderService.downloadMerchantOrderPaymentReport(
+            response,
+            emptyMerchantId,
+            testMek,
+            testSearchRequest
+    );
+
+    // Assert
+    verify(orderValidator, times(1))
+            .validateMerchantOrderPaymentsRequest(
+                    eq(testSearchRequest),
+                    eq(emptyMerchantId),
+                    any(Pageable.class),
+                    eq(true)
+            );
+
+    verify(merchantOrderPaymentDao, times(1))
+            .findBySpecification(
+                    eq(emptyMerchantId),
+                    any(MerchantOrderPaymentSearchRequest.class),
+                    anyString(),
+                    any(Pageable.class)
+            );
+}
+
+
+
+
+
+
+
+
+-----------------
+
 @Test
     void downloadMerchantOrderPaymentReport_WithEmptyMerchantId() {
         // Arrange
