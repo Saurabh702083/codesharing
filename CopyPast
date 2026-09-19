@@ -1,75 +1,112 @@
-@Test
-void getRefundBookingSearchResponse_WithNullRequest() {
-    // Arrange
-    Pageable pageable = PageRequest.of(0, 50);
-    String currencyCode = "INR";
+@ExtendWith(MockitoExtension.class)
+class OrderServiceTest {
 
-    Page<RefundBookingDto> refundPage =
-            new PageImpl<>(List.of(), pageable, 0);
+    @Mock
+    EPayPrincipal mockEPayPrincipal = mock(EPayPrincipal.class);
+    @Mock
+    private OrderDao orderDao;
+    @Mock
+    private OrderValidator orderValidator;
+    @Mock
+    private TransactionConfig transactionConfig;
+    @Mock
+    private AdminServicesClient adminServicesClient;
+    @Mock
+    private MerchantOrderPaymentDao merchantOrderPaymentDao;
+    @Mock
+    private FileGeneratorService fileGeneratorService;
+    @Mock
+    private LoggerUtility logger;
+    @Mock
+    private HttpServletResponse response;
+    @InjectMocks
+    private OrderService orderService;
+    private EncryptedRequest testEncryptedRequest;
+    private OrderDto testOrderDto;
+    private TransactionResponse<MerchantInfoResponse> testMerchantInfoResponse;
+//    private OrderUpdateRequest testOrderUpdateRequest;
+    private MerchantOrderPaymentSearchRequest testSearchRequest;
+    private OrderResponse testOrderResponse;
+    private OrderStatusDto testOrderStatusDto;
+    private OrderStatusResponse testOrderStatusResponse;
+    private String testMerchantId;
+    private String testMek;
+    private Pageable testPageable;
 
-    when(refundDao.searchRefundBookingRequest(
-            isNull(),
-            eq(currencyCode),
-            eq(pageable)
-    )).thenReturn(refundPage);
+    @BeforeEach
+    void setUp() {
+        testEncryptedRequest = new EncryptedRequest();
+        testEncryptedRequest.setEncryptedRequest("encrypted-bin-check-data");
 
-    when(refundMapper.dtoToResponse(refundPage.getContent()))
-            .thenReturn(List.of());
+        testOrderDto = new OrderDto();
+        testOrderDto.setMId("test-merchant-id");
+        testOrderDto.setStatus(OrderStatus.ATTEMPTED);
+        testOrderDto.setCustomerId("test-customer-id");
 
-    // Act
-    TransactionResponse<RefundResponse> result =
-            refundService.getRefundBookingSearchResponse(
-                    null,
-                    currencyCode,
-                    pageable
-            );
+        MerchantInfoResponse merchantInfo = new MerchantInfoResponse();
+        merchantInfo.setNumberOfAttemptsApplicable("1");
+        merchantInfo.setNumberOfAttempts("3");
+        merchantInfo.setOrderExpiryTime(30L);
 
-    // Assert
-    assertNotNull(result);
-    assertEquals(TransactionConstant.RESPONSE_SUCCESS, result.getStatus());
-    assertNotNull(result.getData());
+        testMerchantInfoResponse = TransactionResponse.<MerchantInfoResponse>builder().data(List.of(merchantInfo)).status(TransactionConstant.RESPONSE_SUCCESS).build();
 
-    verify(refundDao, times(1)).searchRefundBookingRequest(
-            isNull(),
-            eq(currencyCode),
-            eq(pageable)
-    );
-}
+//        testOrderUpdateRequest = OrderUpdateRequest.builder().orderRefNumber("ORDER123").sbiOrderRefNumber("SBI_ORDER123").status("CREATED").build();
 
+        testSearchRequest = MerchantOrderPaymentSearchRequest.builder().build();
 
+        testOrderResponse = new OrderResponse();
+        testOrderResponse.setOrderRefNumber("ORDER123");
+        testOrderResponse.setSbiOrderRefNumber("SBI_ORDER123");
+        testOrderResponse.setAtrnNumber("ATRN123");
+        testOrderResponse.setOrderAmount(BigDecimal.valueOf(1000.0));
+        testOrderResponse.setTransactionAmount(BigDecimal.valueOf(1000.0));
+        testOrderResponse.setPaymentStatus(PaymentStatus.BOOKED);
+        testOrderResponse.setTransactionStatus(TransactionStatus.BOOKED);
 
+        testOrderStatusDto = new OrderStatusDto();
+        testOrderStatusDto.setOrderRefNumber("ORDER123");
+        testOrderStatusDto.setOrderAmount(BigDecimal.valueOf(1000.0));
 
+        testOrderStatusResponse = new OrderStatusResponse();
+        testOrderStatusResponse.setOrderInfo(new OrderInfoDto("wq", "dsfsd", OrderStatus.ATTEMPTED, "2","other"));
+        testOrderStatusResponse.setPaymentInfo(List.of());
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-@Test
-    void getRefundBookingSearchResponse_WithNullRequest() {
-        // Arrange
-        RefundSearchRequest nullRequest = null;
-        Pageable pageable = PageRequest.of(0, 50);
-
-        // Act
-        assertThrows(InvalidUseOfMatchersException.class, () -> {
-            refundService.getRefundBookingSearchResponse(nullRequest,anyString(), pageable);
-        });
-        verify(refundDao, times(1)).searchRefundBookingRequest(nullRequest,anyString(), any(Pageable.class));
+        testMerchantId = "TEST_MERCHANT_001";
+        testMek = "test-mek-key";
+        testPageable = PageRequest.of(0, 50);
     }
 
+
+@Test
+    void getMerchantOrderPayments_Success() {
+        // Arrange
+        Page<OrderResponse> orderPage = new PageImpl<>(Collections.singletonList(testOrderResponse), testPageable, 1);
+        when(merchantOrderPaymentDao.findBySpecification(eq(testMerchantId), any(MerchantOrderPaymentSearchRequest.class),eq(anyString()), eq(testPageable))).thenReturn(orderPage);
+
+        // Act
+        TransactionResponse<OrderResponse> result = orderService.getMerchantOrderPayments(eq(testMerchantId), eq(testSearchRequest),eq(anyString()), eq(testPageable), false);
+
+        // Assert
+        assertNotNull(result);
+        assertEquals(TransactionConstant.RESPONSE_SUCCESS, result.getStatus());
+        assertNotNull(result.getData());
+        assertEquals(1, result.getData().size());
+        assertEquals(testOrderResponse, result.getData().get(0));
+        assertEquals(1L, result.getCount());
+        assertEquals(1L, result.getTotal());
+
+        verify(orderValidator, times(1)).validateMerchantOrderPaymentsRequest(testSearchRequest, testMerchantId, testPageable, false);
+        verify(merchantOrderPaymentDao, times(1)).findBySpecification(eq(testMerchantId), any(MerchantOrderPaymentSearchRequest.class),anyString(), eq(testPageable));
+    }
+
+
 Invalid use of argument matchers!
-3 matchers expected, 2 recorded:
--> at com.epay.transaction.service.RefundServiceTest.getRefundBookingSearchResponse_WithNullRequest(RefundServiceTest.java:346)
--> at com.epay.transaction.service.RefundServiceTest.getRefundBookingSearchResponse_WithNullRequest(RefundServiceTest.java:346)
+4 matchers expected, 5 recorded:
+-> at com.epay.transaction.service.OrderServiceTest.getMerchantOrderPayments_Success(OrderServiceTest.java:407)
+-> at com.epay.transaction.service.OrderServiceTest.getMerchantOrderPayments_Success(OrderServiceTest.java:407)
+-> at com.epay.transaction.service.OrderServiceTest.getMerchantOrderPayments_Success(OrderServiceTest.java:407)
+-> at com.epay.transaction.service.OrderServiceTest.getMerchantOrderPayments_Success(OrderServiceTest.java:407)
+-> at com.epay.transaction.service.OrderServiceTest.getMerchantOrderPayments_Success(OrderServiceTest.java:407)
 
 This exception may occur if matchers are combined with raw values:
     //incorrect:
@@ -83,9 +120,12 @@ For more info see javadoc for Matchers class.
 
 org.mockito.exceptions.misusing.InvalidUseOfMatchersException: 
 Invalid use of argument matchers!
-3 matchers expected, 2 recorded:
--> at com.epay.transaction.service.RefundServiceTest.getRefundBookingSearchResponse_WithNullRequest(RefundServiceTest.java:346)
--> at com.epay.transaction.service.RefundServiceTest.getRefundBookingSearchResponse_WithNullRequest(RefundServiceTest.java:346)
+4 matchers expected, 5 recorded:
+-> at com.epay.transaction.service.OrderServiceTest.getMerchantOrderPayments_Success(OrderServiceTest.java:407)
+-> at com.epay.transaction.service.OrderServiceTest.getMerchantOrderPayments_Success(OrderServiceTest.java:407)
+-> at com.epay.transaction.service.OrderServiceTest.getMerchantOrderPayments_Success(OrderServiceTest.java:407)
+-> at com.epay.transaction.service.OrderServiceTest.getMerchantOrderPayments_Success(OrderServiceTest.java:407)
+-> at com.epay.transaction.service.OrderServiceTest.getMerchantOrderPayments_Success(OrderServiceTest.java:407)
 
 This exception may occur if matchers are combined with raw values:
     //incorrect:
@@ -97,8 +137,15 @@ For example:
 
 For more info see javadoc for Matchers class.
 
-	at com.epay.transaction.dao.RefundDao.searchRefundBookingRequest(RefundDao.java:120)
-	at com.epay.transaction.service.RefundServiceTest.getRefundBookingSearchResponse_WithNullRequest(RefundServiceTest.java:346)
+	at com.epay.transaction.validator.OrderValidator.validateMerchantOrderPaymentsRequest(OrderValidator.java:534)
+	at com.epay.transaction.service.OrderService.getMerchantOrderPayments(OrderService.java:164)
+	at com.epay.transaction.service.OrderServiceTest.getMerchantOrderPayments_Success(OrderServiceTest.java:407)
 	at java.base/java.lang.reflect.Method.invoke(Method.java:580)
 	at java.base/java.util.ArrayList.forEach(ArrayList.java:1596)
 	at java.base/java.util.ArrayList.forEach(ArrayList.java:1596)
+
+
+
+> Task :test
+OrderServiceTest > getMerchantOrderPayments_Success() FAILED
+    org.mockito.exceptions.misusing.InvalidUseOfMatchersException at OrderServiceTest.java:407
