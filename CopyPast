@@ -1,4 +1,45 @@
-    @PostMapping("/recent/{mId}/{currencyCode}")
+public static final String JDBC_MONTHLY_RECENT_TRANSACTION = """
+    SELECT SUM(TOTAL_TRANSACTION_COUNT) AS totalTransactionCount,
+    TO_CHAR(ROUND(SUM(TOTAL_ORDER_AMOUNT),2),'FM999999999999999990.00') AS totalOrderAmount,
+    TO_CHAR(ROUND(SUM(CASE WHEN CURRENCY_CODE = 'USD' THEN TOTAL_ORDER_AMOUNT_NET ELSE TOTAL_ORDER_AMOUNT END),2),'FM999999999999999990.00') AS totalOrderAmountNet,
+    TO_CHAR(ROUND(SUM(CASE WHEN CURRENCY_CODE = 'USD' THEN TOTAL_REFUND_AMOUNT_NET ELSE TOTAL_REFUND_AMOUNT END),2),'FM999999999999999990.00') AS totalRefundAmount,
+    TO_CHAR(ROUND(SUM(CASE WHEN CURRENCY_CODE = 'USD' THEN TOTAL_TAX_AMOUNT_NET ELSE TOTAL_TAX_AMOUNT END),2),'FM999999999999999990.00') AS totalTaxAmount,
+    TO_CHAR(ROUND(SUM(CASE WHEN CURRENCY_CODE = 'USD' THEN TOTAL_NET_SETTLEMENT_AMOUNT_NET ELSE TOTAL_NET_SETTLEMENT_AMOUNT END),2),'FM999999999999999990.00') AS totalNetSettlementAmount,
+    TO_CHAR(ROUND(SUM(CASE WHEN CURRENCY_CODE = 'USD' THEN TOTAL_SETTLED_AMOUNT_NET ELSE TOTAL_SETTLED_AMOUNT END),2),'FM999999999999999990.00') AS totalSettledAmount,
+    TO_CHAR(ROUND(SUM(CASE WHEN CURRENCY_CODE = 'USD' THEN TOTAL_PENDING_SETTLEMENT_AMOUNT_NET ELSE TOTAL_PENDING_SETTLEMENT_AMOUNT END),2),'FM999999999999999990.00') AS totalPendingSettlementAmount,
+    TO_CHAR(TRANSACTION_DATE, 'Mon-YYYY') AS transactionDate, CURRENCY_CODE AS currencyCode
+    FROM VIEW_TRANSACTION_DASHBOARD_REPORT
+    WHERE MID = :mId %s
+    AND TRANSACTION_DATE BETWEEN :fromDate AND :toDate
+    GROUP BY TO_CHAR(TRANSACTION_DATE, 'Mon-YYYY'), CURRENCY_CODE
+    ORDER BY MAX(TRANSACTION_DATE) DESC, CURRENCY_CODE
+    OFFSET :offset ROWS FETCH FIRST :first ROWS ONLY
+    """
+
+
+
+public static final String JDBC_MONTHLY_RECENT_TRANSACTION_COUNT = """
+    SELECT COUNT(*) FROM (
+      SELECT DISTINCT TO_CHAR(TRANSACTION_DATE, 'Mon-YYYY'), CURRENCY_CODE
+      FROM VIEW_TRANSACTION_DASHBOARD_REPORT
+      WHERE MID = :mId %s AND TRANSACTION_DATE BETWEEN :fromDate AND :toDate
+    )
+    """;
+
+public static final String JDBC_DAILY_RECENT_TRANSACTION_COUNT = """
+    SELECT COUNT(*) FROM (
+      SELECT DISTINCT TRUNC(TRANSACTION_DATE), CURRENCY_CODE
+      FROM VIEW_TRANSACTION_DASHBOARD_REPORT
+      WHERE MID = :mId %s AND TRANSACTION_DATE BETWEEN :fromDate AND :toDate
+    )
+    """;
+
+
+
+
+
+
+-----------------------------    @PostMapping("/recent/{mId}/{currencyCode}")
     @Operation(summary = "Get Transaction Success Data based on Frequency(DAILY/MONTHLY)")
     public ReportingResponse<RecentTransactionReport> getRecentTransaction(@PathVariable String mId, @PathVariable String currencyCode, @Valid @RequestBody RecentTransactionRequest recentTransactionRequest, @PageableDefault(size = 50) Pageable pageable) {
         return transactionDashboardService.getRecentTransactionsSummary(mId, currencyCode, recentTransactionRequest, pageable);
