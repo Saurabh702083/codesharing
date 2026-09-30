@@ -1,117 +1,197 @@
-
-@Test
-void downloadMerchantOrderPaymentReport_WithEmptyMerchantId() {
-    // Arrange
-    String emptyMerchantId = "";
-
-    Page<OrderResponse> orderPage = new PageImpl<>(
-            Collections.singletonList(testOrderResponse),
-            testPageable,
-            1
-    );
-
-    when(transactionConfig.getReportPageSize()).thenReturn(1000);
-
-    when(merchantOrderPaymentDao.findBySpecification(
-            eq(emptyMerchantId),
-            any(MerchantOrderPaymentSearchRequest.class),
-            anyString(),
-            any(Pageable.class)
-    )).thenReturn(orderPage);
-
-    // Act
-    orderService.downloadMerchantOrderPaymentReport(
-            response,
-            emptyMerchantId,
-            testMek,
-            testSearchRequest
-    );
-
-    // Assert
-    verify(orderValidator, times(1))
-            .validateMerchantOrderPaymentsRequest(
-                    eq(testSearchRequest),
-                    eq(emptyMerchantId),
-                    any(Pageable.class),
-                    eq(true)
-            );
-
-    verify(merchantOrderPaymentDao, times(1))
-            .findBySpecification(
-                    eq(emptyMerchantId),
-                    any(MerchantOrderPaymentSearchRequest.class),
-                    anyString(),
-                    any(Pageable.class)
-            );
-}
-
-
-
-
-
-
-
-
------------------
-
-@Test
-    void downloadMerchantOrderPaymentReport_WithEmptyMerchantId() {
-        // Arrange
-        String emptyMerchantId = "";
-        Page<OrderResponse> orderPage = new PageImpl<>(Collections.singletonList(testOrderResponse), testPageable, 1);
-        when(transactionConfig.getReportPageSize()).thenReturn(1000);
-        when(merchantOrderPaymentDao.findBySpecification(eq(emptyMerchantId), any(MerchantOrderPaymentSearchRequest.class),anyString(), any(Pageable.class))).thenReturn(orderPage);
-//        when(fileGeneratorService.buildFileModel(any(ReportFormat.class), anyList(), anyList(), anyMap())).thenReturn(new FileModel());
-
-        // Act
-        orderService.downloadMerchantOrderPaymentReport(response, emptyMerchantId,anyString(), testSearchRequest);
-
-        // Assert
-        verify(orderValidator, times(1)).validateMerchantOrderPaymentsRequest(eq(testSearchRequest), eq(emptyMerchantId), any(Pageable.class), eq(true));
-        verify(merchantOrderPaymentDao, times(1)).findBySpecification(eq(emptyMerchantId), any(MerchantOrderPaymentSearchRequest.class),anyString(), any(Pageable.class));
+    @PostMapping("/recent/{mId}/{currencyCode}")
+    @Operation(summary = "Get Transaction Success Data based on Frequency(DAILY/MONTHLY)")
+    public ReportingResponse<RecentTransactionReport> getRecentTransaction(@PathVariable String mId, @PathVariable String currencyCode, @Valid @RequestBody RecentTransactionRequest recentTransactionRequest, @PageableDefault(size = 50) Pageable pageable) {
+        return transactionDashboardService.getRecentTransactionsSummary(mId, currencyCode, recentTransactionRequest, pageable);
     }
 
+@Service
+@RequiredArgsConstructor
+public class TransactionDashboardService {
+    private final LoggerUtility log = LoggerFactoryUtility.getLogger(this.getClass());
+
+    private final TransactionDashboardDao transactionDashboardDao;
+    private final FileGeneratorService fileGeneratorService;
+    private final ReportingConfig reportingConfig;
+    private final TransactionDashboardValidator transactionDashboardValidator;
+
+ public ReportingResponse<RecentTransactionReport> getRecentTransactionsSummary(String mId, String currencyCode, RecentTransactionRequest recentTransactionRequest, Pageable pageable) {
+        transactionDashboardValidator.validateRequest(mId, currencyCode, recentTransactionRequest);
+        log.info("Fetching Recent Transaction for MerchantId: {} and frequency {}", mId, recentTransactionRequest);
+        Page<RecentTransactionReport> transactionDailyTrends = transactionDashboardDao.getRecentTransactionSummary(mId, currencyCode, recentTransactionRequest, pageable);
+        return ReportingResponse.<RecentTransactionReport>builder().data(transactionDailyTrends.stream().toList()).count(transactionDailyTrends.stream().count()).total(transactionDailyTrends.getTotalElements()).status(ReportingConstant.RESPONSE_SUCCESS).build();
+    }
+}
+
+@Component
+@RequiredArgsConstructor
+public class TransactionDashboardDao {
+    private final LoggerUtility log = LoggerFactoryUtility.getLogger(this.getClass());
+    private final TransactionDashboardRepository transactionDashboardRepository;
+ public Page<RecentTransactionReport> getRecentTransactionSummary(String mId, String currencyCode, RecentTransactionRequest recentTransactionRequest, Pageable pageable) {
+        log.info("Fetching recent transaction details for merchant ID: {} with frequency: {}", mId, recentTransactionRequest);
+        if (Frequency.MONTHLY.name().equalsIgnoreCase(recentTransactionRequest.getFrequency())) {
+            return transactionDashboardRepository.getRecentTransactionSummaryMonthly(mId, currencyCode, recentTransactionRequest, pageable);
+        } else {
+            return transactionDashboardRepository.getRecentTransactionSummaryDaily(mId, currencyCode, recentTransactionRequest, pageable);
+        }
+    }
+}
+
+@Repository
+@RequiredArgsConstructor
+public class TransactionDashboardRepository {
+
+    private final NamedParameterJdbcTemplate namedParameterJdbcTemplate;
+    /**
+     * Retrieves daily recent transactions for a given merchant ID.
+     * @param mId String
+     * @param recentTransactionRequest RecentTransactionRequest
+     * @param pageable Pageable
+     * @return Page of RecentTransactionReport
+     */
+    public Page<RecentTransactionReport> getRecentTransactionSummaryDaily(String mId, String currencyCode, RecentTransactionRequest recentTransactionRequest, Pageable pageable) {
+        return getRecentTransactionSummary(mId, currencyCode, recentTransactionRequest, pageable, JDBC_DAILY_RECENT_TRANSACTION, JDBC_DAILY_RECENT_TRANSACTION_COUNT);
+    }
+
+    /**
+     * Retrieves monthly recent transactions for a given merchant ID.
+     * @param mId String
+     * @param recentTransactionRequest RecentTransactionRequest
+     * @param pageable Pageable
+     * @return Page of RecentTransactionReport
+     */
+    public Page<RecentTransactionReport> getRecentTransactionSummaryMonthly(String mId, String currencyCode, RecentTransactionRequest recentTransactionRequest, Pageable pageable) {
+        return getRecentTransactionSummary(mId, currencyCode, recentTransactionRequest, pageable, JDBC_MONTHLY_RECENT_TRANSACTION, JDBC_MONTHLY_RECENT_TRANSACTION_COUNT);
+    }
+
+    private Page<RecentTransactionReport> getRecentTransactionSummary(String mId, String currencyCode, RecentTransactionRequest recentTransactionRequest, Pageable pageable, String selectSQL, String countSQL) {
+        try {
+            MapSqlParameterSource parameters = new MapSqlParameterSource();
+            parameters.addValue(MID, mId);
+            parameters.addValue(CURRENCY_CODE, currencyCode);
+            parameters.addValue(FROM_DATE, recentTransactionRequest.getFromDate());
+            parameters.addValue(TO_DATE, recentTransactionRequest.getToDate());
+            parameters.addValue(FIRST, pageable.getPageSize());
+            parameters.addValue(OFFSET, pageable.getPageNumber() * pageable.getPageSize());
+            String queryCount = appendCurrencyCodeQuery(currencyCode, countSQL, TransactionDashboardQueries.JDBC_CURRENCY_CODE_CONDITION);
+            Long totalCount = namedParameterJdbcTemplate.queryForObject(queryCount, parameters, Long.class);
+            String query = appendCurrencyCodeQuery(currencyCode, selectSQL, TransactionDashboardQueries.JDBC_CURRENCY_CODE_CONDITION);
+            return new PageImpl<>(namedParameterJdbcTemplate.query(query, parameters, BeanPropertyRowMapper.newInstance(RecentTransactionReport.class)), pageable, totalCount != null ? totalCount : 0);
+        } catch (EmptyResultDataAccessException e) {
+            throw new ReportingException(NOT_FOUND_ERROR_CODE, MessageFormat.format(NOT_FOUND_ERROR_MESSAGE, TRANSACTION));
+        }
+    }
+
+@UtilityClass
+public class TransactionDashboardQueries {
+ public static final String JDBC_MONTHLY_RECENT_TRANSACTION =  """
+            SELECT SUM(TOTAL_TRANSACTION_COUNT) AS totalTransactionCount,
+            TO_CHAR(ROUND(SUM(TOTAL_ORDER_AMOUNT),2) ,'FM999999999999999990.00')AS totalOrderAmount,
+            TO_CHAR(ROUND(SUM(TOTAL_REFUND_AMOUNT),2),'FM999999999999999990.00') AS totalRefundAmount,
+            TO_CHAR(ROUND(SUM(TOTAL_TAX_AMOUNT),2),'FM999999999999999990.00') AS totalTaxAmount,
+            TO_CHAR(ROUND(SUM(TOTAL_NET_SETTLEMENT_AMOUNT),2),'FM999999999999999990.00') AS totalNetSettlementAmount,
+            TO_CHAR(ROUND(SUM(TOTAL_SETTLED_AMOUNT),2),'FM999999999999999990.00') AS totalSettledAmount,
+            TO_CHAR(ROUND(SUM(TOTAL_PENDING_SETTLEMENT_AMOUNT),2),'FM999999999999999990.00') AS totalPendingSettlementAmount,
+            TO_CHAR(TRANSACTION_DATE, 'Mon-YYYY') as transactionDate, CURRENCY_CODE as currencyCode
+            from VIEW_TRANSACTION_DASHBOARD_REPORT
+            where MID = :mId %s
+            AND TRANSACTION_DATE BETWEEN :fromDate AND :toDate
+            GROUP By TO_CHAR(TRANSACTION_DATE, 'Mon-YYYY'), CURRENCY_CODE
+            Order By MAX(TRANSACTION_DATE) DESC OFFSET :offset ROWS FETCH FIRST :first ROWS ONLY
+            """;
 
 
-Invalid use of argument matchers!
-0 matchers expected, 1 recorded:
--> at com.epay.transaction.service.OrderServiceTest.downloadMerchantOrderPaymentReport_WithEmptyMerchantId(OrderServiceTest.java:477)
+    public static final String JDBC_DAILY_RECENT_TRANSACTION =  """
+            SELECT SUM(TOTAL_TRANSACTION_COUNT) AS totalTransactionCount,
+            TO_CHAR(ROUND(SUM(TOTAL_ORDER_AMOUNT),2) ,'FM999999999999999990.00')AS totalOrderAmount,
+            TO_CHAR(ROUND(SUM(TOTAL_REFUND_AMOUNT),2),'FM999999999999999990.00') AS totalRefundAmount,
+            TO_CHAR(ROUND(SUM(TOTAL_TAX_AMOUNT),2),'FM999999999999999990.00') AS totalTaxAmount,
+            TO_CHAR(ROUND(SUM(TOTAL_NET_SETTLEMENT_AMOUNT),2),'FM999999999999999990.00') AS totalNetSettlementAmount,
+            TO_CHAR(ROUND(SUM(TOTAL_SETTLED_AMOUNT),2),'FM999999999999999990.00') AS totalSettledAmount,
+            TO_CHAR(ROUND(SUM(TOTAL_PENDING_SETTLEMENT_AMOUNT),2),'FM999999999999999990.00') AS totalPendingSettlementAmount,
+            TO_CHAR(TRUNC(TRANSACTION_DATE), 'DD-MM-YYYY') AS transactionDate, CURRENCY_CODE as currencyCode
+            FROM VIEW_TRANSACTION_DASHBOARD_REPORT
+            WHERE MID = :mId %s
+            AND TRANSACTION_DATE BETWEEN :fromDate AND :toDate
+            GROUP BY TRUNC(TRANSACTION_DATE), CURRENCY_CODE ORDER BY TRUNC(TRANSACTION_DATE) DESC
+            OFFSET :offset ROWS FETCH FIRST :first ROWS ONLY
+            """;
 
-This exception may occur if matchers are combined with raw values:
-    //incorrect:
-    someMethod(any(), "raw String");
-When using matchers, all arguments have to be provided by matchers.
-For example:
-    //correct:
-    someMethod(any(), eq("String by matcher"));
+ public static final String JDBC_MONTHLY_RECENT_TRANSACTION_COUNT = """
+                SELECT count(DISTINCT TO_CHAR(TRANSACTION_DATE, 'Mon-YYYY')) as record_count FROM
+                VIEW_TRANSACTION_DASHBOARD_REPORT
+                WHERE MID = :mId %s AND TRANSACTION_DATE BETWEEN :fromDate AND :toDate
+            """;
 
-For more info see javadoc for Matchers class.
+    public static final String JDBC_CURRENCY_CODE_CONDITION = "AND CURRENCY_CODE = :currencyCode";
+}
 
-org.mockito.exceptions.misusing.InvalidUseOfMatchersException: 
-Invalid use of argument matchers!
-0 matchers expected, 1 recorded:
--> at com.epay.transaction.service.OrderServiceTest.downloadMerchantOrderPaymentReport_WithEmptyMerchantId(OrderServiceTest.java:477)
+@UtilityClass
+public class ReportUtils {
+    private static final LoggerUtility log = LoggerFactoryUtility.getLogger(ReportUtils.class);
+    private final ObjectMapper mapper = new ObjectMapper();
+    private static final Random secureRandom = new SecureRandom();
+    private static final String TIME_TAKEN = "Time taken: %dsec:%03dms";
+   public static String appendCurrencyCodeQuery(String currencyCode, String queryFormat, String appendQuery) {
+        if(StringUtils.equalsAnyIgnoreCase(currencyCode, CurrencyCode.ALL.name(), StringUtils.EMPTY, null)) {
+            return queryFormat.formatted(StringUtils.EMPTY);
+        } else {
+            return queryFormat.formatted(appendQuery);
+        }
+    }
 
-This exception may occur if matchers are combined with raw values:
-    //incorrect:
-    someMethod(any(), "raw String");
-When using matchers, all arguments have to be provided by matchers.
-For example:
-    //correct:
-    someMethod(any(), eq("String by matcher"));
+------------------------
 
-For more info see javadoc for Matchers class.
+@Data
+@Builder
+@AllArgsConstructor
+@NoArgsConstructor
+@JsonInclude(JsonInclude.Include.NON_NULL)
+public class RecentTransactionReport {
+    private Long totalTransactionCount;
+    private String totalOrderAmount;
+    private String totalRefundAmount;
+    private String totalTaxAmount;
+    private String totalNetSettlementAmount;
+    private String totalSettledAmount;
+    private String totalPendingSettlementAmount;
+    private String transactionDate;
+    private String currencyCode;
+}
 
-	at com.epay.transaction.config.TransactionConfig.getReportPageSize(TransactionConfig.java:37)
-	at com.epay.transaction.service.OrderService.downloadMerchantOrderPaymentReport(OrderService.java:187)
-	at com.epay.transaction.service.OrderServiceTest.downloadMerchantOrderPaymentReport_WithEmptyMerchantId(OrderServiceTest.java:477)
-	at java.base/java.lang.reflect.Method.invoke(Method.java:580)
-	at java.base/java.util.ArrayList.forEach(ArrayList.java:1596)
-	at java.base/java.util.ArrayList.forEach(ArrayList.java:1596)
+@Data
+@Builder
+@AllArgsConstructor
+@NoArgsConstructor
+public class RecentTransactionRequest {
 
+    private String frequency;
+    @NotBlank(message = HIBERNATOR_REQUIRED_ERROR_MESSAGE)
+    private String fromDate;
+    @NotBlank(message = HIBERNATOR_REQUIRED_ERROR_MESSAGE)
+    private String toDate;
 
+}
 
-> Task :test
-OrderServiceTest > downloadMerchantOrderPaymentReport_WithEmptyMerchantId() FAILED
-    org.mockito.exceptions.misusing.InvalidUseOfMatchersException at OrderServiceTest.java:477
-1 test completed, 1 failed
+-------------------------
+DB Stuture;-
+COLUME_NAME DATA_TYPE
+MID	VARCHAR2(20)
+SETTLEMENT_TIME	DATE
+TOTAL_TRANSACTION_COUNT	NUMBER
+TOTAL_ORDER_AMOUNT	NUMBER
+TOTAL_ORDER_AMOUNT_USD	NUMBER
+TOTAL_REFUND_AMOUNT	NUMBER
+TOTAL_REFUND_AMOUNT_USD	NUMBER
+TOTAL_TAX_AMOUNT	NUMBER
+TOTAL_TAX_AMOUNT_USD	NUMBER
+TOTAL_NET_SETTLEMENT_AMOUNT	NUMBER
+TOTAL_NET_SETTLEMENT_AMOUNT_USD	NUMBER
+TOTAL_SETTLED_AMOUNT	NUMBER
+TOTAL_SETTLED_AMOUNT_USD	NUMBER
+TOTAL_PENDING_SETTLEMENT_AMOUNT	NUMBER
+TOTAL_PENDING_SETTLEMENT_AMOUNT_USD	NUMBER
+TRANSACTION_DATE	DATE
+PREVIOUS_SETTLED_AMOUNT	NUMBER
+PREVIOUS_SETTLED_AMOUNT_USD	NUMBER
+CURRENCY_CODE	VARCHAR2(50)
