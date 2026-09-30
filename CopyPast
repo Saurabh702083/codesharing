@@ -1,3 +1,188 @@
+
+// =====================================================================
+// Split each section into its own file in your project.
+// CHANGED: RecentTransactionReport (new field), TransactionDashboardQueries
+// UNCHANGED: Controller, Service, Dao, Repository, Request, ReportUtils
+// =====================================================================
+
+
+// ---------------------------------------------------------------------
+// 1. RecentTransactionReport.java  (CHANGED: added totalOrderAmountNet)
+// ---------------------------------------------------------------------
+@Data
+@Builder
+@AllArgsConstructor
+@NoArgsConstructor
+@JsonInclude(JsonInclude.Include.NON_NULL)
+public class RecentTransactionReport {
+    private Long totalTransactionCount;
+    private String totalOrderAmount;
+    private String totalOrderAmountNet;      // NEW
+    private String totalRefundAmount;
+    private String totalTaxAmount;
+    private String totalNetSettlementAmount;
+    private String totalSettledAmount;
+    private String totalPendingSettlementAmount;
+    private String transactionDate;
+    private String currencyCode;
+}
+
+
+// ---------------------------------------------------------------------
+// 2. TransactionDashboardQueries.java  (CHANGED)
+//
+// Rules applied per row (rows are grouped by CURRENCY_CODE):
+//   INR -> totalOrderAmount = TOTAL_ORDER_AMOUNT
+//          totalOrderAmountNet = TOTAL_ORDER_AMOUNT
+//          all other amounts = normal columns
+//   USD -> totalOrderAmount = TOTAL_ORDER_AMOUNT
+//          totalOrderAmountNet = TOTAL_ORDER_AMOUNT_NET
+//          all other amounts = *_NET columns
+//   ALL -> no currency filter, so both INR and USD rows are returned
+// ---------------------------------------------------------------------
+@UtilityClass
+public class TransactionDashboardQueries {
+
+    public static final String JDBC_MONTHLY_RECENT_TRANSACTION = """
+            SELECT SUM(TOTAL_TRANSACTION_COUNT) AS totalTransactionCount,
+            TO_CHAR(ROUND(SUM(TOTAL_ORDER_AMOUNT),2),'FM999999999999999990.00') AS totalOrderAmount,
+            TO_CHAR(ROUND(SUM(CASE WHEN CURRENCY_CODE = 'USD' THEN TOTAL_ORDER_AMOUNT_NET ELSE TOTAL_ORDER_AMOUNT END),2),'FM999999999999999990.00') AS totalOrderAmountNet,
+            TO_CHAR(ROUND(SUM(CASE WHEN CURRENCY_CODE = 'USD' THEN TOTAL_REFUND_AMOUNT_NET ELSE TOTAL_REFUND_AMOUNT END),2),'FM999999999999999990.00') AS totalRefundAmount,
+            TO_CHAR(ROUND(SUM(CASE WHEN CURRENCY_CODE = 'USD' THEN TOTAL_TAX_AMOUNT_NET ELSE TOTAL_TAX_AMOUNT END),2),'FM999999999999999990.00') AS totalTaxAmount,
+            TO_CHAR(ROUND(SUM(CASE WHEN CURRENCY_CODE = 'USD' THEN TOTAL_NET_SETTLEMENT_AMOUNT_NET ELSE TOTAL_NET_SETTLEMENT_AMOUNT END),2),'FM999999999999999990.00') AS totalNetSettlementAmount,
+            TO_CHAR(ROUND(SUM(CASE WHEN CURRENCY_CODE = 'USD' THEN TOTAL_SETTLED_AMOUNT_NET ELSE TOTAL_SETTLED_AMOUNT END),2),'FM999999999999999990.00') AS totalSettledAmount,
+            TO_CHAR(ROUND(SUM(CASE WHEN CURRENCY_CODE = 'USD' THEN TOTAL_PENDING_SETTLEMENT_AMOUNT_NET ELSE TOTAL_PENDING_SETTLEMENT_AMOUNT END),2),'FM999999999999999990.00') AS totalPendingSettlementAmount,
+            TO_CHAR(TRANSACTION_DATE, 'Mon-YYYY') AS transactionDate, CURRENCY_CODE AS currencyCode
+            FROM VIEW_TRANSACTION_DASHBOARD_REPORT
+            WHERE MID = :mId %s
+            AND TRANSACTION_DATE BETWEEN :fromDate AND :toDate
+            GROUP BY TO_CHAR(TRANSACTION_DATE, 'Mon-YYYY'), CURRENCY_CODE
+            ORDER BY MAX(TRANSACTION_DATE) DESC, CURRENCY_CODE
+            OFFSET :offset ROWS FETCH FIRST :first ROWS ONLY
+            """;
+
+    public static final String JDBC_DAILY_RECENT_TRANSACTION = """
+            SELECT SUM(TOTAL_TRANSACTION_COUNT) AS totalTransactionCount,
+            TO_CHAR(ROUND(SUM(TOTAL_ORDER_AMOUNT),2),'FM999999999999999990.00') AS totalOrderAmount,
+            TO_CHAR(ROUND(SUM(CASE WHEN CURRENCY_CODE = 'USD' THEN TOTAL_ORDER_AMOUNT_NET ELSE TOTAL_ORDER_AMOUNT END),2),'FM999999999999999990.00') AS totalOrderAmountNet,
+            TO_CHAR(ROUND(SUM(CASE WHEN CURRENCY_CODE = 'USD' THEN TOTAL_REFUND_AMOUNT_NET ELSE TOTAL_REFUND_AMOUNT END),2),'FM999999999999999990.00') AS totalRefundAmount,
+            TO_CHAR(ROUND(SUM(CASE WHEN CURRENCY_CODE = 'USD' THEN TOTAL_TAX_AMOUNT_NET ELSE TOTAL_TAX_AMOUNT END),2),'FM999999999999999990.00') AS totalTaxAmount,
+            TO_CHAR(ROUND(SUM(CASE WHEN CURRENCY_CODE = 'USD' THEN TOTAL_NET_SETTLEMENT_AMOUNT_NET ELSE TOTAL_NET_SETTLEMENT_AMOUNT END),2),'FM999999999999999990.00') AS totalNetSettlementAmount,
+            TO_CHAR(ROUND(SUM(CASE WHEN CURRENCY_CODE = 'USD' THEN TOTAL_SETTLED_AMOUNT_NET ELSE TOTAL_SETTLED_AMOUNT END),2),'FM999999999999999990.00') AS totalSettledAmount,
+            TO_CHAR(ROUND(SUM(CASE WHEN CURRENCY_CODE = 'USD' THEN TOTAL_PENDING_SETTLEMENT_AMOUNT_NET ELSE TOTAL_PENDING_SETTLEMENT_AMOUNT END),2),'FM999999999999999990.00') AS totalPendingSettlementAmount,
+            TO_CHAR(TRUNC(TRANSACTION_DATE), 'DD-MM-YYYY') AS transactionDate, CURRENCY_CODE AS currencyCode
+            FROM VIEW_TRANSACTION_DASHBOARD_REPORT
+            WHERE MID = :mId %s
+            AND TRANSACTION_DATE BETWEEN :fromDate AND :toDate
+            GROUP BY TRUNC(TRANSACTION_DATE), CURRENCY_CODE
+            ORDER BY TRUNC(TRANSACTION_DATE) DESC, CURRENCY_CODE
+            OFFSET :offset ROWS FETCH FIRST :first ROWS ONLY
+            """;
+
+    // Count must be per (date, currency) because ALL returns one row per currency per date
+    public static final String JDBC_MONTHLY_RECENT_TRANSACTION_COUNT = """
+            SELECT COUNT(*) AS record_count FROM (
+                SELECT DISTINCT TO_CHAR(TRANSACTION_DATE, 'Mon-YYYY'), CURRENCY_CODE
+                FROM VIEW_TRANSACTION_DASHBOARD_REPORT
+                WHERE MID = :mId %s AND TRANSACTION_DATE BETWEEN :fromDate AND :toDate
+            )
+            """;
+
+    public static final String JDBC_DAILY_RECENT_TRANSACTION_COUNT = """
+            SELECT COUNT(*) AS record_count FROM (
+                SELECT DISTINCT TRUNC(TRANSACTION_DATE), CURRENCY_CODE
+                FROM VIEW_TRANSACTION_DASHBOARD_REPORT
+                WHERE MID = :mId %s AND TRANSACTION_DATE BETWEEN :fromDate AND :toDate
+            )
+            """;
+
+    public static final String JDBC_CURRENCY_CODE_CONDITION = "AND CURRENCY_CODE = :currencyCode";
+}
+
+
+// ---------------------------------------------------------------------
+// 3. UNCHANGED classes (for reference, no edits needed)
+// ---------------------------------------------------------------------
+
+// Controller: same as before
+@PostMapping("/recent/{mId}/{currencyCode}")
+@Operation(summary = "Get Transaction Success Data based on Frequency(DAILY/MONTHLY)")
+public ReportingResponse<RecentTransactionReport> getRecentTransaction(@PathVariable String mId, @PathVariable String currencyCode, @Valid @RequestBody RecentTransactionRequest recentTransactionRequest, @PageableDefault(size = 50) Pageable pageable) {
+    return transactionDashboardService.getRecentTransactionsSummary(mId, currencyCode, recentTransactionRequest, pageable);
+}
+
+// Service: same as before
+public ReportingResponse<RecentTransactionReport> getRecentTransactionsSummary(String mId, String currencyCode, RecentTransactionRequest recentTransactionRequest, Pageable pageable) {
+    transactionDashboardValidator.validateRequest(mId, currencyCode, recentTransactionRequest);
+    log.info("Fetching Recent Transaction for MerchantId: {} and frequency {}", mId, recentTransactionRequest);
+    Page<RecentTransactionReport> transactionDailyTrends = transactionDashboardDao.getRecentTransactionSummary(mId, currencyCode, recentTransactionRequest, pageable);
+    return ReportingResponse.<RecentTransactionReport>builder().data(transactionDailyTrends.stream().toList()).count(transactionDailyTrends.stream().count()).total(transactionDailyTrends.getTotalElements()).status(ReportingConstant.RESPONSE_SUCCESS).build();
+}
+
+// Dao: same as before
+public Page<RecentTransactionReport> getRecentTransactionSummary(String mId, String currencyCode, RecentTransactionRequest recentTransactionRequest, Pageable pageable) {
+    log.info("Fetching recent transaction details for merchant ID: {} with frequency: {}", mId, recentTransactionRequest);
+    if (Frequency.MONTHLY.name().equalsIgnoreCase(recentTransactionRequest.getFrequency())) {
+        return transactionDashboardRepository.getRecentTransactionSummaryMonthly(mId, currencyCode, recentTransactionRequest, pageable);
+    } else {
+        return transactionDashboardRepository.getRecentTransactionSummaryDaily(mId, currencyCode, recentTransactionRequest, pageable);
+    }
+}
+
+// Repository: same as before
+public Page<RecentTransactionReport> getRecentTransactionSummaryDaily(String mId, String currencyCode, RecentTransactionRequest recentTransactionRequest, Pageable pageable) {
+    return getRecentTransactionSummary(mId, currencyCode, recentTransactionRequest, pageable, JDBC_DAILY_RECENT_TRANSACTION, JDBC_DAILY_RECENT_TRANSACTION_COUNT);
+}
+
+public Page<RecentTransactionReport> getRecentTransactionSummaryMonthly(String mId, String currencyCode, RecentTransactionRequest recentTransactionRequest, Pageable pageable) {
+    return getRecentTransactionSummary(mId, currencyCode, recentTransactionRequest, pageable, JDBC_MONTHLY_RECENT_TRANSACTION, JDBC_MONTHLY_RECENT_TRANSACTION_COUNT);
+}
+
+private Page<RecentTransactionReport> getRecentTransactionSummary(String mId, String currencyCode, RecentTransactionRequest recentTransactionRequest, Pageable pageable, String selectSQL, String countSQL) {
+    try {
+        MapSqlParameterSource parameters = new MapSqlParameterSource();
+        parameters.addValue(MID, mId);
+        parameters.addValue(CURRENCY_CODE, currencyCode);
+        parameters.addValue(FROM_DATE, recentTransactionRequest.getFromDate());
+        parameters.addValue(TO_DATE, recentTransactionRequest.getToDate());
+        parameters.addValue(FIRST, pageable.getPageSize());
+        parameters.addValue(OFFSET, pageable.getPageNumber() * pageable.getPageSize());
+        String queryCount = appendCurrencyCodeQuery(currencyCode, countSQL, TransactionDashboardQueries.JDBC_CURRENCY_CODE_CONDITION);
+        Long totalCount = namedParameterJdbcTemplate.queryForObject(queryCount, parameters, Long.class);
+        String query = appendCurrencyCodeQuery(currencyCode, selectSQL, TransactionDashboardQueries.JDBC_CURRENCY_CODE_CONDITION);
+        return new PageImpl<>(namedParameterJdbcTemplate.query(query, parameters, BeanPropertyRowMapper.newInstance(RecentTransactionReport.class)), pageable, totalCount != null ? totalCount : 0);
+    } catch (EmptyResultDataAccessException e) {
+        throw new ReportingException(NOT_FOUND_ERROR_CODE, MessageFormat.format(NOT_FOUND_ERROR_MESSAGE, TRANSACTION));
+    }
+}
+
+// ReportUtils.appendCurrencyCodeQuery: same as before
+public static String appendCurrencyCodeQuery(String currencyCode, String queryFormat, String appendQuery) {
+    if (StringUtils.equalsAnyIgnoreCase(currencyCode, CurrencyCode.ALL.name(), StringUtils.EMPTY, null)) {
+        return queryFormat.formatted(StringUtils.EMPTY);
+    } else {
+        return queryFormat.formatted(appendQuery);
+    }
+}
+-----+++++
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 public static final String JDBC_MONTHLY_RECENT_TRANSACTION = """
     SELECT SUM(TOTAL_TRANSACTION_COUNT) AS totalTransactionCount,
     TO_CHAR(ROUND(SUM(TOTAL_ORDER_AMOUNT),2),'FM999999999999999990.00') AS totalOrderAmount,
