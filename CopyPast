@@ -1,3 +1,327 @@
+package com.example.mapping.entity;
+
+import jakarta.persistence.*;
+import lombok.Getter;
+import lombok.Setter;
+
+@Entity
+@Table(name = "PAYGATEWAY_MASTER")
+@Getter
+@Setter
+public class PaygatewayMaster {
+
+    @Id
+    @Column(name = "ID")
+    private Long id;
+
+    @Column(name = "AGGREGATOR_CODE")
+    private String aggregatorCode;
+
+    @Column(name = "CURRENCY_COMB_CODE")
+    private String currencyCombCode;
+
+    @Column(name = "PAYMODE_CODE")
+    private String paymodeCode;
+
+    @Column(name = "GATEWAY_NAME")
+    private String gatewayName;
+
+    @Column(name = "PAYPROC_ID")
+    private String payprocId;
+
+    @Column(name = "PAYPROC_TYPE")
+    private String payprocType;
+
+    @Column(name = "ME_CODE")
+    private String meCode;
+
+    @Column(name = "TEMPLATE_PATH")
+    private String templatePath;
+
+    @Column(name = "CREATED_AT")
+    private Long createdAt;
+
+    @Column(name = "UPDATED_AT")
+    private Long updatedAt;
+
+    @Column(name = "CREATED_BY")
+    private String createdBy;
+
+    @Column(name = "UPDATED_BY")
+    private String updatedBy;
+}
+
+
+
+package com.example.mapping.repository;
+
+public interface MeCodeMappingProjection {
+
+    String getCurrencyCombCode();
+    String getPaymodeCode();
+    String getGatewayId();
+    String getGatewayName();
+    String getPayProcId();
+    String getPayProcType();
+    String getMeCode();
+    String getTemplatePath();
+    String getAuthStatus();
+    String getMakerComment();
+    String getCheckerComment();
+}
+
+
+
+
+package com.example.mapping.repository;
+
+import com.example.mapping.entity.PaygatewayMaster;
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
+
+import java.util.List;
+
+public interface PaygatewayMasterRepository extends JpaRepository<PaygatewayMaster, Long> {
+
+    @Query(value = """
+            SELECT mc.CURRENCY_COMB_CODE      AS "currencyCombCode",
+                   cp.PAYMODE_CODE            AS "paymodeCode",
+                   TO_CHAR(g.ID)              AS "gatewayId",
+                   g.GATEWAY_NAME             AS "gatewayName",
+                   g.PAYPROC_ID               AS "payProcId",
+                   g.PAYPROC_TYPE             AS "payProcType",
+                   g.ME_CODE                  AS "meCode",
+                   g.TEMPLATE_PATH            AS "templatePath",
+                   mp.AUTH_STATUS             AS "authStatus",
+                   mp.MAKER_COMMENT           AS "makerComment",
+                   mp.CHECKER_COMMENT         AS "checkerComment"
+            FROM   MERCHANT_CURRENCY_COMBINATION_MAPPING mc
+            JOIN   CURRENCY_COMB_PAYMODE_MAPPING cp
+                   ON  cp.AGGREGATOR_CODE    = mc.AGGREGATOR_CODE
+                   AND cp.CURRENCY_COMB_CODE = mc.CURRENCY_COMB_CODE
+            JOIN   PAYGATEWAY_MASTER g
+                   ON  g.AGGREGATOR_CODE     = cp.AGGREGATOR_CODE
+                   AND g.CURRENCY_COMB_CODE  = cp.CURRENCY_COMB_CODE
+                   AND g.PAYMODE_CODE        = cp.PAYMODE_CODE
+            LEFT JOIN MERCHANT_PAYMODE_MAPPING mp
+                   ON  mp.MERCHANT_ID        = mc.MERCHANT_ID
+                   AND mp.AGGREGATOR_CODE    = cp.AGGREGATOR_CODE
+                   AND mp.PAYMODE_CODE       = cp.PAYMODE_CODE
+            WHERE  mc.MERCHANT_ID = :mId
+            ORDER BY mc.CURRENCY_COMB_CODE, cp.PAYMODE_CODE, g.GATEWAY_NAME
+            """, nativeQuery = true)
+    List<MeCodeMappingProjection> findMeCodeMappingByMerchantId(@Param("mId") String mId);
+}
+
+package com.example.mapping.dto;
+
+import lombok.AllArgsConstructor;
+import lombok.Data;
+import lombok.NoArgsConstructor;
+
+import java.util.List;
+
+@Data
+@NoArgsConstructor
+@AllArgsConstructor
+public class MeCodeMappingResponse {
+    private String mId;
+    private List<CurrencyComboDto> currencyCombos;
+}
+
+
+
+package com.example.mapping.dto;
+
+import lombok.AllArgsConstructor;
+import lombok.Data;
+import lombok.NoArgsConstructor;
+
+import java.util.List;
+
+@Data
+@NoArgsConstructor
+@AllArgsConstructor
+public class CurrencyComboDto {
+    private String currencyCombCode;
+    private List<PaymodeDto> paymodes;
+}
+
+
+
+package com.example.mapping.dto;
+
+import lombok.AllArgsConstructor;
+import lombok.Data;
+import lombok.NoArgsConstructor;
+
+import java.util.List;
+
+@Data
+@NoArgsConstructor
+@AllArgsConstructor
+public class PaymodeDto {
+    private String paymodeCode;
+    private String authStatus;
+    private String makerComment;
+    private String checkerComment;
+    private List<GatewayDto> gateways;
+}
+
+
+package com.example.mapping.dto;
+
+import lombok.AllArgsConstructor;
+import lombok.Data;
+import lombok.NoArgsConstructor;
+
+@Data
+@NoArgsConstructor
+@AllArgsConstructor
+public class GatewayDto {
+    private String gatewayId;
+    private String gatewayName;
+    private String payProcId;
+    private String payProcType;
+    private String meCode;
+    private String status;        // Active / In-Active
+    private String templatePath;  // used by Download icon
+}
+
+
+
+package com.example.mapping.mapper;
+
+import com.example.mapping.dto.GatewayDto;
+import com.example.mapping.dto.PaymodeDto;
+import com.example.mapping.repository.MeCodeMappingProjection;
+import org.mapstruct.Mapper;
+import org.mapstruct.Mapping;
+import org.mapstruct.Named;
+
+import java.util.List;
+
+@Mapper(componentModel = "spring")
+public interface MeCodeMappingMapper {
+
+    @Mapping(target = "status", source = "meCode", qualifiedByName = "meCodeToStatus")
+    GatewayDto toGatewayDto(MeCodeMappingProjection projection);
+
+    List<GatewayDto> toGatewayDtos(List<MeCodeMappingProjection> projections);
+
+    @Mapping(target = "gateways", ignore = true)
+    PaymodeDto toPaymodeDto(MeCodeMappingProjection projection);
+
+    @Named("meCodeToStatus")
+    default String meCodeToStatus(String meCode) {
+        return (meCode == null || meCode.isBlank()) ? "In-Active" : "Active";
+    }
+}
+
+
+
+
+package com.example.mapping.service;
+
+import com.example.mapping.dto.CurrencyComboDto;
+import com.example.mapping.dto.MeCodeMappingResponse;
+import com.example.mapping.dto.PaymodeDto;
+import com.example.mapping.mapper.MeCodeMappingMapper;
+import com.example.mapping.repository.MeCodeMappingProjection;
+import com.example.mapping.repository.PaygatewayMasterRepository;
+import org.springframework.stereotype.Service;
+
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.stream.Collectors;
+
+@Service
+public class MeCodeMappingService {
+
+    private final PaygatewayMasterRepository repository;
+    private final MeCodeMappingMapper mapper;
+
+    public MeCodeMappingService(PaygatewayMasterRepository repository,
+                                MeCodeMappingMapper mapper) {
+        this.repository = repository;
+        this.mapper = mapper;
+    }
+
+    public MeCodeMappingResponse fetch(String mId) {
+        List<MeCodeMappingProjection> rows = repository.findMeCodeMappingByMerchantId(mId);
+
+        List<CurrencyComboDto> combos = rows.stream()
+                .collect(Collectors.groupingBy(MeCodeMappingProjection::getCurrencyCombCode,
+                        LinkedHashMap::new, Collectors.toList()))
+                .entrySet().stream()
+                .map(e -> new CurrencyComboDto(e.getKey(), toPaymodes(e.getValue())))
+                .toList();
+
+        return new MeCodeMappingResponse(mId, combos);
+    }
+
+    private List<PaymodeDto> toPaymodes(List<MeCodeMappingProjection> rows) {
+        return rows.stream()
+                .collect(Collectors.groupingBy(MeCodeMappingProjection::getPaymodeCode,
+                        LinkedHashMap::new, Collectors.toList()))
+                .values().stream()
+                .map(paymodeRows -> {
+                    PaymodeDto paymode = mapper.toPaymodeDto(paymodeRows.getFirst());
+                    paymode.setGateways(mapper.toGatewayDtos(paymodeRows));
+                    return paymode;
+                })
+                .toList();
+    }
+}
+
+
+
+
+package com.example.mapping.controller;
+
+import com.example.mapping.dto.MeCodeMappingResponse;
+import com.example.mapping.service.MeCodeMappingService;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RestController;
+
+@RestController
+@RequestMapping("/api/merchant")
+public class MeCodeMappingController {
+
+    private final MeCodeMappingService service;
+
+    public MeCodeMappingController(MeCodeMappingService service) {
+        this.service = service;
+    }
+
+    @GetMapping("/me-code-mapping")
+    public MeCodeMappingResponse fetch(@RequestParam("mId") String mId) {
+        return service.fetch(mId);
+    }
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+++++++++++++
 PAYGATEWAY_MASTER(Table):-
 ID	NUMBER
 AGGREGATOR_CODE	VARCHAR2(10 BYTE)
