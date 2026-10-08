@@ -1,3 +1,107 @@
+package com.example.mapping.service;
+
+import com.example.mapping.dto.CurrencyComboDto;
+import com.example.mapping.dto.GatewayDto;
+import com.example.mapping.dto.MeCodeMappingResponse;
+import com.example.mapping.dto.PaymodeDto;
+import com.example.mapping.entity.MerchantPaygatewayMapping;
+import com.example.mapping.mapper.MeCodeMappingMapper;
+import com.example.mapping.repository.MeCodeMappingProjection;
+import com.example.mapping.repository.MerchantPaygatewayMappingRepository;
+import com.example.mapping.repository.PaygatewayMasterRepository;
+import org.springframework.stereotype.Service;
+
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+
+@Service
+public class MeCodeMappingService {
+
+    private final PaygatewayMasterRepository masterRepository;
+    private final MerchantPaygatewayMappingRepository mappingRepository;
+    private final MeCodeMappingMapper mapper;
+
+    public MeCodeMappingService(PaygatewayMasterRepository masterRepository,
+                                MerchantPaygatewayMappingRepository mappingRepository,
+                                MeCodeMappingMapper mapper) {
+        this.masterRepository = masterRepository;
+        this.mappingRepository = mappingRepository;
+        this.mapper = mapper;
+    }
+
+    public MeCodeMappingResponse fetch(String mId) {
+
+        // Step 1: gateways already saved by this merchant (DB hit 1)
+        Map<String, MerchantPaygatewayMapping> savedGateways = getSavedGateways(mId);
+
+        // Step 2: all gateways from master (DB hit 2)
+        List<MeCodeMappingProjection> masterRows = masterRepository.findMeCodeMappingByMerchantId(mId);
+
+        // Step 3: build response -> currency combo -> paymode -> gateways
+        Map<String, CurrencyComboDto> currencyComboMap = new LinkedHashMap<>();
+        Map<String, PaymodeDto> paymodeMap = new HashMap<>();
+
+        for (MeCodeMappingProjection row : masterRows) {
+
+            // currency combo (create once)
+            CurrencyComboDto currencyCombo = currencyComboMap.get(row.getCurrencyCombCode());
+            if (currencyCombo == null) {
+                currencyCombo = new CurrencyComboDto();
+                currencyCombo.setCurrencyCombCode(row.getCurrencyCombCode());
+                currencyCombo.setPaymodes(new ArrayList<>());
+                currencyComboMap.put(row.getCurrencyCombCode(), currencyCombo);
+            }
+
+            // paymode inside that currency combo (create once)
+            String paymodeKey = row.getCurrencyCombCode() + "_" + row.getPaymodeCode();
+            PaymodeDto paymode = paymodeMap.get(paymodeKey);
+            if (paymode == null) {
+                paymode = mapper.toPaymodeDto(row);
+                paymode.setGateways(new ArrayList<>());
+                paymodeMap.put(paymodeKey, paymode);
+                currencyCombo.getPaymodes().add(paymode);
+            }
+
+            // gateway inside that paymode
+            GatewayDto gateway = mapper.toGatewayDto(row);
+
+            // if merchant already saved this gateway, fill saved details
+            MerchantPaygatewayMapping savedGateway = savedGateways.get(row.getGatewayId());
+            if (savedGateway != null) {
+                mapper.updateGatewayDto(savedGateway, gateway);
+            }
+
+            paymode.getGateways().add(gateway);
+        }
+
+        MeCodeMappingResponse response = new MeCodeMappingResponse();
+        response.setMId(mId);
+        response.setCurrencyCombos(new ArrayList<>(currencyComboMap.values()));
+        return response;
+    }
+
+    // key = gatewayId, value = saved record of this merchant
+    private Map<String, MerchantPaygatewayMapping> getSavedGateways(String mId) {
+        Map<String, MerchantPaygatewayMapping> savedGateways = new HashMap<>();
+
+        List<MerchantPaygatewayMapping> savedList = mappingRepository.findByMerchantId(mId);
+        for (MerchantPaygatewayMapping saved : savedList) {
+            savedGateways.put(String.valueOf(saved.getGatewayId()), saved);
+        }
+        return savedGateways;
+    }
+}
+
+
+
+
+
+
+
+
 package com.example.mapping.entity;
 
 import jakarta.persistence.*;
