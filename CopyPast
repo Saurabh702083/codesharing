@@ -1,3 +1,16 @@
+ "id":""
+									"gatewayId": 10,
+									"currencyCombCode": "INR-INR"
+									"paymodeCode": "CC"
+                                    "gatewayName": "State Bank of India",
+                                    "payProcId": "VISA",
+                                    "payProcType": "OFFUS",
+                                    "meCode": null,
+                                    "templatePath": null,
+                                    "authStatus": null,
+                                    "makerComment": null,
+                                    "checkerComment": null
+
 @RequiredArgsConstructor
 @RestController
 @RequestMapping("/paymode")
