@@ -1,3 +1,246 @@
+@RequiredArgsConstructor
+@RestController
+@RequestMapping("/paymode-meCode")
+public class PaymodeAndMEController {
+    private final LoggerUtility logger = LoggerFactoryUtility.getLogger(this.getClass());
+    private PaymodeAndMEService paymodeAndMEService;
+
+    @PreAuthorize("hasAnyRole('ONBOARDING_MANAGER','BIZ_SUPPORT')")
+    @GetMapping("/{mId}")
+    @Operation(summary = "Get ME code details for merchant id for maker and checker")
+    public AdminPortalResponse<MeCodeMappingResponse> getMerchantRfcDetails(@PathVariable("mId") String mId) {
+        logger.info("Getting merchant RFC for by mId: {}", mId);
+        return paymodeAndMEService.getMECodeDetails(mId);
+
+    }
+
+
+}
+
+@Service
+@RequiredArgsConstructor
+public class PaymodeAndMEService {
+    private final LoggerUtility logger = LoggerFactoryUtility.getLogger(this.getClass());
+    private final MerchantValidator merchantValidator;
+    private final PaymodeAndMEDao paymodeAndMEDao;
+    private final MeCodeMappingMapper mapper;
+
+
+    public AdminPortalResponse<MeCodeMappingResponse> getMECodeDetails(String mId) {
+        logger.info("Validating mId: {}", mId);
+        merchantValidator.validateMid(mId);
+        //  gateways already saved  keyed by gatewayId
+        Map<String, MerchantPaygatewayMapping> savedByGatewayId = paymodeAndMEDao
+                .fetchMerchantPaygatewayMapping(mId).stream().collect(Collectors.toMap(m -> String.valueOf(m.getGatewayId()), Function.identity(), (a, b) -> a));
+
+        // all gateways from master
+        List<MeCodeMappingProjection> rows = paymodeAndMEDao. findMeCodeMappingByMerchantId(mId);
+
+        List<CurrencyComboDto> combos = rows.stream()
+                .collect(Collectors.groupingBy(MeCodeMappingProjection::getCurrencyCombCode,
+                        LinkedHashMap::new, Collectors.toList()))
+                .entrySet().stream()
+                .map(e -> new CurrencyComboDto(e.getKey(), toPaymodes(e.getValue(), savedByGatewayId)))
+                .toList();
+        MeCodeMappingResponse response = MeCodeMappingResponse.builder().mId(mId).currencyCombos(combos).build();
+        return AdminPortalResponse.<MeCodeMappingResponse>builder().data(List.of(response)).status(SUCCESS_RESPONSE_CODE).build();
+    }
+
+    private List<PaymodeDto> toPaymodes(List<MeCodeMappingProjection> rows, Map<String, MerchantPaygatewayMapping> savedByGatewayId) {
+        return rows.stream()
+                .collect(Collectors.groupingBy(MeCodeMappingProjection::getPaymodeCode, LinkedHashMap::new, Collectors.toList())).values().stream()
+                .map(paymodeRows -> {
+                    PaymodeDto paymode = mapper.toPaymodeDto(paymodeRows.getFirst());
+                    paymode.setGateways(paymodeRows.stream().map(row -> toGateway(row, savedByGatewayId)).toList());
+                    return paymode;
+                })
+                .toList();
+    }
+
+    private GatewayDto toGateway(MeCodeMappingProjection row, Map<String, MerchantPaygatewayMapping> savedByGatewayId) {
+        GatewayDto gateway = mapper.toGatewayDto(row);
+        MerchantPaygatewayMapping saved = savedByGatewayId.get(row.getGatewayId());
+        if (saved != null) {
+            mapper.updateGatewayDto(saved, gateway);
+        }
+        return gateway;
+    }
+}
+
+@Component
+@RequiredArgsConstructor
+public class PaymodeAndMEDao {
+    private final LoggerUtility logger = LoggerFactoryUtility.getLogger(this.getClass());
+    private final PaygatewayMasterRepository paygatewayMasterRepository;
+    private final MerchantPaygatewayMappingRepository mappingRepository;
+
+    public List<MeCodeMappingProjection> findMeCodeMappingByMerchantId(String mId){
+        return paygatewayMasterRepository.findMeCodeMappingByMerchantId(mId);
+    }
+
+    public List<MerchantPaygatewayMapping> fetchMerchantPaygatewayMapping(String mId){
+        return mappingRepository.findByMerchantId(mId);
+    }
+
+
+
+}
+
+
+public interface PaygatewayMasterRepository  extends JpaRepository<PaygatewayMaster, Long> {
+
+    @Query(value = """
+            SELECT mc.CURRENCY_COMB_CODE      AS "currencyCombCode",
+                   cp.PAYMODE_CODE            AS "paymodeCode",
+                   TO_CHAR(g.ID)              AS "gatewayId",
+                   g.GATEWAY_NAME             AS "gatewayName",
+                   g.PAYPROC_ID               AS "payProcId",
+                   g.PAYPROC_TYPE             AS "payProcType",
+                   g.ME_CODE                  AS "meCode",
+                   g.TEMPLATE_PATH            AS "templatePath"
+            FROM   MERCHANT_CURRENCY_COMBINATION_MAPPING mc
+            JOIN   CURRENCY_COMB_PAYMODE_MAPPING cp
+                   ON  cp.AGGREGATOR_CODE    = mc.AGGREGATOR_CODE
+                   AND cp.CURRENCY_COMB_CODE = mc.CURRENCY_COMB_CODE
+            JOIN   PAYGATEWAY_MASTER g
+                   ON  g.AGGREGATOR_CODE     = cp.AGGREGATOR_CODE
+                   AND g.CURRENCY_COMB_CODE  = cp.CURRENCY_COMB_CODE
+                   AND g.PAYMODE_CODE        = cp.PAYMODE_CODE
+            LEFT JOIN MERCHANT_PAYMODE_MAPPING mp
+                   ON  mp.MERCHANT_ID        = mc.MERCHANT_ID
+                   AND mp.AGGREGATOR_CODE    = cp.AGGREGATOR_CODE
+                   AND mp.PAYMODE_CODE       = cp.PAYMODE_CODE
+            WHERE  mc.MERCHANT_ID = :mId
+            ORDER BY mc.CURRENCY_COMB_CODE, cp.PAYMODE_CODE, g.GATEWAY_NAME
+            """, nativeQuery = true)
+    List<MeCodeMappingProjection> findMeCodeMappingByMerchantId(@Param("mId") String mId);
+}
+
+public interface MerchantPaygatewayMappingRepository  extends JpaRepository<MerchantPaygatewayMapping, UUID> {
+    @Query("SELECT m FROM MerchantPaygatewayMapping m WHERE m.merchantId = :mId")
+    List<MerchantPaygatewayMapping> findByMerchantId(@Param("mId") String mId);
+}
+
+@Mapper(componentModel = "spring")
+public interface MeCodeMappingMapper {
+    GatewayDto toGatewayDto(MeCodeMappingProjection projection);
+
+    @BeanMapping(ignoreByDefault = true)
+    @Mapping(target = "authStatus", source = "authStatus")
+    @Mapping(target = "makerComment", source = "makerComment")
+    @Mapping(target = "checkerComment", source = "checkerComment")
+    @Mapping(target = "selected", constant = "true")
+    void updateGatewayDto(MerchantPaygatewayMapping mapping, @MappingTarget GatewayDto dto);
+
+    @Mapping(target = "gateways", ignore = true)
+    PaymodeDto toPaymodeDto(MeCodeMappingProjection projection);
+
+}
+
+public interface MeCodeMappingProjection {
+    String getCurrencyCombCode();
+    String getPaymodeCode();
+    String getGatewayId();
+    String getGatewayName();
+    String getPayProcId();
+    String getPayProcType();
+    String getMeCode();
+    String getTemplatePath();
+}
+
+public class GatewayDto {
+    private String gatewayId;
+    private String gatewayName;
+    private String payProcId;
+    private String payProcType;
+    private String meCode;
+    private String status;
+    private String templatePath;
+    private boolean selected;
+    private String authStatus;
+    private String makerComment;
+    private String checkerComment;
+}
+
+
+@Data
+@AllArgsConstructor
+@NoArgsConstructor
+public class PaymodeDto {
+    private String paymodeCode;
+    private List<GatewayDto> gateways;
+}
+
+@Data
+@AllArgsConstructor
+@NoArgsConstructor
+@Entity
+@Builder
+@Table(name = "PAYGATEWAY_MASTER")
+public class PaygatewayMaster extends AuditEntity {
+    @Id
+    @GeneratedValue(strategy = GenerationType.SEQUENCE)
+    private Long id;
+    private String aggregatorCode;
+    private String currencyCombCode;
+    private String paymodeCode;
+    private String gatewayName;
+    private String payprocId;
+    private String payprocType;
+    private String meCode;
+    private String templatePath;
+    private Long createdAt;
+    private Long updatedAt;
+    private String createdBy;
+    private String updatedBy;
+
+
+}
+
+
+@Data
+@AllArgsConstructor
+@NoArgsConstructor
+@Entity
+@Builder
+@Table(name = "MERCHANT_PAYGATEWAY_MAPPING")
+public class MerchantPaygatewayMapping extends AuditEntity {
+    @Id
+    @GeneratedValue(strategy = GenerationType.UUID)
+    private UUID id;
+    private String aggregatorCode;
+    private String merchantId;
+    private Long gatewayId;
+    private String vpa;
+    private String dpaId;
+    private String wibmoMerchantId;
+    private String pgMid;
+    private String pgTid;
+    private String timerWindows;
+    private String isTpvActive;
+    private String authStatus;
+    private String makerComment;
+    private String checkerComment;
+}
+
+@Data
+@NoArgsConstructor
+@AllArgsConstructor
+@Builder
+public class MeCodeMappingResponse {
+    private String mId;
+    private List<CurrencyComboDto> currencyCombos;
+}
+
+@Data
+@AllArgsConstructor
+@NoArgsConstructor
+public class CurrencyComboDto {
+    private String currencyCombCode;
+    private List<PaymodeDto> paymodes;
+}
+
+-------------------------------------------------
 package com.example.mapping.service;
 
 import com.example.mapping.dto.CurrencyComboDto;
