@@ -1,3 +1,106 @@
+
+@Data
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
+public class MeCodeMappingDto {
+    private UUID id;                 // null if from master table
+    private Long gatewayId;
+    private String currencyCombCode;
+    private String paymodeCode;
+    private String gatewayName;
+    private String payProcId;
+    private String payProcType;
+    private String meCode;
+    private String templatePath;
+    private String authStatus;       // null if from master table
+    private String makerComment;     // null if from master table
+    private String checkerComment;   // null if from master table
+}
+
+
+
+
+@Mapper(componentModel = "spring")
+public interface MeCodeMappingMapper {
+
+    // master row -> dto (id, authStatus, comments stay null)
+    @Mapping(target = "id", ignore = true)
+    @Mapping(target = "authStatus", ignore = true)
+    @Mapping(target = "makerComment", ignore = true)
+    @Mapping(target = "checkerComment", ignore = true)
+    MeCodeMappingDto toDto(MeCodeMappingProjection projection);
+
+    // overlay saved merchant mapping onto dto
+    // (id, authStatus, makerComment, checkerComment have the same names, so they map automatically)
+    @Mapping(target = "gatewayId", ignore = true)
+    @Mapping(target = "currencyCombCode", ignore = true)
+    @Mapping(target = "paymodeCode", ignore = true)
+    @Mapping(target = "gatewayName", ignore = true)
+    @Mapping(target = "payProcId", ignore = true)
+    @Mapping(target = "payProcType", ignore = true)
+    @Mapping(target = "meCode", ignore = true)
+    @Mapping(target = "templatePath", ignore = true)
+    void updateDto(MerchantPaygatewayMapping mapping, @MappingTarget MeCodeMappingDto dto);
+}
+
+
+
+public AdminPortalResponse<MeCodeMappingDto> getMECodeDetails(String mId) {
+    logger.info("Validating mId: {}", mId);
+    merchantValidator.validateMid(mId);
+
+    logger.info("Fetching saved paygateway mappings for mId: {}", mId);
+    Map<Long, MerchantPaygatewayMapping> savedMappings = paymodeMappingDao.fetchSavedMerchantPaygateway(mId)
+            .stream()
+            .collect(Collectors.toMap(MerchantPaygatewayMapping::getGatewayId,
+                    Function.identity(), (existing, duplicate) -> existing));
+
+    logger.info("Fetching master mappings for mId: {}", mId);
+    List<MeCodeMappingProjection> masterMappings = paymodeMappingDao.findMeCodeMappingByMerchantId(mId);
+
+    List<MeCodeMappingDto> result = masterMappings.stream()
+            .map(projection -> buildDto(projection, savedMappings))
+            .toList();
+
+    return AdminPortalResponse.<MeCodeMappingDto>builder()
+            .data(result)
+            .status(SUCCESS_RESPONSE_CODE)
+            .build();
+}
+
+private MeCodeMappingDto buildDto(MeCodeMappingProjection projection,
+                                  Map<Long, MerchantPaygatewayMapping> savedMappings) {
+    MeCodeMappingDto dto = mapper.toDto(projection);
+    MerchantPaygatewayMapping saved = savedMappings.get(projection.getGatewayId());
+    if (saved != null) {
+        mapper.updateDto(saved, dto);   // sets id, authStatus, makerComment, checkerComment
+    }
+    return dto;
+}
+
+
+
+
+public AdminPortalResponse<MeCodeMappingDto> getMerchantRfcDetails(@PathVariable("mId") String mId) {
+    logger.info("Getting merchant RFC for mId: {}", mId);
+    return paymodeMappingService.getMECodeDetails(mId);
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
  "id":""
 									"gatewayId": 10,
 									"currencyCombCode": "INR-INR"
