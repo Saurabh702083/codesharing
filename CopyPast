@@ -171,3 +171,24 @@ public class MeCodeMappingRequest {
     private String timerWindows;
     private String makerComment;
 }
+
+@Mapper(componentModel = "spring")
+public interface MeCodeMappingMapper {
+    @Mapping(target = "id", ignore = true)
+    @Mapping(target = "authStatus", ignore = true)
+    @Mapping(target = "makerComment", ignore = true)
+    @Mapping(target = "checkerComment", ignore = true)
+    @Mapping(target = "timerWindows",ignore = true)
+    @Mapping(target = "isActive",ignore = true)
+    MeCodeMappingDto toDto(MeCodeMappingProjection projection);
+
+    @Mapping(target = "paygatewayId", ignore = true)
+    @Mapping(target = "currencyCombCode", ignore = true)
+    @Mapping(target = "paymodeCode", ignore = true)
+    @Mapping(target = "gatewayName", ignore = true)
+    @Mapping(target = "payProcId", ignore = true)
+    @Mapping(target = "payProcType", ignore = true)
+    @Mapping(target = "meCode", ignore = true)
+    @Mapping(target = "templatePath", ignore = true)
+    void updateDto(MerchantPaygatewayMapping mapping, @MappingTarget MeCodeMappingDto dto);
+}
