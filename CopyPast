@@ -1,4 +1,266 @@
 
+
+@RestController
+@RequiredArgsConstructor
+@Validated
+@RequestMapping("/payModeMapping")
+public class PayModeMappingController {
+
+    private final LoggerUtility logger =
+            LoggerFactoryUtility.getLogger(this.getClass());
+
+    private final PayModeMappingService payModeService;
+
+    @PostMapping("/meCodeMapping/{mId}")
+    @Operation(summary = "Submit ME code mapping for a merchant")
+    public AdminPortalResponse<String> submitMECodeMapping(
+            @PathVariable("mId") String mId,
+            @RequestBody
+            @NotEmpty(message = "Request list must not be null or empty")
+            List<@NotNull @Valid MeCodeMappingRequest> meCodeMappingRequests) {
+
+        logger.info("Submitting ME code mapping for mId: {}", mId);
+
+        return payModeService.submitMECodingMapping(
+                mId, meCodeMappingRequests);
+    }
+}
+
+
+
+
+
+
+@Component
+@RequiredArgsConstructor
+public class PayModeMappingValidator extends BaseValidator {
+
+    private final LoggerUtility logger =
+            LoggerFactoryUtility.getLogger(this.getClass());
+
+    public void validateRequest(List<MeCodeMappingRequest> requests) {
+
+        logger.info("Validating MeCodeMappingRequest.");
+
+        // Defensive check, even when controller validation is enabled.
+        if (requests == null || requests.isEmpty()) {
+            throw new AdminPortalException(
+                    ErrorConstants.INVALID_ERROR_CODE,
+                    MessageFormat.format(
+                            ErrorConstants.INVALID_ERROR_MESSAGE,
+                            "requests",
+                            "Request list must not be null or empty"));
+        }
+
+        errorDtoList = new ArrayList<>();
+
+        // 1. Mandatory field validation
+        for (MeCodeMappingRequest request : requests) {
+
+            if (request == null) {
+                throw new AdminPortalException(
+                        ErrorConstants.INVALID_ERROR_CODE,
+                        MessageFormat.format(
+                                ErrorConstants.INVALID_ERROR_MESSAGE,
+                                "requests",
+                                "Request list must not contain null entries"));
+            }
+
+            checkMandatoryField(request.getPaygatewayId(), PAYGATEWAY_ID);
+            checkMandatoryField(request.getMeCode(), ME_CODE);
+            checkMandatoryField(request.getIsActive(), IS_ACTIVE);
+
+            throwIfErrors();
+        }
+
+        // 2. Whitespace validation
+        for (MeCodeMappingRequest request : requests) {
+
+            checkForLeadingTrailingAndSingleSpace(
+                    request.getVpa(), VPA);
+
+            checkForLeadingTrailingAndSingleSpace(
+                    request.getMeCode(), ME_CODE);
+
+            checkForLeadingTrailingAndSingleSpace(
+                    request.getIsActive(), IS_ACTIVE);
+
+            checkForLeadingTrailingAndSingleSpace(
+                    request.getTimerWindows(), TIMER_WINDOW);
+
+            checkForLeadingTrailingAndSingleSpace(
+                    request.getMakerComment(), MAKER_COMMENT);
+
+            throwIfErrors();
+        }
+
+        // 3. Field length validation
+        for (MeCodeMappingRequest request : requests) {
+
+            validateFieldLength(request.getVpa(), 100, VPA);
+            validateFieldLength(request.getMeCode(), 100, ME_CODE);
+            validateFieldLength(request.getIsActive(), 1, IS_ACTIVE);
+
+            validateFieldLength(
+                    request.getTimerWindows(), 100, TIMER_WINDOW);
+
+            validateFieldLength(
+                    request.getMakerComment(), 250, MAKER_COMMENT);
+
+            throwIfErrors();
+        }
+    }
+}
+
+
+
+
+
+@Service
+@RequiredArgsConstructor
+public class PayModeMappingService {
+
+    private final LoggerUtility logger =
+            LoggerFactoryUtility.getLogger(this.getClass());
+
+    private final MerchantValidator merchantValidator;
+    private final MerchantCurrencyCombinationMappingDao
+            merchantCurrencyCombinationMappingDao;
+    private final PayModeMappingDao payModeMappingDao;
+    private final MeCodeMappingMapper mapper;
+    private final PayModeMappingValidator payModeMappingValidator;
+
+    @Transactional
+    public AdminPortalResponse<String> submitMECodingMapping(
+            String mId,
+            List<MeCodeMappingRequest> requests) {
+
+        // 1. Validate merchant ID
+        merchantValidator.validateMid(mId);
+
+        // 2. Validate request fields; returns void
+        payModeMappingValidator.validateRequest(requests);
+
+        // 3. Fetch and validate gateway masters once
+        Set<Long> gatewayIds = requests.stream()
+                .map(MeCodeMappingRequest::getPaygatewayId)
+                .collect(Collectors.toSet());
+
+        Map<Long, PaygatewayMaster> masters =
+                payModeMappingDao.fetchMasterByIds(gatewayIds);
+
+        if (masters.size() != gatewayIds.size()) {
+            throw new AdminPortalException(
+                    ErrorConstants.INVALID_ERROR_CODE,
+                    MessageFormat.format(
+                            ErrorConstants.INVALID_ERROR_MESSAGE,
+                            PAYGATEWAY_ID,
+                            "Invalid paygatewayId in request"));
+        }
+
+        // 4. Fetch and validate existing mappings once
+        Set<Long> existingIds = requests.stream()
+                .map(MeCodeMappingRequest::getId)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+
+        Map<Long, MerchantPaygatewayMapping> existing =
+                payModeMappingDao.fetchSavedByIds(existingIds, mId);
+
+        if (existing.size() != existingIds.size()) {
+            throw new AdminPortalException(
+                    ErrorConstants.INVALID_ERROR_CODE,
+                    MessageFormat.format(
+                            ErrorConstants.INVALID_ERROR_MESSAGE,
+                            "id",
+                            "Some ids not found for this merchant"));
+        }
+
+        // 5. Map requests to entities
+        List<MerchantPaygatewayMapping> toSave = requests.stream()
+                .map(request -> {
+
+                    MerchantPaygatewayMapping entity;
+
+                    if (request.getId() != null) {
+                        // Update existing mapping
+                        entity = existing.get(request.getId());
+                        mapper.updateEntity(request, entity);
+                    } else {
+                        // Create new mapping
+                        entity = mapper.toEntity(request);
+                        entity.setMerchantId(mId);
+                    }
+
+                    // Set system-controlled fields
+                    entity.setPaygatewayId(request.getPaygatewayId());
+
+                    entity.setAggregatorCode(
+                            masters.get(request.getPaygatewayId())
+                                    .getAggregatorCode());
+
+                    entity.setAuthStatus(PENDING);
+                    entity.setIsTpvActive("N");
+
+                    return entity;
+                })
+                .toList();
+
+        // 6. Save all mappings
+        payModeMappingDao.saveAll(toSave);
+
+        logger.info(
+                "ME code mapping submitted successfully for mId: {}",
+                mId);
+
+        return AdminPortalResponse.<String>builder()
+                .data(List.of("Submitted successfully"))
+                .status(SUCCESS_RESPONSE_CODE)
+                .build();
+    }
+}
+
+
+
+public Map<Long, PaygatewayMaster> fetchMasterByIds(
+        Collection<Long> ids) {
+
+    return paygatewayMasterRepository.findAllById(ids).stream()
+            .collect(Collectors.toMap(
+                    PaygatewayMaster::getId,
+                    Function.identity()));
+}
+
+public Map<Long, MerchantPaygatewayMapping> fetchSavedByIds(
+        Collection<Long> ids,
+        String mId) {
+
+    if (ids.isEmpty()) {
+        return Map.of();
+    }
+
+    return mappingRepository.findByIdInAndMerchantId(ids, mId).stream()
+            .collect(Collectors.toMap(
+                    MerchantPaygatewayMapping::getId,
+                    Function.identity()));
+}
+
+public void saveAll(List<MerchantPaygatewayMapping> entities) {
+    mappingRepository.saveAll(entities);
+}
+
+
+
+
+
+
+
+
+
+
+
+
+------------------
 @Component
 @RequiredArgsConstructor
 public class PayModeMappingValidator extends BaseValidator {
