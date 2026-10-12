@@ -1,100 +1,3 @@
-List<MerchantPaygatewayMapping> findByIdInAndMerchantId(Collection<Long> ids, String merchantId);
-
-
-
-public Map<Long, PaygatewayMaster> fetchMasterByIds(Collection<Long> ids) {
-    return paygatewayMasterRepository.findAllById(ids).stream()
-            .collect(Collectors.toMap(PaygatewayMaster::getId, Function.identity()));
-}
-
-public Map<Long, MerchantPaygatewayMapping> fetchSavedByIds(Collection<Long> ids, String mId) {
-    if (ids.isEmpty()) return Map.of();
-    return mappingRepository.findByIdInAndMerchantId(ids, mId).stream()
-            .collect(Collectors.toMap(MerchantPaygatewayMapping::getId, Function.identity()));
-}
-
-public void saveAll(List<MerchantPaygatewayMapping> entities) {
-    mappingRepository.saveAll(entities);
-}
-
-
-@Mapping(target = "id", ignore = true)
-@Mapping(target = "aggregatorCode", ignore = true)
-@Mapping(target = "merchantId", ignore = true)
-@Mapping(target = "dpaId", ignore = true)
-@Mapping(target = "wibmoMerchantId", ignore = true)
-@Mapping(target = "pgMid", ignore = true)
-@Mapping(target = "pgTid", ignore = true)
-@Mapping(target = "isTpvActive", ignore = true)
-@Mapping(target = "authStatus", ignore = true)
-@Mapping(target = "checkerComment", ignore = true)
-MerchantPaygatewayMapping toEntity(MeCodeMappingRequest request);
-
-@Mapping(target = "id", ignore = true)
-@Mapping(target = "paygatewayId", ignore = true)
-@Mapping(target = "aggregatorCode", ignore = true)
-@Mapping(target = "merchantId", ignore = true)
-@Mapping(target = "dpaId", ignore = true)
-@Mapping(target = "wibmoMerchantId", ignore = true)
-@Mapping(target = "pgMid", ignore = true)
-@Mapping(target = "pgTid", ignore = true)
-@Mapping(target = "isTpvActive", ignore = true)
-@Mapping(target = "authStatus", ignore = true)
-@Mapping(target = "checkerComment", ignore = true)
-void updateEntity(MeCodeMappingRequest request, @MappingTarget MerchantPaygatewayMapping entity);
-
-
-
-@Transactional
-public AdminPortalResponse<String> submitMECodingMapping(String mId, List<MeCodeMappingRequest> requests) {
-    merchantValidator.validateMid(mId);
-    // TODO: more validations (empty list, duplicates, etc.)
-
-    Set<Long> gatewayIds = requests.stream().map(MeCodeMappingRequest::getPaygatewayId).collect(Collectors.toSet());
-    Map<Long, PaygatewayMaster> masters = paymodeMappingDao.fetchMasterByIds(gatewayIds);
-    if (masters.size() != gatewayIds.size()) {
-        throw new IllegalArgumentException("Invalid paygatewayId in request");
-    }
-
-    Set<Long> existingIds = requests.stream().map(MeCodeMappingRequest::getId)
-            .filter(Objects::nonNull).collect(Collectors.toSet());
-    Map<Long, MerchantPaygatewayMapping> existing = paymodeMappingDao.fetchSavedByIds(existingIds, mId);
-    if (existing.size() != existingIds.size()) {
-        throw new IllegalArgumentException("Some ids not found for this merchant");
-    }
-
-    List<MerchantPaygatewayMapping> toSave = requests.stream().map(req -> {
-        MerchantPaygatewayMapping entity;
-        if (req.getId() != null) {
-            entity = existing.get(req.getId());
-            mapper.updateEntity(req, entity);
-        } else {
-            entity = mapper.toEntity(req);
-            entity.setMerchantId(mId);
-        }
-        entity.setPaygatewayId(req.getPaygatewayId());
-        entity.setAggregatorCode(masters.get(req.getPaygatewayId()).getAggregatorCode());
-        entity.setAuthStatus("PENDING"); // assumption: maker submits, checker approves
-        return entity;
-    }).toList();
-
-    paymodeMappingDao.saveAll(toSave);
-    return AdminPortalResponse.<String>builder().data(List.of("Submitted successfully")).status(SUCCESS_RESPONSE_CODE).build();
-}
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 @Data
 @RequiredArgsConstructor
 @RestController
@@ -103,22 +6,15 @@ public class PayModeMappingController {
     private final LoggerUtility logger = LoggerFactoryUtility.getLogger(this.getClass());
     private final PayModeMappingService payModeService;
 
-   @PreAuthorize("hasAnyRole('ONBOARDING_MANAGER','BIZ_SUPPORT')")
-    @GetMapping("/meCodeMapping/{mId}")
-    @Operation(summary = "Get ME code details for merchant id for maker and checker")
-    public AdminPortalResponse<MeCodeMappingDto> getMECodeMappingDetails(@PathVariable("mId") String mId) {
-        logger.info("Getting merchant RFC for by mId: {}", mId);
-        return payModeService.getMECodeDetails(mId);
-    }
-
-    @PreAuthorize("hasAnyRole('BIZ_SUPPORT')")
-    @PostMapping("/meCodingMapping/{mId}")
+//    @PreAuthorize("hasAnyRole('BIZ_SUPPORT')")
+    @PostMapping("/meCodeMapping/{mId}")
     @Operation(summary = "Get ME code details for merchant id for maker and checker")
     public AdminPortalResponse<String> submitMECodeMapping(@PathVariable("mId") String mId, @RequestBody List<MeCodeMappingRequest> meCodeMappingRequests){
         logger.info("submit meCoding mapping for mId : {}",mId);
         return payModeService.submitMECodingMapping(mId,meCodeMappingRequests);
     }
 }
+
 
 
 @Service
@@ -131,35 +27,84 @@ public class PayModeMappingService {
     private final MerchantCurrencyCombinationMappingDao merchantCurrencyCombinationMappingDao;
     private final PayModeMappingDao paymodeMappingDao;
     private final MeCodeMappingMapper mapper;
+    private final PayModeMappingValidator payModeMappingValidator;
 
 
-    public AdminPortalResponse<MeCodeMappingDto> getMECodeDetails(String mId) {
-        logger.info("Validating mId: {}", mId);
+    public AdminPortalResponse<String> submitMECodingMapping(String mId, List<MeCodeMappingRequest> requests) {
         merchantValidator.validateMid(mId);
-        //TODO check previous step is completed or not.
-        logger.info("Fetching saved paygateway mappings for mId: {}", mId);
-        Map<Long, MerchantPaygatewayMapping> savedMappings = paymodeMappingDao.fetchSavedMerchantPaygateway(mId)
-                .stream().collect(Collectors.toMap(MerchantPaygatewayMapping::getPaygatewayId, Function.identity(), (existing, duplicate) -> existing));
-        logger.info("Fetching master mappings for mId: {}", mId);
-        List<MeCodeMappingProjection> masterMappings = paymodeMappingDao.findMeCodeMappingByMerchantId(mId);
-        List<MeCodeMappingDto> result = masterMappings.stream().map(projection -> buildResultDto(projection, savedMappings)).toList();
-        return AdminPortalResponse.<MeCodeMappingDto>builder().data(result).status(SUCCESS_RESPONSE_CODE).build();
-    }
-
-    private MeCodeMappingDto buildResultDto(MeCodeMappingProjection projection, Map<Long, MerchantPaygatewayMapping> savedMappings) {
-        MeCodeMappingDto dto = mapper.toDto(projection);
-        MerchantPaygatewayMapping saved = savedMappings.get(projection.getPaygatewayId());
-        if (ObjectUtils.isNotEmpty(saved)) {
-            mapper.updateDto(saved, dto);
+        payModeMappingValidator.validateRequest(requests);
+        Set<Long> gatewayIds = requests.stream().map(MeCodeMappingRequest::getPaygatewayId).collect(Collectors.toSet());
+        Map<Long, PaygatewayMaster> masters = paymodeMappingDao.fetchMasterByIds(gatewayIds);
+        if (masters.size() != gatewayIds.size()) {
+            throw new AdminPortalException (ErrorConstants.INVALID_ERROR_CODE, MessageFormat.format(ErrorConstants.INVALID_ERROR_MESSAGE,PAYGATEWAY_ID,"Invalid paygatewayId in request"));
         }
-        return dto;
+
+        Set<Long> existingIds = requests.stream().map(MeCodeMappingRequest::getId)
+                .filter(Objects::nonNull).collect(Collectors.toSet());
+        Map<Long, MerchantPaygatewayMapping> existing = paymodeMappingDao.fetchSavedByIds(existingIds, mId);
+        if (existing.size() != existingIds.size()) {
+            throw new AdminPortalException(ErrorConstants.INVALID_ERROR_CODE, MessageFormat.format(ErrorConstants.INVALID_ERROR_MESSAGE,"id","Some ids not found for this merchant"));
+        }
+
+        List<MerchantPaygatewayMapping> toSave = requests.stream().map(request -> {
+            MerchantPaygatewayMapping paygatewayMapping;
+            if (ObjectUtils.isNotEmpty(request.getId())) {
+                paygatewayMapping = existing.get(request.getId());
+                mapper.updateEntity(request, paygatewayMapping);
+            } else {
+                paygatewayMapping = mapper.toEntity(request);
+                paygatewayMapping.setMerchantId(mId);
+            }
+            paygatewayMapping.setPaygatewayId(request.getPaygatewayId());
+            paygatewayMapping.setAggregatorCode(masters.get(request.getPaygatewayId()).getAggregatorCode());
+            paygatewayMapping.setAuthStatus(PENDING);
+            paygatewayMapping.setIsTpvActive("N");
+            return paygatewayMapping;
+        }).toList();
+
+        paymodeMappingDao.saveAll(toSave);
+        return AdminPortalResponse.<String>builder().data(List.of("Submitted successfully")).status(SUCCESS_RESPONSE_CODE).build();
+
+
+    }
+}
+
+
+
+@Component
+@RequiredArgsConstructor
+public class PayModeMappingValidator extends BaseValidator{
+    private final LoggerUtility logger = LoggerFactoryUtility.getLogger(this.getClass());
+    public void validateRequest(List<MeCodeMappingRequest> requests) {
+        errorDtoList = new ArrayList<>();
+        logger.info("Validating MeCodeMappingRequest.");
+        for (MeCodeMappingRequest codeMappingRequest : requests) {
+            checkMandatoryField(codeMappingRequest.getPaygatewayId(), PAYGATEWAY_ID);
+            checkMandatoryField(codeMappingRequest.getMeCode(), ME_CODE);
+            checkMandatoryField(codeMappingRequest.getIsActive(), IS_ACTIVE);
+            throwIfErrors();
+        }
+
+        for (MeCodeMappingRequest codeMappingRequest : requests) {
+            checkForLeadingTrailingAndSingleSpace(codeMappingRequest.getVpa(), VPA);
+            checkForLeadingTrailingAndSingleSpace(codeMappingRequest.getMeCode(), ME_CODE);
+            checkForLeadingTrailingAndSingleSpace(codeMappingRequest.getIsActive(), IS_ACTIVE);
+            checkForLeadingTrailingAndSingleSpace(codeMappingRequest.getTimerWindows(), TIMER_WINDOW);
+            checkForLeadingTrailingAndSingleSpace(codeMappingRequest.getMakerComment(), MAKER_COMMENT);
+            throwIfErrors();
+        }
+
+        for (MeCodeMappingRequest meCodeMappingRequest : requests) {
+            validateFieldLength(meCodeMappingRequest.getVpa(), 100, VPA);
+            validateFieldLength(meCodeMappingRequest.getMeCode(), 100, ME_CODE);
+            validateFieldLength(meCodeMappingRequest.getIsActive(), 1, IS_ACTIVE);
+            validateFieldLength(meCodeMappingRequest.getTimerWindows(), 100, TIMER_WINDOW);
+            validateFieldLength(meCodeMappingRequest.getMakerComment(), 250, MAKER_COMMENT);
+            throwIfErrors();
+        }
+
     }
 
-    public AdminPortalResponse<String> submitMECodingMapping(String mId, List<MeCodeMappingRequest> meCodeMappingRequests) {
-        merchantValidator.validateMid(mId);
-        //TODO validate request.
-
-    }
 }
 
 @Component
@@ -176,116 +121,52 @@ public class PayModeMappingDao {
     public List<MerchantPaygatewayMapping> fetchSavedMerchantPaygateway(String mId){
         return mappingRepository.findByMerchantId(mId);
     }
-}
 
-public interface PaygatewayMasterRepository extends JpaRepository<PaygatewayMaster, Long> {
-    @Query(value = """
-            SELECT mc.CURRENCY_COMB_CODE      AS "currencyCombCode",
-                               cp.PAYMODE_CODE            AS "paymodeCode",
-                               g.ID                       AS "paygatewayId",
-                               gm.gateway_name             AS "gatewayName",            
-                               g.PAYPROC_ID               AS "payProcId",
-                               g.PAYPROC_TYPE             AS "payProcType",
-                               g.ME_CODE                  AS "meCode",
-                               g.TEMPLATE_PATH            AS "templatePath"
-                        FROM   MERCHANT_CURRENCY_COMBINATION_MAPPING mc
-                        JOIN   CURRENCY_COMB_PAYMODE_MAPPING cp
-                               ON  cp.AGGREGATOR_CODE    = mc.AGGREGATOR_CODE
-                               AND cp.CURRENCY_COMB_CODE = mc.CURRENCY_COMB_CODE
-                        JOIN   PAYGATEWAY_MASTER g
-                               ON  g.AGGREGATOR_CODE     = cp.AGGREGATOR_CODE
-                               AND g.CURRENCY_COMB_CODE  = cp.CURRENCY_COMB_CODE
-                               AND g.PAYMODE_CODE        = cp.PAYMODE_CODE
-                        JOIN  GATEWAY_MASTER gm
-                              on  g.gateway_id = gm.gateway_id
-                        LEFT JOIN MERCHANT_PAYMODE_MAPPING mp
-                               ON  mp.MERCHANT_ID        = mc.MERCHANT_ID
-                               AND mp.AGGREGATOR_CODE    = cp.AGGREGATOR_CODE
-                               AND mp.PAYMODE_CODE       = cp.PAYMODE_CODE
-                        WHERE  mc.MERCHANT_ID = :mId
-                        ORDER BY mc.CURRENCY_COMB_CODE, cp.PAYMODE_CODE, g.AGGREGATOR_CODE
-            """, nativeQuery = true)
-    List<MeCodeMappingProjection> findMeCodeMappingByMerchantId(@Param("mId") String mId);
-}
-public interface MerchantPaygatewayMappingRepository extends JpaRepository<MerchantPaygatewayMapping, Long> {
-    @Query("SELECT m FROM MerchantPaygatewayMapping m WHERE m.merchantId = :mId")
-    List<MerchantPaygatewayMapping> findByMerchantId(@Param("mId") String mId);
+    public Map<Long, PaygatewayMaster> fetchMasterByIds(Collection<Long> ids) {
+        return paygatewayMasterRepository.findAllById(ids).stream()
+                .collect(Collectors.toMap(PaygatewayMaster::getId, Function.identity()));
+    }
+
+    public Map<Long, MerchantPaygatewayMapping> fetchSavedByIds(Collection<Long> ids, String mId) {
+        if (ids.isEmpty()) return Map.of();
+        return mappingRepository.findByIdInAndMerchantId(ids, mId).stream()
+                .collect(Collectors.toMap(MerchantPaygatewayMapping::getId, Function.identity()));
+    }
+
+    public void saveAll(List<MerchantPaygatewayMapping> entities) {
+        mappingRepository.saveAll(entities);
+    }
 }
 
 
-@Data
-@AllArgsConstructor
-@NoArgsConstructor
-@Entity
-@Builder
-@Table(name = "MERCHANT_PAYGATEWAY_MAPPING")
-public class MerchantPaygatewayMapping {
-    @Id
-    @GeneratedValue(strategy = GenerationType.SEQUENCE)
-    private Long id;
-    private String aggregatorCode;
-    private String merchantId;
-    private Long paygatewayId;
-    private String vpa;
-    private String dpaId;
-    private String wibmoMerchantId;
-    private String pgMid;
-    private String pgTid;
-    private String timerWindows;
-    private String isTpvActive;
-    private String isActive;
-    private String authStatus;
-    private String makerComment;
-    private String checkerComment;
-}
-
-@Data
-@AllArgsConstructor
-@NoArgsConstructor
-@Entity
-@Builder
-@Table(name = "PAYGATEWAY_MASTER")
-public class PaygatewayMaster {
-    @Id
-    @GeneratedValue(strategy = GenerationType.SEQUENCE)
-    private Long id;
-    private String aggregatorCode;
-    private String currencyCombCode;
-    private String paymodeCode;
-    private Long gatewayId;
-    private String payprocId;
-    private String payprocType;
-    private String meCode;
-    private String templatePath;
-}
-
-public class MeCodeMappingRequest {
-    private Long id;
-    private Long paygatewayId;
-    private String vpa;
-    private String meCode;
-    private String isActive;
-    private String timerWindows;
-    private String makerComment;
-}
 
 @Mapper(componentModel = "spring")
 public interface MeCodeMappingMapper {
-    @Mapping(target = "id", ignore = true)
-    @Mapping(target = "authStatus", ignore = true)
-    @Mapping(target = "makerComment", ignore = true)
-    @Mapping(target = "checkerComment", ignore = true)
-    @Mapping(target = "timerWindows",ignore = true)
-    @Mapping(target = "isActive",ignore = true)
-    MeCodeMappingDto toDto(MeCodeMappingProjection projection);
 
+
+
+    @Mapping(target = "id", ignore = true)
+    @Mapping(target = "aggregatorCode", ignore = true)
+    @Mapping(target = "merchantId", ignore = true)
+    @Mapping(target = "dpaId", ignore = true)
+    @Mapping(target = "wibmoMerchantId", ignore = true)
+    @Mapping(target = "pgMid", ignore = true)
+    @Mapping(target = "pgTid", ignore = true)
+    @Mapping(target = "isTpvActive", ignore = true)
+    @Mapping(target = "authStatus", ignore = true)
+    @Mapping(target = "checkerComment", ignore = true)
+    MerchantPaygatewayMapping toEntity(MeCodeMappingRequest request);
+
+    @Mapping(target = "id", ignore = true)
     @Mapping(target = "paygatewayId", ignore = true)
-    @Mapping(target = "currencyCombCode", ignore = true)
-    @Mapping(target = "paymodeCode", ignore = true)
-    @Mapping(target = "gatewayName", ignore = true)
-    @Mapping(target = "payProcId", ignore = true)
-    @Mapping(target = "payProcType", ignore = true)
-    @Mapping(target = "meCode", ignore = true)
-    @Mapping(target = "templatePath", ignore = true)
-    void updateDto(MerchantPaygatewayMapping mapping, @MappingTarget MeCodeMappingDto dto);
+    @Mapping(target = "aggregatorCode", ignore = true)
+    @Mapping(target = "merchantId", ignore = true)
+    @Mapping(target = "dpaId", ignore = true)
+    @Mapping(target = "wibmoMerchantId", ignore = true)
+    @Mapping(target = "pgMid", ignore = true)
+    @Mapping(target = "pgTid", ignore = true)
+    @Mapping(target = "isTpvActive", ignore = true)
+    @Mapping(target = "authStatus", ignore = true)
+    @Mapping(target = "checkerComment", ignore = true)
+    void updateEntity(MeCodeMappingRequest request, @MappingTarget MerchantPaygatewayMapping entity);
 }
