@@ -105,6 +105,51 @@ public interface MeCodeMappingMapper {
 }
 
 
+@Component
+@RequiredArgsConstructor
+public class PayModeMappingValidator extends BaseValidator{
+    private final LoggerUtility logger = LoggerFactoryUtility.getLogger(this.getClass());
+    public void validateRequest(List<MeCodeMappingRequest> requests) {
+        errorDtoList = new ArrayList<>();
+        logger.info("Validating MeCodeMappingRequest.");
+        if(CollectionUtils.isEmpty(requests)){
+            addError("meCodeMappingRequests", MANDATORY_ERROR_CODE, MANDATORY_ERROR_MESSAGE);
+        }
+        throwIfErrors();
+        for (MeCodeMappingRequest codeMappingRequest : requests) {
+            checkMandatoryField(codeMappingRequest.getPaygatewayId(), PAYGATEWAY_ID);
+            checkMandatoryField(codeMappingRequest.getMeCode(), ME_CODE);
+            checkMandatoryField(codeMappingRequest.getIsActive(), IS_ACTIVE);
+            throwIfErrors();
+        }
+
+        for (MeCodeMappingRequest codeMappingRequest : requests) {
+            checkForLeadingTrailingAndSingleSpace(codeMappingRequest.getVpa(), VPA);
+            checkForLeadingTrailingAndSingleSpace(codeMappingRequest.getMeCode(), ME_CODE);
+            checkForLeadingTrailingAndSingleSpace(codeMappingRequest.getIsActive(), IS_ACTIVE);
+            checkForLeadingTrailingAndSingleSpace(codeMappingRequest.getTimerWindows(), TIMER_WINDOW);
+            checkForLeadingTrailingAndSingleSpace(codeMappingRequest.getMakerComment(), MAKER_COMMENT);
+            throwIfErrors();
+        }
+
+        for (MeCodeMappingRequest meCodeMappingRequest : requests) {
+            validateFieldLength(meCodeMappingRequest.getVpa(), 100, VPA);
+            validateFieldLength(meCodeMappingRequest.getMeCode(), 100, ME_CODE);
+            validateFieldLength(meCodeMappingRequest.getIsActive(), 1, IS_ACTIVE);
+            validateFieldLength(meCodeMappingRequest.getTimerWindows(), 100, TIMER_WINDOW);
+            validateFieldLength(meCodeMappingRequest.getMakerComment(), 250, MAKER_COMMENT);
+            throwIfErrors();
+        }
+
+    }
+
+    public void validateMeCodeRequestFields(Map<Long, PaygatewayMaster> masters, Map<Long, MerchantPaygatewayMapping> existing, List<MeCodeMappingRequest> requests) {
+        errorDtoList = new ArrayList<>();
+
+    }
+}
+
+
 
 
 ----------------------------
