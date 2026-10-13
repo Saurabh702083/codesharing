@@ -1,4 +1,113 @@
+@Data
+@NoArgsConstructor
+@Builder
+@AllArgsConstructor
+public class MeCodeMappingRequest {
+    private Long id;
+    private Long paygatewayId;
+    private String vpa;
+    private String meCode;
+    private String isActive;
+    private String timerWindows;
+    private String makerComment;
+    private String dpaId;
+    private String wibmoMerchantId;
+    private String pgMid;
+    private String pgTid;
+}
 
+public AdminPortalResponse<String> submitMECodingMapping(String mId, List<MeCodeMappingRequest> requests) {
+        // 1. Validate merchant ID
+        logger.info("Validating mId: {}", mId);
+        merchantValidator.validateMid(mId);
+        // 2. Validate request fields
+        logger.info("Validate MeCodeMappingRequest :{}",requests);
+        payModeMappingValidator.validateRequest(requests);
+
+        // 3. Fetch and validate gateway masters once
+        Set<Long> gatewayIds = requests.stream().map(MeCodeMappingRequest::getPaygatewayId).collect(Collectors.toSet());
+        logger.info("Fetch map of  paygatewayMaster details.");
+        Map<Long, PaygatewayMaster> masters = paymodeMappingDao.fetchMasterByIds(gatewayIds);
+        if (masters.size() != gatewayIds.size()) {
+            throw new AdminPortalException (ErrorConstants.INVALID_ERROR_CODE, MessageFormat.format(ErrorConstants.INVALID_ERROR_MESSAGE,PAYGATEWAY_ID,"Invalid paygatewayId in request"));
+        }
+
+        // 4. Fetch and validate existing mappings once
+        Set<Long> existingIds = requests.stream().map(MeCodeMappingRequest::getId)
+                .filter(Objects::nonNull).collect(Collectors.toSet());
+        logger.info("Fetch map of merchantPaygatewayMapping details.");
+        Map<Long, MerchantPaygatewayMapping> existing = paymodeMappingDao.fetchSavedByIds(existingIds, mId);
+        if (existing.size() != existingIds.size()) {
+            throw new AdminPortalException(ErrorConstants.INVALID_ERROR_CODE, MessageFormat.format(ErrorConstants.INVALID_ERROR_MESSAGE,"id","Some ids not found for this merchant"));
+        }
+        payModeMappingValidator.validateMeCodeRequestFields(masters,existing,requests);
+
+        // 5. Map requests to entities
+        List<MerchantPaygatewayMapping> toSave = getMerchantPaygatewayMappings(mId, requests, existing, masters);
+        // 6. Save all mappings
+        logger.info("Submiting meCode mapping details in DB");
+        paymodeMappingDao.saveAll(toSave);
+        logger.info("ME code mapping submitted successfully for mId: {}", mId);
+        return AdminPortalResponse.<String>builder().data(List.of("Submitted successfully")).status(SUCCESS_RESPONSE_CODE).build();
+
+
+    }
+
+    private List<MerchantPaygatewayMapping> getMerchantPaygatewayMappings(String mId, List<MeCodeMappingRequest> requests, Map<Long, MerchantPaygatewayMapping> existing, Map<Long, PaygatewayMaster> masters) {
+        List<MerchantPaygatewayMapping> toSave = requests.stream().map(request -> {
+            MerchantPaygatewayMapping paygatewayMapping;
+            if (ObjectUtils.isNotEmpty(request.getId())) {
+                paygatewayMapping = existing.get(request.getId());
+                mapper.updateEntity(request, paygatewayMapping);
+            } else {
+                paygatewayMapping = mapper.toEntity(request);
+                paygatewayMapping.setMerchantId(mId);
+            }
+            paygatewayMapping.setPaygatewayId(request.getPaygatewayId());
+            paygatewayMapping.setAggregatorCode(masters.get(request.getPaygatewayId()).getAggregatorCode());
+            paygatewayMapping.setAuthStatus(PENDING);
+            // Need to remove this once varified with product team
+            paygatewayMapping.setIsTpvActive("N");
+            return paygatewayMapping;
+        }).toList();
+        return toSave;
+    }
+}
+
+
+@Mapper(componentModel = "spring")
+public interface MeCodeMappingMapper {
+
+    @Mapping(target = "id", ignore = true)
+    @Mapping(target = "aggregatorCode", ignore = true)
+    @Mapping(target = "merchantId", ignore = true)
+//    @Mapping(target = "dpaId", ignore = true)
+//    @Mapping(target = "wibmoMerchantId", ignore = true)
+//    @Mapping(target = "pgMid", ignore = true)
+//    @Mapping(target = "pgTid", ignore = true)
+    @Mapping(target = "isTpvActive", ignore = true)
+    @Mapping(target = "authStatus", ignore = true)
+    @Mapping(target = "checkerComment", ignore = true)
+    MerchantPaygatewayMapping toEntity(MeCodeMappingRequest request);
+
+    @Mapping(target = "id", ignore = true)
+    @Mapping(target = "paygatewayId", ignore = true)
+    @Mapping(target = "aggregatorCode", ignore = true)
+    @Mapping(target = "merchantId", ignore = true)
+//    @Mapping(target = "dpaId", ignore = true)
+//    @Mapping(target = "wibmoMerchantId", ignore = true)
+//    @Mapping(target = "pgMid", ignore = true)
+//    @Mapping(target = "pgTid", ignore = true)
+    @Mapping(target = "isTpvActive", ignore = true)
+    @Mapping(target = "authStatus", ignore = true)
+    @Mapping(target = "checkerComment", ignore = true)
+    void updateEntity(MeCodeMappingRequest request, @MappingTarget MerchantPaygatewayMapping entity);
+}
+
+
+
+
+----------------------------
 
 @RestController
 @RequiredArgsConstructor
