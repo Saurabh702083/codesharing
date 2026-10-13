@@ -1,4 +1,26 @@
 @Data
+@AllArgsConstructor
+@NoArgsConstructor
+@Entity
+@Builder
+@Table(name = "PAYGATEWAY_MASTER")
+public class PaygatewayMaster  extends AuditEntity {
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+    private String aggregatorCode;
+    private String currencyCombCode;
+    private String paymodeCode;
+    private Long gatewayId;
+    private String payprocId;
+    private String payprocType;
+    private String meCode;
+    private String templatePath;
+}
+
+
+
+@Data
 @NoArgsConstructor
 @Builder
 @AllArgsConstructor
