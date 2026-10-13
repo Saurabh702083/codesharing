@@ -1,3 +1,183 @@
+
+public void validateMeCodeRequestFields(
+        Map<Long, PaygatewayMaster> masters,
+        Map<Long, MerchantPaygatewayMapping> existing,
+        List<MeCodeMappingRequest> requests) {
+
+    for (MeCodeMappingRequest request : requests) {
+
+        Long paygatewayId = request.getPaygatewayId();
+        Long mappingId = request.getId();
+
+        // Validate paygatewayId exists in master data.
+        PaygatewayMaster master = masters.get(paygatewayId);
+
+        if (master == null) {
+            throwInvalidField(
+                    PAYGATEWAY_ID,
+                    "Invalid paygatewayId in request");
+        }
+
+        // When updating, ensure the mapping ID exists in the fetched
+        // merchant mappings and therefore belongs to this merchant.
+        if (mappingId != null && !existing.containsKey(mappingId)) {
+            throwInvalidField(
+                    "id",
+                    "Mapping id not found for this merchant");
+        }
+
+        String paymodeCode = master.getPaymodeCode();
+
+        if (paymodeCode == null || paymodeCode.isBlank()) {
+            throwInvalidField(
+                    PAYGATEWAY_ID,
+                    "Paymode configuration is missing for paygatewayId: "
+                            + paygatewayId);
+        }
+
+        boolean isUpdate = mappingId != null;
+        boolean isUpi = "UPI".equalsIgnoreCase(paymodeCode.trim());
+        boolean isCreditOrDebitCard =
+                "CC".equalsIgnoreCase(paymodeCode.trim())
+                || "DC".equalsIgnoreCase(paymodeCode.trim());
+
+        if (isUpi) {
+            validateUpiFields(request, isUpdate);
+        } else {
+            rejectFieldIfPresent(
+                    request.getVpa(), VPA, isPresent(request.getVpa()));
+
+            rejectFieldIfPresent(
+                    request.getTimerWindows(),
+                    TIMER_WINDOW,
+                    isPresent(request.getTimerWindows()));
+        }
+
+        if (isCreditOrDebitCard) {
+            validateCardFields(request, isUpdate);
+        } else {
+            rejectFieldIfPresent(
+                    request.getDpaId(),
+                    "dpaId",
+                    isPresent(request.getDpaId()));
+
+            rejectFieldIfPresent(
+                    request.getWibmoMerchantId(),
+                    "wibmoMerchantId",
+                    isPresent(request.getWibmoMerchantId()));
+
+            rejectFieldIfPresent(
+                    request.getPgMid(),
+                    "pgMid",
+                    isPresent(request.getPgMid()));
+
+            rejectFieldIfPresent(
+                    request.getPgTid(),
+                    "pgTid",
+                    isPresent(request.getPgTid()));
+        }
+    }
+}
+
+private void validateUpiFields(
+        MeCodeMappingRequest request,
+        boolean isUpdate) {
+
+    // VPA is mandatory for new UPI mappings, optional for updates.
+    if (!isUpdate && !isPresent(request.getVpa())) {
+        throwInvalidField(VPA, "VPA is mandatory for a new UPI mapping");
+    }
+}
+
+private void validateCardFields(
+        MeCodeMappingRequest request,
+        boolean isUpdate) {
+
+    // These fields are mandatory for new CC/DC mappings.
+    // They are optional for updates.
+    if (!isUpdate) {
+        requireField(request.getDpaId(), "dpaId");
+        requireField(request.getWibmoMerchantId(), "wibmoMerchantId");
+        requireField(request.getPgMid(), "pgMid");
+        requireField(request.getPgTid(), "pgTid");
+    }
+}
+
+private void requireField(String value, String fieldName) {
+    if (!isPresent(value)) {
+        throwInvalidField(
+                fieldName,
+                fieldName + " is mandatory for a new CC/DC mapping");
+    }
+}
+
+private void rejectFieldIfPresent(
+        String value,
+        String fieldName,
+        boolean present) {
+
+    if (present) {
+        throwInvalidField(
+                fieldName,
+                fieldName + " is not allowed for this paymode");
+    }
+}
+
+private boolean isPresent(String value) {
+    return value != null && !value.isBlank();
+}
+
+private void throwInvalidField(String field, String message) {
+    throw new AdminPortalException(
+            ErrorConstants.INVALID_ERROR_CODE,
+            MessageFormat.format(
+                    ErrorConstants.INVALID_ERROR_MESSAGE,
+                    field,
+                    message));
+}
+
+
+
+
+@Mapper(componentModel = "spring")
+public interface MeCodeMappingMapper {
+
+    @Mapping(target = "id", ignore = true)
+    @Mapping(target = "aggregatorCode", ignore = true)
+    @Mapping(target = "merchantId", ignore = true)
+    @Mapping(target = "isTpvActive", ignore = true)
+    @Mapping(target = "authStatus", ignore = true)
+    @Mapping(target = "checkerComment", ignore = true)
+    MerchantPaygatewayMapping toEntity(MeCodeMappingRequest request);
+
+    @BeanMapping(
+        nullValuePropertyMappingStrategy =
+                NullValuePropertyMappingStrategy.IGNORE
+    )
+    @Mapping(target = "id", ignore = true)
+    @Mapping(target = "paygatewayId", ignore = true)
+    @Mapping(target = "aggregatorCode", ignore = true)
+    @Mapping(target = "merchantId", ignore = true)
+    @Mapping(target = "isTpvActive", ignore = true)
+    @Mapping(target = "authStatus", ignore = true)
+    @Mapping(target = "checkerComment", ignore = true)
+    void updateEntity(
+            MeCodeMappingRequest request,
+            @MappingTarget MerchantPaygatewayMapping entity);
+}
+
+
+---------
+
+
+
+
+
+
+
+
+
+
 @Data
 @AllArgsConstructor
 @NoArgsConstructor
