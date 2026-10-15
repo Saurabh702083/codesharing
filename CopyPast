@@ -37,6 +37,21 @@ public class MIFOnboardingService {
     }
 }
 
+@Data
+@Builder
+@Jacksonized
+public class MerchantOnboardingResponse {
+    private String merchantMIFId;
+    private BusinessDto businessDto;
+    private ContactDto contactDto;
+    private WebsiteDto websiteDto;
+    private BankTxnDto bankTxnDto;
+    private BankAccountInfoDto bankAccountInfoDto;
+    private TifDto tifDto;
+    private VsccDto vsccDto;
+    private DocumentDto documentDto;
+}
+
 
 @Component
 @RequiredArgsConstructor
