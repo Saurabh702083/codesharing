@@ -1,4 +1,64 @@
+@Data
+@Builder
+@JsonInclude(JsonInclude.Include.NON_NULL)   // omits the newData key when null
+public class ChangeCompareDto<T> {
+    private T oldData;
+    private Map<String, Object> newData;     // id + changed fields only
+}
 
+
+
+@Component
+@RequiredArgsConstructor
+public class ChangeDiffUtil {
+    private static final Set<String> IGNORE =
+        Set.of("id", "version", "status", "requestType", "merchantMIFId");
+    private final ObjectMapper mapper;
+
+    public <T> ChangeCompareDto<T> compare(T oldDto, Optional<T> pending) {
+        if (pending.isEmpty()) {
+            return ChangeCompareDto.<T>builder().oldData(oldDto).build();
+        }
+        Map<String, Object> o = mapper.convertValue(oldDto, new TypeReference<>() {});
+        Map<String, Object> n = mapper.convertValue(pending.get(), new TypeReference<>() {});
+
+        Map<String, Object> diff = new LinkedHashMap<>();
+        n.forEach((k, v) -> {
+            if (!IGNORE.contains(k) && !Objects.equals(o.get(k), v)) {
+                diff.put(k, v);
+            }
+        });
+
+        if (diff.isEmpty()) {                  // pending row exists but nothing differs
+            return ChangeCompareDto.<T>builder().oldData(oldDto).build();
+        }
+
+        Map<String, Object> newData = new LinkedHashMap<>();
+        newData.put("id", n.get("id"));        // pending row id first
+        newData.putAll(diff);
+        return ChangeCompareDto.<T>builder().oldData(oldDto).newData(newData).build();
+    }
+}
+
+
+@Data @Builder @Jacksonized
+public class MerchantChangeCompareResponse {
+    private String merchantMIFId;
+    private ChangeCompareDto<BusinessDto> businessDto;
+    private ChangeCompareDto<ContactDto> contactDto;
+    private ChangeCompareDto<WebsiteDto> websiteDto;
+    private ChangeCompareDto<BankTxnDto> bankTxnDto;
+    private ChangeCompareDto<BankAccountInfoDto> bankAccountInfoDto;
+    private ChangeCompareDto<TifDto> tifDto;
+    private ChangeCompareDto<VsccDto> vsccDto;
+    private DocumentDto documentDto;
+}
+
+
+
+
+
+----------------
 Optional<BusinessInfo> findByMerchantMIFIdAndStatus(String merchantMIFId, String status);
 
 public final class RecordStatus {
