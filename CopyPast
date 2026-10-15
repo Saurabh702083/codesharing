@@ -1,3 +1,152 @@
+
+Optional<BusinessInfo> findByMerchantMIFIdAndStatus(String merchantMIFId, String status);
+
+public final class RecordStatus {
+    public static final String ACTIVE = "ACTIVE";
+    public static final String PENDING = "PENDING";
+}
+
+// existing method now reads ACTIVE only
+public BusinessDto getBusinessInfo(String mifId) {
+    return businessInfoRepository.findByMerchantMIFIdAndStatus(mifId, RecordStatus.ACTIVE)
+        .map(businessInfoMapper::mapEntityToResponse)
+        .orElseThrow(() -> new AdminPortalException(NOT_FOUND_ERROR_CODE,
+            MessageFormat.format(NOT_FOUND_ERROR_MESSAGE, "Merchant MifId")));
+}
+
+// new: pending row, empty if form wasn't changed
+public Optional<BusinessDto> getPendingBusinessInfo(String mifId) {
+    return businessInfoRepository.findByMerchantMIFIdAndStatus(mifId, RecordStatus.PENDING)
+        .map(businessInfoMapper::mapEntityToResponse);
+}
+
+
+@Data @Builder
+public class ChangeCompareDto<T> {
+    private T oldData;
+    private T newData;               // null if this form has no pending change
+    private List<String> changedFields;
+    private boolean changed;
+}
+
+
+@Component
+@RequiredArgsConstructor
+public class ChangeDiffUtil {
+    private static final Set<String> IGNORE =
+        Set.of("id", "version", "status", "requestType", "merchantMIFId");
+    private final ObjectMapper mapper;
+
+    public <T> ChangeCompareDto<T> compare(T oldDto, Optional<T> pending) {
+        if (pending.isEmpty()) {
+            return ChangeCompareDto.<T>builder().oldData(oldDto)
+                .changedFields(List.of()).changed(false).build();
+        }
+        Map<String, Object> o = mapper.convertValue(oldDto, new TypeReference<>() {});
+        Map<String, Object> n = mapper.convertValue(pending.get(), new TypeReference<>() {});
+        List<String> changed = n.keySet().stream()
+            .filter(k -> !IGNORE.contains(k))
+            .filter(k -> !Objects.equals(o.get(k), n.get(k)))
+            .toList();
+        return ChangeCompareDto.<T>builder().oldData(oldDto).newData(pending.get())
+            .changedFields(changed).changed(!changed.isEmpty()).build();
+    }
+}
+
+
+
+@Data @Builder @Jacksonized
+public class MerchantChangeCompareResponse {
+    private String merchantMIFId;
+    private boolean hasPendingChange;
+    private ChangeCompareDto<BusinessDto> businessDto;
+    private ChangeCompareDto<ContactDto> contactDto;
+    private ChangeCompareDto<WebsiteDto> websiteDto;
+    private ChangeCompareDto<BankTxnDto> bankTxnDto;
+    private ChangeCompareDto<BankAccountInfoDto> bankAccountInfoDto;
+    private ChangeCompareDto<TifDto> tifDto;
+    private ChangeCompareDto<VsccDto> vsccDto;
+    private DocumentDto documentDto;   // no edits allowed, so single copy
+}
+
+
+
+public MerchantChangeCompareResponse getChangeCompareDetails(String mifId) {
+    var business = diffUtil.compare(businessInfoDao.getBusinessInfo(mifId),
+                                    businessInfoDao.getPendingBusinessInfo(mifId));
+    var contact  = diffUtil.compare(contactInfoDao.getContactInfo(mifId),
+                                    contactInfoDao.getPendingContactInfo(mifId));
+    var website  = diffUtil.compare(websiteInfoDao.getWebsiteInfo(mifId),
+                                    websiteInfoDao.getPendingWebsiteInfo(mifId));
+    var bankTxn  = diffUtil.compare(bankTxnInfoDao.getBankTxnInfo(mifId),
+                                    bankTxnInfoDao.getPendingBankTxnInfo(mifId));
+    var bankAcc  = diffUtil.compare(bankAccountInfoDao.getBankAccountInfo(mifId),
+                                    bankAccountInfoDao.getPendingBankAccountInfo(mifId));
+    var tif      = diffUtil.compare(tifInfoDao.getTifInfo(mifId),
+                                    tifInfoDao.getPendingTifInfo(mifId));
+    var vscc     = diffUtil.compare(vsccDao.getVSCCInfo(mifId),
+                                    vsccDao.getPendingVSCCInfo(mifId));
+
+    boolean any = Stream.of(business, contact, website, bankTxn, bankAcc, tif, vscc)
+                        .anyMatch(ChangeCompareDto::isChanged);
+
+    return MerchantChangeCompareResponse.builder()
+        .merchantMIFId(mifId).hasPendingChange(any)
+        .businessDto(business).contactDto(contact).websiteDto(website)
+        .bankTxnDto(bankTxn).bankAccountInfoDto(bankAcc)
+        .tifDto(tif).vsccDto(vscc)
+        .documentDto(documentDao.getDocumentInfo(mifId))
+        .build();
+}
+
+
+
+public AdminPortalResponse<MerchantChangeCompareResponse> getMerchantMIFChangeInfo(String mifId) {
+    merchantOnboardingValidator.validateMerchantOnBoardMIFId(mifId);
+    return AdminPortalResponse.<MerchantChangeCompareResponse>builder()
+        .status(SUCCESS_RESPONSE_CODE)
+        .data(List.of(merchantOnboardingDao.getChangeCompareDetails(mifId))).build();
+}
+
+
+@PreAuthorize("hasAnyRole('ONBOARDING_MANAGER', 'BIZ_SUPPORT')") // use your maker/checker roles
+@GetMapping("/{MIFId}/change-request")
+@Operation(summary = "Get old vs new MIF data for checker")
+public AdminPortalResponse<MerchantChangeCompareResponse> getMerchantMIFChangeInfo(
+        @PathVariable("MIFId") String merchantMIFId) {
+    return mifOnboardingService.getMerchantMIFChangeInfo(merchantMIFId);
+}
+
+
+
+
+{
+  "status": "SUCCESS",
+  "data": [{
+    "merchantMIFId": "MIF1001",
+    "hasPendingChange": true,
+    "businessDto": {
+      "changed": true,
+      "changedFields": ["legalName", "officeAddress"],
+      "oldData": { "legalName": "ABC Traders", "gstIn": "27ABCDE1234F1Z5", "officeAddress": "Mumbai" },
+      "newData": { "legalName": "ABC Enterprises", "gstIn": "27ABCDE1234F1Z5", "officeAddress": "Pune" }
+    },
+    "contactDto": {
+      "changed": false,
+      "changedFields": [],
+      "oldData": { "firstName": "Ravi", "primaryMobileNumber": "98xxxx1111" },
+      "newData": null
+    },
+    "bankAccountInfoDto": {
+      "changed": true,
+      "changedFields": ["accountNumber", "ifscBranchCode"],
+      "oldData": { "accountNumber": "XXXX1234", "ifscBranchCode": "HDFC0001" },
+      "newData": { "accountNumber": "XXXX9876", "ifscBranchCode": "ICIC0002" }
+    },
+    "documentDto": { "merchantMIFId": "MIF1001", "documentItems": [ ] }
+  }]
+}
+
     @PreAuthorize("hasAnyRole('ONBOARDING_MANAGER', 'RELATIONSHIP_MANAGER', 'BIZ_SUPPORT', 'CIRCLE')")
     @GetMapping("/{MIFId}")
     @Operation(summary = "Get Merchant Mif", description = "This API used to get MIF form associated with MIFId")
