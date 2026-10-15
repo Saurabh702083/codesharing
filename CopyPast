@@ -1,3 +1,58 @@
+@Component
+@RequiredArgsConstructor
+public class ChangeDiffUtil {
+    private static final Set<String> IGNORE =
+        Set.of("id", "version", "status", "requestType", "merchantMIFId");
+    private final ObjectMapper mapper;
+
+    public <T> ChangeCompareDto<T> compare(T oldDto, Optional<T> pending) {
+        Map<String, Object> newData = pending.map(p -> diff(oldDto, p)).orElse(null);
+        return ChangeCompareDto.<T>builder().oldData(oldDto).newData(newData).build();
+    }
+
+    private Map<String, Object> diff(Object oldDto, Object newDto) {
+        Map<String, Object> o = toMap(oldDto);
+        Map<String, Object> n = toMap(newDto);
+
+        Map<String, Object> diff = new LinkedHashMap<>();
+        diff.put("id", n.get("id"));
+        n.entrySet().stream()
+            .filter(e -> !IGNORE.contains(e.getKey()))
+            .filter(e -> !Objects.equals(o.get(e.getKey()), e.getValue()))
+            .forEach(e -> diff.put(e.getKey(), e.getValue()));
+
+        return diff.size() > 1 ? diff : null;   // only "id" present means nothing changed
+    }
+
+    private Map<String, Object> toMap(Object dto) {
+        return mapper.convertValue(dto, new TypeReference<>() {});
+    }
+}
+
+-------
+private Map<String, Object> diff(Object oldDto, Object newDto) {
+    Map<String, Object> o = toMap(oldDto);
+    Map<String, Object> n = toMap(newDto);
+    Object pendingId = n.get("id");
+
+    n.entrySet().removeIf(e -> IGNORE.contains(e.getKey())
+                            || Objects.equals(o.get(e.getKey()), e.getValue()));
+    if (n.isEmpty()) return null;
+
+    Map<String, Object> result = new LinkedHashMap<>();
+    result.put("id", pendingId);
+    result.putAll(n);
+    return result;
+}
+
+
+
+
+
+
+
+
+
 @Data
 @Builder
 @JsonInclude(JsonInclude.Include.NON_NULL)   // omits the newData key when null
