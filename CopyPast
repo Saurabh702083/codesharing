@@ -1,3 +1,113 @@
+@Data
+@Builder
+@Jacksonized
+public class MerchantOnboardingResponse {
+    private String merchantMIFId;
+    private BusinessDto businessDto;
+    private ContactDto contactDto;
+    private WebsiteDto websiteDto;
+    private BankTxnDto bankTxnDto;
+    private BankAccountInfoDto bankAccountInfoDto;
+    private TifDto tifDto;
+    private VsccDto vsccDto;
+    private DocumentDto documentDto;
+}
+
+@Data
+@NoArgsConstructor
+@Builder
+@AllArgsConstructor
+public class BusinessDto {
+    private UUID id;
+    private String merchantMIFId;
+    private PanDetailsDto panDetailsDto;
+    private String gstIn;
+    private String tan;
+    private String legalName;
+    private String brandName;
+    private String constitution;
+    private String taxpayerType;
+    private String dateOfGSTReg;
+    private String gstRegistrationStatus;
+    private String website;
+    private String dateOfEstablishment;
+    private BigDecimal currentAnnualTurnover;
+    private String officeAddress;
+    private String country;
+    private String state;
+    private String cityOrArea;
+    private String pincode;
+    private String businessCategory;
+    private String companyProfile;
+    private String productOrServiceIntendedToSell;
+    private Boolean isPanVarified;
+    private Boolean isGstInVarified;
+    private String status;
+    private String requestType;
+    private ChangeDto<BusinessDto> crData;
+
+}
+
+@Data
+@NoArgsConstructor
+@Builder
+@AllArgsConstructor
+public class ContactDto {
+
+    private UUID id;
+    private String merchantMIFId;
+
+    private String firstName;
+    private String middleName;
+    private String lastName;
+    private String designation;
+
+    private String emailId;
+    private String alternateEmailId;
+
+    private String loginId;
+
+    private String primaryMobileNumber;
+    private String alternateMobileNumber;
+
+    private String beLevelOneName;
+    private String beLevelOneDesignation;
+    private String beLevelOneMobileNumber;
+    private String beLevelOneEmailId;
+
+    private String beLevelTwoName;
+    private String beLevelTwoDesignation;
+    private String beLevelTwoMobileNumber;
+    private String beLevelTwoEmailId;
+
+    private String beLevelThreeName;
+    private String beLevelThreeDesignation;
+    private String beLevelThreeMobileNumber;
+    private String beLevelThreeEmailId;
+
+    private String ceLevelOneName;
+    private String ceLevelOneDesignation;
+    private String ceLevelOneMobileNumber;
+    private String ceLevelOneEmailId;
+
+    private String ceLevelTwoName;
+    private String ceLevelTwoDesignation;
+    private String ceLevelTwoMobileNumber;
+    private String ceLevelTwoEmailId;
+
+    private String ceLevelThreeName;
+    private String ceLevelThreeDesignation;
+    private String ceLevelThreeMobileNumber;
+    private String ceLevelThreeEmailId;
+
+    private Boolean consentAck;
+    private String status;
+    private String requestType;
+    private ContactDto crData;
+}
+
+
+
 @Audited
 @AuditTable(value = "MIF_BUSINESS_INFO_AUDIT")
 @Table(name = "MIF_BUSINESS_INFO")
