@@ -1,3 +1,90 @@
+
+@Component
+@RequiredArgsConstructor
+public class ChangeDiffUtil {
+    private static final Set<String> IGNORE =
+        Set.of("id", "version", "status", "requestType", "merchantMIFId", "crData");
+    private final ObjectMapper mapper;
+
+    public Map<String, Object> diff(Object activeDto, Optional<?> pending) {
+        if (pending.isEmpty()) return null;
+
+        Map<String, Object> o = toMap(activeDto);
+        Map<String, Object> n = toMap(pending.get());
+
+        Map<String, Object> changed = new LinkedHashMap<>();
+        n.entrySet().stream()
+            .filter(e -> !IGNORE.contains(e.getKey()))
+            .filter(e -> !same(o.get(e.getKey()), e.getValue()))
+            .forEach(e -> changed.put(e.getKey(), e.getValue()));
+
+        if (changed.isEmpty()) return null;          // nothing changed, so no crData key
+
+        Map<String, Object> crData = new LinkedHashMap<>();
+        crData.put("id", n.get("id"));               // pending row id
+        crData.putAll(changed);
+        return crData;
+    }
+
+    private boolean same(Object a, Object b) {
+        if (a instanceof Number x && b instanceof Number y) {
+            return new BigDecimal(x.toString()).compareTo(new BigDecimal(y.toString())) == 0;
+        }
+        return Objects.equals(a, b);
+    }
+
+    private Map<String, Object> toMap(Object dto) {
+        return mapper.convertValue(dto, new TypeReference<>() {});
+    }
+}
+
+
+public Optional<BusinessDto> getPendingBusinessInfo(String mifId) {
+    return businessInfoRepository.findByMerchantMIFIdAndStatus(mifId, MIFStatus.PENDING)
+        .map(businessInfoMapper::mapEntityToResponse);
+}
+
+
+
+public BusinessDto getBusinessInfo(String mifId) {
+    return businessInfoRepository.findByMerchantMIFIdAndStatus(mifId, MIFStatus.ACTIVE)
+        .map(businessInfoMapper::mapEntityToResponse)
+        .orElseThrow(() -> new AdminPortalException(NOT_FOUND_ERROR_CODE,
+            MessageFormat.format(NOT_FOUND_ERROR_MESSAGE, "Merchant MifId")));
+}
+
+
+
+public MerchantOnboardingResponse getOnboardingDetails(String mifId, boolean includeCr) {
+    BusinessDto business = businessInfoDao.getBusinessInfo(mifId);
+    ContactDto contact = contactInfoDao.getContactInfo(mifId);
+    WebsiteDto website = websiteInfoDao.getWebsiteInfo(mifId);
+    BankTxnDto bankTxn = bankTxnInfoDao.getBankTxnInfo(mifId);
+    BankAccountInfoDto bankAcc = bankAccountInfoDao.getBankAccountInfo(mifId);
+    TifDto tif = tifInfoDao.getTifInfo(mifId);
+    VsccDto vscc = vsccDao.getVSCCInfo(mifId);
+
+    if (includeCr) {
+        business.setCrData(diffUtil.diff(business, businessInfoDao.getPendingBusinessInfo(mifId)));
+        contact.setCrData(diffUtil.diff(contact, contactInfoDao.getPendingContactInfo(mifId)));
+        website.setCrData(diffUtil.diff(website, websiteInfoDao.getPendingWebsiteInfo(mifId)));
+        bankTxn.setCrData(diffUtil.diff(bankTxn, bankTxnInfoDao.getPendingBankTxnInfo(mifId)));
+        bankAcc.setCrData(diffUtil.diff(bankAcc, bankAccountInfoDao.getPendingBankAccountInfo(mifId)));
+        tif.setCrData(diffUtil.diff(tif, tifInfoDao.getPendingTifInfo(mifId)));
+        vscc.setCrData(diffUtil.diff(vscc, vsccDao.getPendingVSCCInfo(mifId)));
+    }
+
+    return MerchantOnboardingResponse.builder().merchantMIFId(mifId)
+        .businessDto(business).contactDto(contact).websiteDto(website)
+        .bankTxnDto(bankTxn).bankAccountInfoDto(bankAcc).tifDto(tif).vsccDto(vscc)
+        .documentDto(documentDao.getDocumentInfo(mifId)).build();
+}
+
+
+
+
+
+------
 @Data
 @Builder
 @Jacksonized
