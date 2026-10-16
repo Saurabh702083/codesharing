@@ -1,3 +1,155 @@
+@Audited
+@AuditTable(value = "MIF_BUSINESS_INFO_AUDIT")
+@Table(name = "MIF_BUSINESS_INFO")
+@Entity
+@AllArgsConstructor
+@NoArgsConstructor
+@Builder
+@Setter
+@Getter
+public class    BusinessInfo extends AuditEntity {
+    @Id
+    @GeneratedValue(strategy = GenerationType.UUID)
+    private UUID id;
+    @Column(name = "MERCHANT_MIF_ID")
+    private String merchantMIFId;
+    @Lob
+    private String pan;
+    private String gstIn;
+    private String tan;
+    private String legalName;
+    private String brandName;
+    private String constitution;
+    private String taxpayerType;
+    @Column(name = "DATE_OF_GST_REG")
+    private String dateOfGSTReg;
+    private String gstRegistrationStatus;
+    private String website;
+    @Column(name = "DATE_OF_ESTABLISHMENT")
+    private String dateOfEstablishment;
+    @Column(name = "CURRENT_ANNUAL_TURNOVER")
+    private String currentAnnualTurnover;
+    private String officeAddress;
+    private String country;
+    private String state;
+    private String cityOrArea;
+    private String pincode;
+    private String businessCategory;
+    private String companyProfile;
+    private String productOrServiceIntendedToSell;
+    private Boolean isPanVarified;
+    private Boolean isGstInVarified;
+    @Version
+    private int version;
+    @Enumerated(EnumType.STRING)
+    private MIFStatus status;
+    @Enumerated(EnumType.STRING)
+    private MIFRequestType requestType;
+    private String crMakerComment;
+    private String crCheckerComment;
+
+    @PrePersist
+    @PreUpdate
+    public void setEntityNameForRevision() {
+        AuditRevisionListener.setEntityName(this.getClass().getSimpleName());
+    }
+}
+
+
+@Repository
+public interface BusinessInfoRepository extends JpaRepository<BusinessInfo, UUID> {
+
+    Optional<BusinessInfo> findByMerchantMIFId(String merchantMIFId);
+
+    Optional<BusinessInfo> findByMerchantMIFIdAndStatus(String merchantMIFId, MIFStatus status);
+
+    int updateBusinessInfoCrByIds(UUID newInfoId, UUID oldInfoId, String merchantMIFId, MIFStatus authStatus, String checkerComment);
+}
+
+@Component
+@RequiredArgsConstructor
+public class BusinessInfoDao {
+    private final LoggerUtility logger = LoggerFactoryUtility.getLogger(this.getClass());
+    private final BusinessInfoMapper businessInfoMapper;
+    private final BusinessInfoRepository businessInfoRepository;
+
+ public void updateBusinessInfoById(UUID newInfoId, UUID oldInfoId ,String merchantMIFId, MIFStatus authStatus, String checkerComment) {
+        logger.info("Updating authStatus to {} for merchantMIFId : {}", authStatus, merchantMIFId);
+        int updateCount = businessInfoRepository.updateBusinessInfoCrByIds(newInfoId,oldInfoId, merchantMIFId, authStatus,checkerComment);
+        logger.info("Updated authStatus count: {}", updateCount);
+    }
+}
+
+
+@Component
+@RequiredArgsConstructor
+public class MerchantOnboardingDao {
+    private final LoggerUtility logger = LoggerFactoryUtility.getLogger(this.getClass());
+    private final BusinessInfoValidator businessInfoValidator;
+    private final ContactInfoValidator contactInfoValidator;
+    private final WebsiteInfoValidator websiteInfoValidator;
+    private final BankTxnInfoValidator bankTxnInfoValidator;
+    private final BankAccountInfoValidator bankAccountInfoValidator;
+    private final TifInfoValidator tifInfoValidator;
+    private final VsccValidator vsccValidator;
+    private final DocumentInfoValidator documentInfoValidator;
+    private final BusinessInfoDao businessInfoDao;
+    private final ContactInfoDao contactInfoDao;
+    private final WebsiteInfoDao websiteInfoDao;
+    private final BankTxnInfoDao bankTxnInfoDao;
+    private final TifInfoDao tifInfoDao;
+    private final MerchantMIFDao merchantMIfDao;
+    private final BankAccountInfoDao bankAccountInfoDao;
+    private final VsccDao vsccDao;
+    private final DocumentInfoDao documentDao;
+    private final MerchantOnboardingValidator merchantOnboardingValidator;
+    private final MasterDataRepository masterDataRepository;
+
+  public void updateMIFChangeRequest(String merchantMIFId, ApproveChangeRequest approveChangeRequest, MIFStatus authStatus) {
+        if(ObjectUtils.isNotEmpty(approveChangeRequest.getBusinessInfoIds().getNewRequestId())){
+            businessInfoDao.updateBusinessInfoById(approveChangeRequest.getBusinessInfoIds().getNewRequestId(),approveChangeRequest.getBusinessInfoIds().getOldRequestId(),merchantMIFId,authStatus,approveChangeRequest.getCheckerComment());
+//            contactInfoDao.updateContactInfoById(approveChangeRequest.getContactInfoId(),merchantMIFId,authStatus,approveChangeRequest.getCheckerComment());
+//            websiteInfoDao.updateWebsiteInfoById(approveChangeRequest.getWebsiteInfoId(),merchantMIFId,authStatus,approveChangeRequest.getCheckerComment());
+//            bankTxnInfoDao.updateBankTxnInfoById(approveChangeRequest.getBankTxnInfoId(),merchantMIFId,authStatus,approveChangeRequest.getCheckerComment());
+//            bankAccountInfoDao.updateBankAccountInfoById(approveChangeRequest.getTifInfoId(),merchantMIFId,authStatus,approveChangeRequest.getCheckerComment());
+//            vsccDao.updateVSCCInfoById(approveChangeRequest.getVsccInfoId(),merchantMIFId,authStatus,approveChangeRequest.getCheckerComment());
+//            tifInfoDao.updateTifInfoById(approveChangeRequest.getTifInfoId(),merchantMIFId,authStatus,approveChangeRequest.getCheckerComment());
+        }
+
+    }
+}
+
+
+@Service
+@Data
+@RequiredArgsConstructor
+public class MIFOnboardingService {
+
+    private final LoggerUtility logger = LoggerFactoryUtility.getLogger(this.getClass());
+    private final MerchantOnboardingValidator merchantOnboardingValidator;
+    private final MerchantOnboardingDao merchantOnboardingDao;
+    private final MerchantMIFDao merchantMIFDao;
+    private final BusinessInfoDao businessInfoDao;
+    private final ContactInfoDao contactInfoDao;
+    private final DocumentInfoDao documentInfoDao;
+    private final MIFCircleMappingDao mifCircleMappingDao;
+    private final AdminPortalConfig adminPortalConfig;
+    private final AdminMerchantOnboardingDao adminMerchantOnboardingDao;
+    private final MifRiskScoreDao mifRiskScoreDao;
+    private final CurrencyPaymodeDao currencyPaymodeDao;
+    private final PaymodeValidator paymodeValidator;
+  public AdminPortalResponse<String> approveMIFChangeRequest(String merchantMIFId, ApproveChangeRequest approveChangeRequest) {
+        logger.info("validate mifId :{}",merchantMIFId);
+        //TODO validate request
+        MIFStatus authStatus = approveChangeRequest.isApproved() ? MIFStatus.ACTIVE : MIFStatus.INACTIVE;
+        merchantOnboardingDao.updateMIFChangeRequest(merchantMIFId, approveChangeRequest,authStatus);
+    }
+}
+
+
+
+
+--------------------------------------------------------------------------------
 @Component
 @RequiredArgsConstructor
 public class ChangeDiffUtil {
