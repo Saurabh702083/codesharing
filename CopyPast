@@ -1,4 +1,68 @@
+@Data @NoArgsConstructor @Builder @AllArgsConstructor
+@JsonInclude(JsonInclude.Include.NON_NULL)   // class level
+public class BusinessDto {
+    private UUID id;
+    ...
+    private BusinessDto crData;              // same type, as before
+}
 
+
+
+@Component
+@RequiredArgsConstructor
+public class ChangeDiffUtil {
+    private static final Set<String> IGNORE =
+        Set.of("id", "version", "status", "requestType", "merchantMIFId", "crData");
+    private final ObjectMapper mapper;
+
+    public <T> T diff(T activeDto, Optional<T> pending) {
+        if (pending.isEmpty()) return null;
+
+        Map<String, Object> o = toMap(activeDto);
+        Map<String, Object> n = toMap(pending.get());
+
+        Map<String, Object> changed = new LinkedHashMap<>();
+        n.forEach((k, v) -> {
+            if (!IGNORE.contains(k) && !same(o.get(k), v)) changed.put(k, v);
+        });
+
+        if (changed.isEmpty()) return null;        // nothing changed, so no crData
+
+        changed.put("id", n.get("id"));            // pending row id
+        return (T) mapper.convertValue(changed, activeDto.getClass());
+    }
+
+    private boolean same(Object a, Object b) {
+        if (a instanceof Number x && b instanceof Number y) {
+            return new BigDecimal(x.toString()).compareTo(new BigDecimal(y.toString())) == 0;
+        }
+        return Objects.equals(a, b);
+    }
+
+    private Map<String, Object> toMap(Object dto) {
+        return mapper.convertValue(dto, new TypeReference<>() {});
+    }
+}
+
+
+
+
+business.setCrData(diffUtil.diff(business, businessInfoDao.getPendingBusinessInfo(mifId)));
+contact.setCrData(diffUtil.diff(contact, contactInfoDao.getPendingContactInfo(mifId)));
+// same for website, bankTxn, bankAcc, tif, vscc
+
+
+
+
+
+
+
+
+
+
+
+
+-------------------
 @Component
 @RequiredArgsConstructor
 public class ChangeDiffUtil {
