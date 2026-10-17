@@ -1,3 +1,196 @@
+@Data
+public class ApproveChangeRequest {
+    private boolean approved;
+    private String checkerComment;
+    private FormIds businessInfoIds;
+    private FormIds contactInfoIds;
+    private FormIds websiteInfoIds;
+    private FormIds bankTxnInfoIds;
+    private FormIds bankAccountInfoIds;
+    private FormIds tifInfoIds;
+    private FormIds vsccInfoIds;
+}
+
+@Data
+public class FormIds {
+    private UUID oldRequestId;   // id of the ACTIVE row (the DTO's own id)
+    private UUID newRequestId;   // crData.id (the PENDING row)
+}
+
+
+@Modifying(clearAutomatically = true, flushAutomatically = true)
+@Query("""
+    UPDATE BusinessInfo b
+       SET b.status = CASE WHEN b.id = :newId THEN :active ELSE :inactive END,
+           b.crCheckerComment = CASE WHEN b.id = :newId THEN :comment ELSE b.crCheckerComment END,
+           b.version = b.version + 1
+     WHERE b.merchantMIFId = :mifId
+       AND ( (b.id = :newId AND b.status = :pending)
+          OR (b.id = :oldId AND b.status = :active) )
+    """)
+int approveChange(@Param("newId") UUID newId, @Param("oldId") UUID oldId,
+                  @Param("mifId") String mifId, @Param("comment") String comment,
+                  @Param("active") MIFStatus active, @Param("inactive") MIFStatus inactive,
+                  @Param("pending") MIFStatus pending);
+
+@Modifying(clearAutomatically = true, flushAutomatically = true)
+@Query("""
+    UPDATE BusinessInfo b
+       SET b.status = :inactive, b.crCheckerComment = :comment, b.version = b.version + 1
+     WHERE b.id = :newId AND b.merchantMIFId = :mifId AND b.status = :pending
+    """)
+int rejectChange(@Param("newId") UUID newId, @Param("mifId") String mifId,
+                 @Param("comment") String comment,
+                 @Param("inactive") MIFStatus inactive, @Param("pending") MIFStatus pending);
+
+
+
+
+public void approveChange(UUID newId, UUID oldId, String mifId, String comment) {
+    int count = businessInfoRepository.approveChange(newId, oldId, mifId, comment,
+            MIFStatus.ACTIVE, MIFStatus.INACTIVE, MIFStatus.PENDING);
+    if (count != 2) {
+        throw new AdminPortalException(BAD_REQUEST_ERROR_CODE,
+            "Invalid or already processed business info change request");
+    }
+}
+
+public void rejectChange(UUID newId, String mifId, String comment) {
+    int count = businessInfoRepository.rejectChange(newId, mifId, comment,
+            MIFStatus.INACTIVE, MIFStatus.PENDING);
+    if (count != 1) {
+        throw new AdminPortalException(BAD_REQUEST_ERROR_CODE,
+            "Invalid or already processed business info change request");
+    }
+}
+
+
+
+
+
+public void updateMIFChangeRequest(String mifId, ApproveChangeRequest req) {
+    String c = req.getCheckerComment();
+    boolean ok = req.isApproved();
+
+    FormIds b = req.getBusinessInfoIds();
+    if (hasChange(b)) {
+        if (ok) businessInfoDao.approveChange(b.getNewRequestId(), b.getOldRequestId(), mifId, c);
+        else    businessInfoDao.rejectChange(b.getNewRequestId(), mifId, c);
+    }
+
+    FormIds ct = req.getContactInfoIds();
+    if (hasChange(ct)) {
+        if (ok) contactInfoDao.approveChange(ct.getNewRequestId(), ct.getOldRequestId(), mifId, c);
+        else    contactInfoDao.rejectChange(ct.getNewRequestId(), mifId, c);
+    }
+
+    FormIds w = req.getWebsiteInfoIds();
+    if (hasChange(w)) {
+        if (ok) websiteInfoDao.approveChange(w.getNewRequestId(), w.getOldRequestId(), mifId, c);
+        else    websiteInfoDao.rejectChange(w.getNewRequestId(), mifId, c);
+    }
+
+    FormIds bt = req.getBankTxnInfoIds();
+    if (hasChange(bt)) {
+        if (ok) bankTxnInfoDao.approveChange(bt.getNewRequestId(), bt.getOldRequestId(), mifId, c);
+        else    bankTxnInfoDao.rejectChange(bt.getNewRequestId(), mifId, c);
+    }
+
+    FormIds ba = req.getBankAccountInfoIds();
+    if (hasChange(ba)) {
+        if (ok) bankAccountInfoDao.approveChange(ba.getNewRequestId(), ba.getOldRequestId(), mifId, c);
+        else    bankAccountInfoDao.rejectChange(ba.getNewRequestId(), mifId, c);
+    }
+
+    FormIds t = req.getTifInfoIds();
+    if (hasChange(t)) {
+        if (ok) tifInfoDao.approveChange(t.getNewRequestId(), t.getOldRequestId(), mifId, c);
+        else    tifInfoDao.rejectChange(t.getNewRequestId(), mifId, c);
+    }
+
+    FormIds v = req.getVsccInfoIds();
+    if (hasChange(v)) {
+        if (ok) vsccDao.approveChange(v.getNewRequestId(), v.getOldRequestId(), mifId, c);
+        else    vsccDao.rejectChange(v.getNewRequestId(), mifId, c);
+    }
+}
+
+public boolean hasAnyChange(ApproveChangeRequest r) {
+    return Stream.of(r.getBusinessInfoIds(), r.getContactInfoIds(), r.getWebsiteInfoIds(),
+                     r.getBankTxnInfoIds(), r.getBankAccountInfoIds(),
+                     r.getTifInfoIds(), r.getVsccInfoIds())
+                 .anyMatch(this::hasChange);
+}
+
+private boolean hasChange(FormIds ids) {
+    return ids != null && ids.getNewRequestId() != null
+        && (ids.getOldRequestId() != null || /* reject needs only new id */ true);
+}
+
+
+
+
+
+
+@Transactional(rollbackFor = Exception.class)
+public AdminPortalResponse<String> approveMIFChangeRequest(String mifId, ApproveChangeRequest req) {
+    merchantOnboardingValidator.validateMerchantOnBoardMIFId(mifId);
+
+    if (!merchantOnboardingDao.hasAnyChange(req)) {
+        throw new AdminPortalException(BAD_REQUEST_ERROR_CODE, "No change request ids provided");
+    }
+    if (!req.isApproved() && StringUtils.isBlank(req.getCheckerComment())) {
+        throw new AdminPortalException(BAD_REQUEST_ERROR_CODE, "Checker comment is required for rejection");
+    }
+    if (req.isApproved()) {
+        validateOldIdsPresent(req);
+    }
+
+    merchantOnboardingDao.updateMIFChangeRequest(mifId, req);
+
+    return AdminPortalResponse.<String>builder()
+        .status(SUCCESS_RESPONSE_CODE)
+        .data(List.of(req.isApproved() ? "Change request approved" : "Change request rejected"))
+        .build();
+}
+
+private void validateOldIdsPresent(ApproveChangeRequest r) {
+    Stream.of(r.getBusinessInfoIds(), r.getContactInfoIds(), r.getWebsiteInfoIds(),
+              r.getBankTxnInfoIds(), r.getBankAccountInfoIds(),
+              r.getTifInfoIds(), r.getVsccInfoIds())
+          .filter(Objects::nonNull)
+          .filter(ids -> ids.getNewRequestId() != null)
+          .forEach(ids -> {
+              if (ids.getOldRequestId() == null) {
+                  throw new AdminPortalException(BAD_REQUEST_ERROR_CODE,
+                      "oldRequestId is required for approval");
+              }
+          });
+}
+
+
+
+
+@PreAuthorize("hasRole('CHECKER_ROLE')")   // use your checker role
+@PostMapping("/{MIFId}/change-request/approve")
+@Operation(summary = "Approve or reject MIF change request")
+public AdminPortalResponse<String> approveChangeRequest(
+        @PathVariable("MIFId") String merchantMIFId,
+        @RequestBody ApproveChangeRequest req) {
+    return mifOnboardingService.approveMIFChangeRequest(merchantMIFId, req);
+}
+
+
+
+
+
+
+
+
+
+
+
+----------------
 @Data @NoArgsConstructor @Builder @AllArgsConstructor
 @JsonInclude(JsonInclude.Include.NON_NULL)   // class level
 public class BusinessDto {
