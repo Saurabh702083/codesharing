@@ -1,0 +1,290 @@
+
+package com.epay.admin.portal.externalservice;
+
+import com.epay.admin.portal.exceptions.UpiIntegrationError;
+import com.epay.admin.portal.exceptions.UpiIntegrationException;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
+import org.springframework.stereotype.Component;
+import org.springframework.util.LinkedMultiValueMap;
+import org.springframework.util.MultiValueMap;
+import org.springframework.web.reactive.function.BodyInserters;
+import org.springframework.web.reactive.function.client.WebClient;
+import org.springframework.web.reactive.function.client.WebClientRequestException;
+import reactor.core.publisher.Mono;
+
+import java.net.URI;
+import java.time.Duration;
+import java.util.concurrent.TimeUnit;
+
+@Slf4j
+@Component
+@RequiredArgsConstructor
+public class UpiServiceClient {
+
+    private final WebClient webClient;
+    private final ObjectMapper objectMapper;
+
+    public <T> T initiateUpiAccessToken(
+            String url,
+            String clientId,
+            String clientSecret,
+            String username,
+            String password,
+            String correlationId,
+            Class<T> responseType) {
+
+        MultiValueMap<String, String> form = new LinkedMultiValueMap<>();
+        form.add("grant_type", "password");
+        form.add("client_id", clientId);
+        form.add("client_secret", clientSecret);
+        form.add("username", username);
+        form.add("password", password);
+
+        return executePost(
+                url,
+                form,
+                null,
+                correlationId,
+                "UPI_TOKEN",
+                UpiIntegrationError.TOKEN_REQUEST_FAILED,
+                responseType
+        );
+    }
+
+    public <T> T initiateUpiRequest(
+            String url,
+            String encryptedRequest,
+            String accessToken,
+            String correlationId,
+            Class<T> responseType) {
+
+        MultiValueMap<String, String> form = new LinkedMultiValueMap<>();
+        form.add("requestMsg", encryptedRequest);
+
+        return executePost(
+                url,
+                form,
+                accessToken,
+                correlationId,
+                "UPI_ONBOARDING",
+                UpiIntegrationError.ONBOARDING_REQUEST_FAILED,
+                responseType
+        );
+    }
+
+    private <T> T executePost(
+            String url,
+            MultiValueMap<String, String> form,
+            String accessToken,
+            String correlationId,
+            String step,
+            UpiIntegrationError failureCode,
+            Class<T> responseType) {
+
+        long startNanos = System.nanoTime();
+
+        // Log only the host and path, not URL query parameters.
+        String endpoint = safeEndpoint(url);
+
+        log.info(
+                "UPI call started | correlationId={} | step={} | endpoint={}",
+                correlationId, step, endpoint
+        );
+
+        try {
+            T response = webClient.post()
+                    .uri(URI.create(url))
+                    .contentType(MediaType.APPLICATION_FORM_URLENCODED)
+                    .accept(MediaType.APPLICATION_JSON)
+                    .headers(headers -> {
+                        if (accessToken != null && !accessToken.isBlank()) {
+                            headers.setBearerAuth(accessToken);
+                        }
+                    })
+                    .body(BodyInserters.fromFormData(form))
+                    .exchangeToMono(clientResponse -> {
+                        int status = clientResponse.statusCode().value();
+
+                        return clientResponse.bodyToMono(String.class)
+                                .defaultIfEmpty("")
+                                .flatMap(body -> {
+                                    long durationMs = elapsedMs(startNanos);
+
+                                    if (!clientResponse.statusCode().is2xxSuccessful()) {
+                                        log.error(
+                                                "UPI HTTP failure | correlationId={} " +
+                                                "| step={} | endpoint={} | status={} " +
+                                                "| durationMs={} | response={}",
+                                                correlationId,
+                                                step,
+                                                endpoint,
+                                                status,
+                                                durationMs,
+                                                sanitizeResponse(body)
+                                        );
+
+                                        return Mono.error(
+                                                new UpiIntegrationException(
+                                                        failureCode,
+                                                        "UPI external service returned HTTP "
+                                                                + status,
+                                                        status,
+                                                        null
+                                                )
+                                        );
+                                    }
+
+                                    if (body.isBlank()) {
+                                        log.error(
+                                                "UPI empty response | correlationId={} " +
+                                                "| step={} | status={} | durationMs={}",
+                                                correlationId, step, status, durationMs
+                                        );
+
+                                        return Mono.error(
+                                                new UpiIntegrationException(
+                                                        step.equals("UPI_TOKEN")
+                                                                ? UpiIntegrationError.TOKEN_RESPONSE_INVALID
+                                                                : UpiIntegrationError.ONBOARDING_RESPONSE_INVALID,
+                                                        "UPI external service returned an empty response",
+                                                        status,
+                                                        null
+                                                )
+                                        );
+                                    }
+
+                                    log.info(
+                                            "UPI HTTP success | correlationId={} " +
+                                            "| step={} | status={} | durationMs={} " +
+                                            "| response={}",
+                                            correlationId,
+                                            step,
+                                            status,
+                                            durationMs,
+                                            sanitizeResponse(body)
+                                    );
+
+                                    try {
+                                        return Mono.just(
+                                                objectMapper.readValue(body, responseType)
+                                        );
+                                    } catch (Exception ex) {
+                                        log.error(
+                                                "UPI response parsing failed | " +
+                                                "correlationId={} | step={} | status={} " +
+                                                "| durationMs={} | response={}",
+                                                correlationId,
+                                                step,
+                                                status,
+                                                durationMs,
+                                                sanitizeResponse(body),
+                                                ex
+                                        );
+
+                                        return Mono.error(
+                                                new UpiIntegrationException(
+                                                        step.equals("UPI_TOKEN")
+                                                                ? UpiIntegrationError.TOKEN_RESPONSE_INVALID
+                                                                : UpiIntegrationError.ONBOARDING_RESPONSE_INVALID,
+                                                        "Unable to parse UPI response",
+                                                        status,
+                                                        ex
+                                                )
+                                        );
+                                    }
+                                });
+                    })
+                    .block(Duration.ofSeconds(30));
+
+            if (response == null) {
+                throw new UpiIntegrationException(
+                        failureCode, "UPI call returned no response"
+                );
+            }
+
+            return response;
+
+        } catch (UpiIntegrationException ex) {
+            throw ex;
+
+        } catch (WebClientRequestException ex) {
+            log.error(
+                    "UPI network failure | correlationId={} | step={} " +
+                    "| endpoint={} | durationMs={} | errorType={} | message={}",
+                    correlationId,
+                    step,
+                    endpoint,
+                    elapsedMs(startNanos),
+                    ex.getClass().getSimpleName(),
+                    safeMessage(ex.getMessage()),
+                    ex
+            );
+
+            throw new UpiIntegrationException(
+                    failureCode,
+                    "Unable to communicate with UPI external service",
+                    null,
+                    ex
+            );
+
+        } catch (Exception ex) {
+            log.error(
+                    "Unexpected UPI integration failure | correlationId={} " +
+                    "| step={} | endpoint={} | durationMs={} | errorType={}",
+                    correlationId,
+                    step,
+                    endpoint,
+                    elapsedMs(startNanos),
+                    ex.getClass().getSimpleName(),
+                    ex
+            );
+
+            throw new UpiIntegrationException(
+                    failureCode,
+                    "Unexpected UPI integration failure",
+                    null,
+                    ex
+            );
+        }
+    }
+
+    private long elapsedMs(long startNanos) {
+        return TimeUnit.NANOSECONDS.toMillis(
+                System.nanoTime() - startNanos
+        );
+    }
+
+    private String safeEndpoint(String url) {
+        try {
+            URI uri = URI.create(url);
+            return uri.getHost() + uri.getPath();
+        } catch (Exception ex) {
+            return "<invalid-endpoint>";
+        }
+    }
+
+    private String safeMessage(String message) {
+        if (message == null) {
+            return "<no-message>";
+        }
+        return message.length() > 300
+                ? message.substring(0, 300)
+                : message;
+    }
+
+    private String sanitizeResponse(String body) {
+        if (body == null || body.isBlank()) {
+            return "<empty>";
+        }
+
+        // Conservative default: don't print an unreviewed third-party
+        // payload that might contain tokens or merchant personal data.
+        // Implement field-aware JSON redaction if response diagnostics
+        // require selected fields.
+        return "[response omitted; length=" + body.length() + "]";
+    }
+}
