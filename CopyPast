@@ -1,0 +1,393 @@
+//    @PreAuthorize("hasAnyRole('BIZ_SUPPORT')")
+    @PostMapping("/upi/MECode")
+    @Operation(summary = "Generate ME code for UPI sub-merchant onboard")
+    public AdminPortalResponse<UPIMECodeResponse> generateUPIMECode(@RequestBody UPIMECodeRequest upimeCodeRequest){
+        logger.info("Request received to generate UPI MECode: {}", upimeCodeRequest);
+        return payModeService.generateUPIMECode(upimeCodeRequest);
+    }
+
+
+@Service
+@Data
+@RequiredArgsConstructor
+public class PayModeMappingService {
+
+    private final LoggerUtility logger = LoggerFactoryUtility.getLogger(this.getClass());
+
+    private final MerchantCurrencyCombinationMappingDao merchantCurrencyCombinationMappingDao;
+    private final PayModeMappingDao paymodeMappingDao;
+    private final MeCodeMappingMapper mapper;
+    private final PayModeMappingValidator payModeMappingValidator;
+    private final OnboardingStageDao onboardingStageDao;
+    private final OnboardingStageService onboardingStageService;
+    private final UpiUtil upiUtil;
+    private final AdminPortalLogDao adminPortalLogDao;
+    private final MeCodeGenerationDao meCodeGenerationDao;
+    //TODO: need to remove once test code reverted.
+    private static  final SecureRandom RANDOM = new SecureRandom();
+public AdminPortalResponse<UPIMECodeResponse> generateUPIMECode(UPIMECodeRequest upimeCodeRequest){
+        logger.info("Validating UPI MECode request.");
+        // Validate client Request.
+        payModeMappingValidator.validateMeCodeRequest(upimeCodeRequest);
+        // Map request based on sub merchant UPI request.
+        UpiMeCodeGenerationRequest generationRequest= buildUpiMeCodeRequest(upimeCodeRequest);
+        //Encrypt prepared request.
+        String encryptedUpiRequest= upiUtil.configurePgpEncRequest(String.valueOf(generationRequest),upimeCodeRequest.getPgMerchantId());
+        //Save request for audit purpose.
+        AdminPortalAPILog portalAPILog= adminPortalLogDao.saveRequest(encryptedUpiRequest,String.valueOf(generationRequest), upimeCodeRequest.getExternalMid());
+        //call external service to generate MECode.
+        UpiAccesTokenResponseDto upiAccesTokenResponseDto= getUpiAccessToken(upimeCodeRequest.getExternalMid());
+        UpiGenericResponse upiGenericResponse= meCodeGenerationDao.initiateUpiPostRequest(encryptedUpiRequest,upiAccesTokenResponseDto);
+        String decryptedResponse= upiUtil.configurePgpDecryptRequest(upiGenericResponse.getResponseMsg(),upimeCodeRequest.getPgMerchantId());
+        //save response for audit purpose
+        UpiMeCodeGenerationResponse upiResponse= AdminPortalUtil.convertStringToObject(decryptedResponse,UpiMeCodeGenerationResponse.class);
+        // Decrypt external response.
+        adminPortalLogDao.updateAPILog(portalAPILog,upiGenericResponse,upiResponse);
+        //Map decrypted response to actual response and send back to client
+        UPIMECodeResponse upimeCodeResponse = UPIMECodeResponse.builder().mId(upimeCodeRequest.getPgMerchantId()).bhiQrMECode(upiResponse.getPspReferenceno()).build();
+        return AdminPortalResponse.<UPIMECodeResponse>builder().data(List.of(upimeCodeResponse)).status(1).build();
+    }
+
+    private UpiMeCodeGenerationRequest buildUpiMeCodeRequest(UPIMECodeRequest upimeCodeRequest) {
+        UpiMeCodeGenerationRequest upiRequest = new UpiMeCodeGenerationRequest();
+        upiRequest.setPspReferenceno("SBI" + generateRandomNumber());
+        upiRequest.setPgMerchantId(upimeCodeRequest.getPgMerchantId());
+        upiRequest.setMebussname(upimeCodeRequest.getMerchantName());
+        upiRequest.setIntegrationType(upimeCodeRequest.getIntegrationType());
+        upiRequest.setPanNo(upimeCodeRequest.getPanNumber());
+        upiRequest.setMebusstype(upimeCodeRequest.getConstitution());
+        upiRequest.setAwlmcc(upimeCodeRequest.getMccCode());
+        upiRequest.setSettleType(upimeCodeRequest.getPaymentSettlementType());
+        upiRequest.setMerVirtualAdd(upimeCodeRequest.getVpaAddress());
+        upiRequest.setRequestUrl1(upimeCodeRequest.getWhiteListedUrl());
+        upiRequest.setExtMID(upimeCodeRequest.getExternalMid());
+        upiRequest.setExtTID(upimeCodeRequest.getExternalTid());
+        upiRequest.setGstn(upimeCodeRequest.getMerchantGstIn());
+        upiRequest.setMerchantType(upimeCodeRequest.getTypeOfMerchant());
+        upiRequest.setMerGenre(upimeCodeRequest.getMerchantGenre());
+        upiRequest.setOnboardingType(upimeCodeRequest.getOnboardingType());
+        upiRequest.setMeWhitelist("Y");
+        upiRequest.setMerConcentFlag("N");
+        upiRequest.setSplitTag(84);
+        upiRequest.setTxnValidation("1|2|3");
+//        upiRequest.setFeatureNotSupported();
+        return upiRequest;
+
+    }
+
+/**
+     * @return -JSON :UpiAccesTokenResponseDto
+     * @methodName: getUpiAccessToken
+     * @@Method-Description: Generate UPI Access Token
+     * @param: String mId, String gatewayMapId
+     * @Exception or @Error :
+     */
+
+
+    private UpiAccesTokenResponseDto getUpiAccessToken(String mId) {
+        logger.info("getUpiAccessToken()-mid :  {}", mId);
+        UpiAccesTokenRequestDto aggUpiConfigAccesTokenRequestDto = UpiAccesTokenRequestDto.builder().clientId("SBIEPAY_MID_2.0").clientSecretKey("f65e8f0a484d45babd33c10b4535ef66").grantType("password").oauthPassword("05B6948CCFCA37A74B3DDDD15F9482040A998019ED67D2C77B4F5554DCB48B13").oAuthUserId("oauth2-api-merweb-SBI0000000032588").build();
+        logger.info("getUpiAccessToken()-aggUpiConfigAccesTokenRequestDto  data::  {} ", aggUpiConfigAccesTokenRequestDto);
+        AdminPortalResponse<UpiAccesTokenResponseDto> accessTokenResponseData = getUPIAccessToken(aggUpiConfigAccesTokenRequestDto);
+        logger.info("getUpiAccessToken()-Upi Access Token response data  ::  {} ", aggUpiConfigAccesTokenRequestDto);
+        Optional.ofNullable(accessTokenResponseData).orElseThrow(() -> new AdminPortalException("A", ""));
+        logger.info("getUpiAccessToken()-Upi Access Token response dto  ::  {} ", accessTokenResponseData.getData());
+        return accessTokenResponseData.getData().getFirst();
+
+    }
+
+    public AdminPortalResponse<UpiAccesTokenResponseDto> getUPIAccessToken(UpiAccesTokenRequestDto aggUPIAccesTokenRequest) {
+        String accessTokenPayloadReq = generateUPIAccessTokenRequest(aggUPIAccesTokenRequest);
+        UpiAccesTokenResponseDto accessTokenDeatils = meCodeGenerationDao.initiateUpiAccessTokenGeneration(accessTokenPayloadReq);
+        logger.info("getUPIAccessToken()-Response ::  UPI Access Token::  {} ", accessTokenDeatils);
+        AdminPortalResponse<UpiAccesTokenResponseDto> accessTokenResponse = AdminPortalResponse.<UpiAccesTokenResponseDto>builder().data(List.of(accessTokenDeatils)).status(1).build();
+        logger.debug("UPI access token response ::  {} ", accessTokenResponse);
+        return accessTokenResponse;
+
+    }
+
+    public  final String UPI_ACCESS_TOKEN_REQUEST_DATA = "grant_type=password&client_id={0}&client_secret={1}&username={2}&password={3}";
+    private String generateUPIAccessTokenRequest(UpiAccesTokenRequestDto aggUPIAccesTokenRequest) {
+        logger.info("generateUPIAccessTokenRequest() :: Generate upi access token request::  {} ", aggUPIAccesTokenRequest);
+        return MessageFormat.format(UPI_ACCESS_TOKEN_REQUEST_DATA, aggUPIAccesTokenRequest.getClientId(), aggUPIAccesTokenRequest.getClientSecretKey(), aggUPIAccesTokenRequest.getOAuthUserId(), aggUPIAccesTokenRequest.getOauthPassword());
+    }
+}
+
+package com.epay.admin.portal.config;
+
+import com.epay.admin.portal.exceptions.AdminPortalException;
+import com.epay.admin.portal.externalservice.request.UpiGenericRequest;
+import com.sbi.epay.logging.utility.LoggerFactoryUtility;
+import com.sbi.epay.logging.utility.LoggerUtility;
+import lombok.Data;
+import org.springframework.context.annotation.Configuration;
+import sbi.mer.pgp.dto.PGPDto;
+import sbi.mer.pgp.main.PGPEncDecUtility;
+
+import java.io.File;
+
+@Data
+@Configuration
+public class UpiUtil {
+    private final AdminPortalConfig adminPortalConfig;
+    private final String globalPath = "certs/";
+    LoggerUtility logger = LoggerFactoryUtility.getLogger(this.getClass());
+
+    public String configurePgpEncRequest(String plainPayload, String pgMerchantId) {
+        try {
+            PGPDto pgpRequest = new PGPDto();
+            pgpRequest.setPayload(plainPayload);
+            pgpRequest.setPgMerchantId(pgMerchantId);
+            pgpRequest.setPrivateKeyPass(adminPortalConfig.getUpiPvtKeyPwd());
+            pgpRequest.setPrivateKeyPath(getFilePath(globalPath + adminPortalConfig.getUpiPrivateKeyPath()));
+            pgpRequest.setPublicKeyPath(getFilePath(globalPath + adminPortalConfig.getUpiPublicKeyPath()));
+
+            String encryptedVpaValidationReqData = PGPEncDecUtility.getPGPEncryptedPayload(pgpRequest);
+            UpiGenericRequest genericRequest= UpiGenericRequest.builder().requestMsg(encryptedVpaValidationReqData).pgMerchantId(pgMerchantId).build();
+            return String.valueOf(genericRequest);
+        } catch (Exception e) {
+            logger.error("Error While Encrypt PGP request {} {}", e.getCause(), e.getMessage());
+            throw new AdminPortalException("", "Error during PGP Encryption" + e.getMessage());
+        }
+    }
+
+    public String configurePgpDecryptRequest(String encPayload, String pgMerchantId) {
+        try {
+            PGPDto pgpRequest = new PGPDto();
+            pgpRequest.setPayload(encPayload);
+            pgpRequest.setPgMerchantId(pgMerchantId);
+            pgpRequest.setPrivateKeyPass(adminPortalConfig.getUpiPvtKeyPwd());
+            pgpRequest.setPrivateKeyPath(getFilePath(globalPath + adminPortalConfig.getUpiPrivateKeyPath()));
+            pgpRequest.setPublicKeyPath(getFilePath(globalPath + adminPortalConfig.getUpiPublicKeyPath()));
+
+            logger.info("configurePgpDecryptRequest() ::   pgp dto ::  {} ", pgpRequest);
+            String decryptedUpiResponse = PGPEncDecUtility.getPGPDecryptedPayload(pgpRequest);
+            return decryptedUpiResponse;
+        } catch (Exception e) {
+            logger.error("Error While Decryption PGP request {} {}", e.getCause(), e.getMessage());
+            throw new AdminPortalException("", "Error while PGP decryption" + e.getMessage());
+        }
+    }
+
+    private String getFilePath(String path) {
+        logger.info("getFilePath() :: cert file path:  {} ", path);
+        File file = new File(path);
+        if (!file.isFile())
+            throw new AdminPortalException("00000", "Cert location file not found");
+
+        String absolutePath = file.getAbsolutePath();
+        logger.info("getFilePath() :: cert absolutePath:  {} ", absolutePath);
+        return absolutePath;
+    }
+
+}
+
+@Repository
+@RequiredArgsConstructor
+public class AdminPortalLogDao {
+    private final AdminPortalLogRepository adminPortalLogRepository;
+
+
+    public AdminPortalAPILog saveRequest(String encryptedUpiRequest,String decryptedUpiRequest, String externalMid) {
+        AdminPortalAPILog apiLog= AdminPortalAPILog.builder().apiPath("/payModeMapping/upi/MECode").mId(externalMid).requestPayloadDecrypted(decryptedUpiRequest).requestPayloadEncrypted(encryptedUpiRequest).build();
+        return adminPortalLogRepository.save(apiLog);
+    }
+
+    public void updateAPILog(AdminPortalAPILog portalAPILog, UpiGenericResponse upiGenericResponse, UpiMeCodeGenerationResponse upiResponse) {
+        portalAPILog.setResponsePayloadEncrypted(String.valueOf(upiGenericResponse));
+        portalAPILog.setRequestPayloadDecrypted(String.valueOf(upiResponse));
+        portalAPILog.setStatus("SUCCESS");
+        adminPortalLogRepository.save(portalAPILog);
+    }
+}
+
+@Component
+@RequiredArgsConstructor
+public class MeCodeGenerationDao {
+
+    private final UpiServiceClient upiServiceClient;
+
+    @Value("${UPI.OAUTH_TOKEN_URL}")
+    private String upiAuthTokenUrl;
+
+    @Value("${UPI.SUB-MERCHANT_ONBOARDING_URL}")
+    private String upiMeCodeGenUrl;
+
+    public UpiAccesTokenResponseDto initiateUpiAccessTokenGeneration(String encryptedPayload){
+        return upiServiceClient.initiateUpiAccessToken(upiAuthTokenUrl, encryptedPayload,  UpiAccesTokenResponseDto.class);
+    }
+
+    public UpiGenericResponse initiateUpiPostRequest(String encryptedUpiRequest, UpiAccesTokenResponseDto upiAccesTokenResponseDto) {
+        return upiServiceClient.initiateUpiRequest(upiMeCodeGenUrl, encryptedUpiRequest, upiAccesTokenResponseDto,  UpiGenericResponse.class);
+    }
+}
+
+public class UpiServiceClient extends ApiClient {
+    final static LoggerUtility logger = LoggerFactoryUtility.getLogger(UpiServiceClient.class);
+    private final ObjectMapper objectMapper;
+
+
+    @Value("${security.cors.origin}")
+    private String corsOrigin;
+
+    public UpiServiceClient(String baseUrl, ObjectMapper objectMapper, String corsOrigin) {
+        super(baseUrl, corsOrigin);
+        this.objectMapper = objectMapper;
+    }
+
+
+
+    public  <T> T initiateUpiAccessToken(String url, String requestPayload, Class<T> responseDto) {
+        return getWebClient().post()
+                .uri(url)
+                .header("Content-Type", MediaType.APPLICATION_FORM_URLENCODED_VALUE)
+                .header("Accept", MediaType.APPLICATION_JSON_VALUE)
+                .header(HttpHeaders.ORIGIN, corsOrigin)
+                .bodyValue(requestPayload)
+                .retrieve()
+                .onStatus(
+                        httpStatus -> httpStatus.is4xxClientError() || httpStatus.is5xxServerError(),
+                        clientResponse -> clientResponse.bodyToMono(String.class).flatMap(errorBody -> {
+                            logger.error("EIS Service call failed with status: {}, error body: {}", clientResponse.statusCode().value(), errorBody);
+                            return Mono.error(new AdminPortalException(
+                                    EXTERNAL_SERVICE_ERROR_CODE,
+                                    MessageFormat.format(EXTERNAL_SERVICE_ERROR_MESSAGE, "UPI Service")
+                            ));
+                        })
+                )
+                .bodyToMono(responseDto)
+                .block();
+    }
+
+
+    public  <T> T initiateUpiRequest(String url, String encryptedUpiRequest, UpiAccesTokenResponseDto upiAccesTokenResponseDto, Class<T> responseDto) {
+        return getWebClient().post()
+                .uri(url)
+                .header("Content-Type", MediaType.APPLICATION_FORM_URLENCODED_VALUE)
+                .header("Accept", MediaType.APPLICATION_JSON_VALUE)
+                .header(HttpHeaders.ORIGIN, corsOrigin)
+                .header(HttpHeaders.AUTHORIZATION, "Bearer "+upiAccesTokenResponseDto)
+                .bodyValue(encryptedUpiRequest)
+                .retrieve()
+                .onStatus(
+                        httpStatus -> httpStatus.is4xxClientError() || httpStatus.is5xxServerError(),
+                        clientResponse -> clientResponse.bodyToMono(String.class).flatMap(errorBody -> {
+                            logger.error("EIS Service call failed with status: {}, error body: {}", clientResponse.statusCode().value(), errorBody);
+                            return Mono.error(new AdminPortalException(
+                                    EXTERNAL_SERVICE_ERROR_CODE,
+                                    MessageFormat.format(EXTERNAL_SERVICE_ERROR_MESSAGE, "UPI Service")
+                            ));
+                        })
+                )
+                .bodyToMono(responseDto)
+                .block();
+    }
+}
+
+@Data
+@Builder
+@AllArgsConstructor
+@NoArgsConstructor
+public class UpiMeCodeGenerationRequest {
+    private String pspReferenceno;
+    private String pgMerchantId;
+    private String mebussname;
+    private String integrationType;
+    private String panNo;
+    private String mebusstype;
+    private int awlmcc;
+    private String settleType;
+    private String merVirtualAdd;
+    private String requestUrl1;
+    private String requestUrl2;
+    private String extMID;
+    private String extTID;
+    private String gstn;
+    private String merchantType;
+    private String merGenre;
+    private String onboardingType;
+    private String meWhitelist;
+    private String MerConcentFlag;
+    private int splitTag;
+    private String txnValidation;
+    private String featureNotSupported;
+//    private String Mdrconfigvalue;
+}
+
+@Data
+@NoArgsConstructor
+@AllArgsConstructor
+@Builder
+public class UPIMECodeRequest {
+    private String externalMid;
+    private String merchantName;
+    private String payMode;
+    private String constitution;
+    private int mccCode;
+    private String mccDescription;
+    private String panNumber;
+    private String merchantGstIn;
+    private String pgMerchantId;
+    private String integrationType;
+    private String onboardingType;
+    private String merchantGenre;
+    private String typeOfMerchant;
+    private String paymentSettlementType;
+    private String externalTid;
+    private String whiteListedUrl;
+    private PayProc payProc;
+    private String vpaAddress;
+
+}
+
+@Data
+@Builder
+@AllArgsConstructor
+@NoArgsConstructor
+@JsonIgnoreProperties(ignoreUnknown = true)
+public class UpiAccesTokenResponseDto {
+
+    @JsonProperty(value = "access_token")
+    private String access_token;
+
+    @JsonProperty(value = "token_type")
+    private String token_type;
+
+    @JsonProperty(value = "refresh_token")
+    private String refresh_token;
+
+    @JsonProperty(value = "expires_in")
+    private int expires_in;
+}
+
+@Data
+@Builder
+@AllArgsConstructor
+@NoArgsConstructor
+public class UpiGenericResponse {
+
+    @JsonProperty(value = "responseError")
+    private String responseError;
+
+    @JsonProperty(value = "responseMsg")
+    private String responseMsg;
+}
+
+@Data
+@Builder
+@AllArgsConstructor
+@NoArgsConstructor
+public class UpiMeCodeGenerationResponse {
+    private String pspReferenceno;
+    private String mebussname;
+    private String pgMerchantID;
+    private String statusCode;
+    private String status;
+    private String statusDesc;
+    private String ErrCode;
+    private String integrationType;
+    private String merVirtualAdd;
+    private String crtDate;
+    private String extMID;
+    private String extTID;
+}
