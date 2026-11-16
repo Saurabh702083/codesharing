@@ -1,0 +1,7 @@
+predicates.add(cb.equal(root.get("authStatus"), AuthStatus.valueOf(f.getAuthStatus())));
+
+
+if (StringUtils.hasText(f.getStatus())) {
+    boolean active = f.getStatus().trim().equalsIgnoreCase("active");
+    predicates.add(cb.equal(root.get("isActive"), active));
+}
