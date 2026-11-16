@@ -1,1 +1,212 @@
+package com.example.adminportal.group;
+
+import jakarta.persistence.criteria.Predicate;
+import org.springframework.data.jpa.domain.Specification;
+import org.springframework.util.StringUtils;
+
+import java.util.ArrayList;
+import java.util.List;
+
+public final class BusinessGroupSpecification {
+
+    private BusinessGroupSpecification() {}
+
+    public static Specification<BusinessGroup> withFilter(GroupSearchRequest f) {
+        return (root, query, cb) -> {
+            List<Predicate> predicates = new ArrayList<>();
+
+            if (StringUtils.hasText(f.groupCode())) {
+                predicates.add(cb.like(cb.lower(root.get("bgCode")),
+                        "%" + f.groupCode().trim().toLowerCase() + "%"));
+            }
+            if (StringUtils.hasText(f.groupName())) {
+                predicates.add(cb.like(cb.lower(root.get("name")),
+                        "%" + f.groupName().trim().toLowerCase() + "%"));
+            }
+            if (f.status() != null) {
+                predicates.add(cb.equal(root.get("isActive"), f.status().isActive()));
+            }
+            if (f.authStatus() != null) {
+                predicates.add(cb.equal(root.get("authStatus"), f.authStatus()));
+            }
+            return cb.and(predicates.toArray(new Predicate[0]));
+        };
+    }
+}
+
+
+
+package com.example.adminportal.group;
+
+import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.web.PageableDefault;
+import org.springframework.web.bind.annotation.*;
+
+@RestController
+@RequestMapping("/api/groups")
+@RequiredArgsConstructor
+public class BusinessGroupController {
+
+    private final BusinessGroupService service;
+
+    /**
+     * GET /api/groups/search?groupCode=biz&groupName=&status=ACTIVE&authStatus=APPROVED&page=0&size=10
+     */
+    @GetMapping("/search")
+    public Page<GroupResponse> search(
+            GroupSearchRequest request,
+            @PageableDefault(size = 10, sort = "bgCode") Pageable pageable) {
+        return service.search(request, pageable);
+    }
+}
+
+
+
+package com.example.adminportal.group;
+
+import jakarta.persistence.*;
+import lombok.Getter;
+import lombok.Setter;
+
+import java.util.UUID;
+
+@Entity
+@Table(name = "BUSINESS_GROUPS_MASTER")
+@Getter
+@Setter
+public class BusinessGroup {
+
+    @Id
+    @GeneratedValue(strategy = GenerationType.UUID)
+    @Column(name = "ID", columnDefinition = "RAW(16)")
+    private UUID id;
+
+    @Column(name = "NAME", nullable = false, length = 50)
+    private String name;
+
+    @Column(name = "BG_CODE", nullable = false, length = 50)
+    private String bgCode;
+
+    @Column(name = "DESCRIPTION", length = 100)
+    private String description;
+
+    @Column(name = "IS_ACTIVE", precision = 1, scale = 0)
+    private Boolean isActive;
+
+    @Column(name = "CREATED_DATE")
+    private Long createdDate;
+
+    @Column(name = "UPDATED_DATE")
+    private Long updatedDate;
+
+    @Column(name = "AGGREGATOR_ID", columnDefinition = "RAW(16)")
+    private UUID aggregatorId;
+
+    // NEW FIELD
+    @Enumerated(EnumType.STRING)
+    @Column(name = "AUTH_STATUS", nullable = false, length = 20)
+    private AuthStatus authStatus = AuthStatus.AUTH_PENDING;
+}
+
+
+
+package com.example.adminportal.group;
+
+/** All fields optional; only the ones supplied are applied as filters. */
+public record GroupSearchRequest(
+        String groupCode,
+        String groupName,
+        GroupStatus status,
+        AuthStatus authStatus
+) {}
+
+
+
+package com.example.adminportal.group;
+
+import java.util.UUID;
+
+public record GroupResponse(
+        UUID id,
+        String groupCode,
+        String groupName,
+        String status,
+        String authStatus
+) {
+    public static GroupResponse from(BusinessGroup g) {
+        return new GroupResponse(
+                g.getId(),
+                g.getBgCode(),
+                g.getName(),
+                GroupStatus.from(g.getIsActive()).getLabel(),
+                g.getAuthStatus() == null ? null : g.getAuthStatus().getLabel());
+    }
+}
+
+
+
+package com.example.adminportal.group;
+
+import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+@Service
+@RequiredArgsConstructor
+public class BusinessGroupService {
+
+    private final BusinessGroupRepository repository;
+
+    @Transactional(readOnly = true)
+    public Page<GroupResponse> search(GroupSearchRequest request, Pageable pageable) {
+        return repository
+                .findAll(BusinessGroupSpecification.withFilter(request), pageable)
+                .map(GroupResponse::from);
+    }
+}
+
+
+
+package com.example.adminportal.group;
+
+public enum AuthStatus {
+    APPROVED("Approved"),
+    AUTH_PENDING("Auth Pending"),
+    REJECTED("Rejected");
+
+    private final String label;
+    AuthStatus(String label) { this.label = label; }
+    public String getLabel() { return label; }
+}
+
+
+
+package com.example.adminportal.group;
+
+public enum GroupStatus {
+    ACTIVE("Active", true),
+    INACTIVE("In-Active", false);
+
+    private final String label;
+    private final boolean active;
+    GroupStatus(String label, boolean active) { this.label = label; this.active = active; }
+    public String getLabel() { return label; }
+    public boolean isActive() { return active; }
+    public static GroupStatus from(Boolean active) {
+        return Boolean.TRUE.equals(active) ? ACTIVE : INACTIVE;
+    }
+}
+
+
+
+ALTER TABLE BUSINESS_GROUPS_MASTER
+  ADD (AUTH_STATUS VARCHAR2(20) DEFAULT 'AUTH_PENDING' NOT NULL);
+
+ALTER TABLE BUSINESS_GROUPS_MASTER
+  ADD CONSTRAINT CHK_BG_AUTH_STATUS
+  CHECK (AUTH_STATUS IN ('APPROVED','AUTH_PENDING','REJECTED'));
 
