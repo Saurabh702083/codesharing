@@ -190,3 +190,31 @@ public interface BusinessInfoRepository extends JpaRepository<BusinessInfo, UUID
     """)
     int rejectChange(@Param("newId") UUID newId, @Param("mifId") String mifId);
 }
+
+
+@Data
+@NoArgsConstructor
+@Builder
+@AllArgsConstructor
+@JsonInclude(JsonInclude.Include.NON_NULL)
+public class ApproveChangeMIFFDto {
+    private UUID oldRequestId;
+    private UUID newRequestId;
+}
+
+
+@Data
+@NoArgsConstructor
+@AllArgsConstructor
+@Builder
+@JsonInclude(JsonInclude.Include.NON_NULL)
+public class ApproveChangeRequest {
+    private ApproveChangeMIFFDto businessInfoIds;
+    private ApproveChangeMIFFDto contactInfoIds;
+    private ApproveChangeMIFFDto vsccInfoIds;
+    private ApproveChangeMIFFDto websiteInfoIds;
+    private ApproveChangeMIFFDto bankTxnInfoIds;
+    private ApproveChangeMIFFDto bankAccountInfoIds;
+    private ApproveChangeMIFFDto tifInfoIds;
+    private boolean approved;
+}
