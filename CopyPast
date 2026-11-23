@@ -1,9 +1,192 @@
-public static GroupSearchResponse from(BusinessGroup g) {
-    GroupSearchResponse r = new GroupSearchResponse();
-    r.setId(g.getId());
-    r.setGroupCode(g.getBgCode());
-    r.setGroupName(g.getName());
-    r.setStatus(Boolean.TRUE.equals(g.getIsActive()) ? "Active" : "In-Active");
-    r.setAuthStatus(g.getAuthStatus());   // see note below
-    return r;
+private void checkChangeRequest(MerchantJourneyRequest mifJourneyRequest, OnboardingStage stage) {
+        if (OnboardingStage.RISK_SCORE_APPROVAL.equals(stage)) {
+            ApproveChangeRequest approveChangeRequest = merchantOnboardingDao.checkChangeRequest(mifJourneyRequest.getMerchantMIFId());
+            if(ObjectUtils.isNotEmpty(approveChangeRequest)){
+                if(MIFStatus.APPROVED.name().equals(mifJourneyRequest.getMifStatus())){
+                    approveChangeRequest.setApproved(true);
+                    merchantOnboardingDao.updateMIFChangeRequest(mifJourneyRequest.getMerchantMIFId(), approveChangeRequest);
+                    logger.info("update merchant journey status.");
+                    String mId= merchantMIFDao.isMidGenerated(mifJourneyRequest.getMerchantMIFId());
+                    if (StringUtils.isNotEmpty(mId)) {
+                        logger.info("Update Merchant info as mid :{} has been generated for mifId :{}",mId, mifJourneyRequest.getMerchantMIFId());
+                        merchantRegistrationDao.updateMerchantInfo(mifJourneyRequest.getMerchantMIFId(), mId);
+                    }
+                }else if(MIFStatus.REJECTED.name().equals(mifJourneyRequest.getMifStatus())) {
+                approveChangeRequest.setApproved(false);
+                merchantOnboardingDao.updateMIFChangeRequest(mifJourneyRequest.getMerchantMIFId(), approveChangeRequest);
+                }
+            }
+        }
+    }
+
+public class MerchantOnboardingDao {
+    private final LoggerUtility logger = LoggerFactoryUtility.getLogger(this.getClass());
+    private final BusinessInfoValidator businessInfoValidator;
+    private final ContactInfoValidator contactInfoValidator;
+    private final WebsiteInfoValidator websiteInfoValidator;
+    private final BankTxnInfoValidator bankTxnInfoValidator;
+    private final BankAccountInfoValidator bankAccountInfoValidator;
+    private final TifInfoValidator tifInfoValidator;
+    private final VsccValidator vsccValidator;
+    private final DocumentInfoValidator documentInfoValidator;
+    private final BusinessInfoDao businessInfoDao;
+    private final ContactInfoDao contactInfoDao;
+    private final WebsiteInfoDao websiteInfoDao;
+    private final BankTxnInfoDao bankTxnInfoDao;
+    private final TifInfoDao tifInfoDao;
+    private final MerchantMIFDao merchantMIfDao;
+    private final BankAccountInfoDao bankAccountInfoDao;
+    private final VsccDao vsccDao;
+    private final DocumentInfoDao documentDao;
+    private final MerchantOnboardingValidator merchantOnboardingValidator;
+    private final MasterDataRepository masterDataRepository;
+public ApproveChangeRequest checkChangeRequest(String mifId){
+        BusinessDto businessDto = businessInfoDao.getPendingBusinessInfo(mifId).orElse(null);
+        ContactDto contactDto = contactInfoDao.getPendingContactInfo(mifId).orElse(null);
+        WebsiteDto websiteDto = websiteInfoDao.getPendingWebsiteInfo(mifId).orElse(null);
+        BankTxnDto bankTxnDto = bankTxnInfoDao.getPendingTxnInfo(mifId).orElse(null);
+        BankAccountInfoDto bankAccountInfoDto = bankAccountInfoDao.getPendingBankAccountInfo(mifId).orElse(null);
+        TifDto tifDto = tifInfoDao.getPendingTifInfo(mifId).orElse(null);
+        VsccDto vsccDto = vsccDao.getPendingVSCCInfo(mifId).orElse(null);
+        if(ObjectUtils.isNotEmpty(businessDto)||ObjectUtils.isNotEmpty(contactDto)||ObjectUtils.isNotEmpty(websiteDto)||ObjectUtils.isNotEmpty(bankTxnDto)||ObjectUtils.isNotEmpty(bankAccountInfoDto)||ObjectUtils.isNotEmpty(tifDto)||ObjectUtils.isNotEmpty(vsccDto)){
+            ApproveChangeMIFFDto bussinessBuild =null;
+            if(ObjectUtils.isNotEmpty(businessDto)) {
+                BusinessDto business = businessInfoDao.getBusinessInfo(mifId);
+                bussinessBuild= ApproveChangeMIFFDto.builder().oldRequestId(business.getId()).newRequestId(businessDto.getId()).build();
+            }
+            ApproveChangeMIFFDto contactBuild = null;
+            if(ObjectUtils.isNotEmpty(contactDto)) {
+                ContactDto contact = contactInfoDao.getContactInfo(mifId);
+                contactBuild= ApproveChangeMIFFDto.builder().oldRequestId(contact.getId()).newRequestId(contactDto.getId()).build();
+            }
+            ApproveChangeMIFFDto websiteBuild = null;
+            if(ObjectUtils.isNotEmpty(websiteDto)) {
+                WebsiteDto website = websiteInfoDao.getWebsiteInfo(mifId);
+                websiteBuild = ApproveChangeMIFFDto.builder().oldRequestId(website.getId()).newRequestId(websiteDto.getId()).build();
+            }
+            ApproveChangeMIFFDto bankBuild = null;
+            if(ObjectUtils.isNotEmpty(bankTxnDto)) {
+                BankTxnDto bankTxn = bankTxnInfoDao.getBankTxnInfo(mifId);
+                bankBuild = ApproveChangeMIFFDto.builder().oldRequestId(bankTxn.getId()).newRequestId(bankTxnDto.getId()).build();
+            }
+            ApproveChangeMIFFDto bankAccBuild = null;
+            if(ObjectUtils.isNotEmpty(bankAccountInfoDto)){
+                BankAccountInfoDto bankAcc = bankAccountInfoDao.getBankAccountInfo(mifId);
+                bankAccBuild = ApproveChangeMIFFDto.builder().oldRequestId(bankAcc.getId()).newRequestId(bankAccountInfoDto.getId()).build();
+            }
+            ApproveChangeMIFFDto tifBuild =null;
+            if(ObjectUtils.isNotEmpty(tifDto)){
+                TifDto tif = tifInfoDao.getTifInfo(mifId);
+                tifBuild = ApproveChangeMIFFDto.builder().oldRequestId(tif.getId()).newRequestId(tifDto.getId()).build();
+            }
+            ApproveChangeMIFFDto vsccBuild =null;
+            if(ObjectUtils.isNotEmpty(vsccDto)) {
+                VsccDto vscc = vsccDao.getVSCCInfo(mifId);
+                vsccBuild = ApproveChangeMIFFDto.builder().oldRequestId(vscc.getId()).newRequestId(vsccDto.getId()).build();
+            }
+            return ApproveChangeRequest.builder().businessInfoIds(bussinessBuild).contactInfoIds(contactBuild).websiteInfoIds(websiteBuild).bankTxnInfoIds(bankBuild).bankAccountInfoIds(bankAccBuild).tifInfoIds(tifBuild).vsccInfoIds(vsccBuild).build();
+        }
+        return null;
+    }
+
+ @Transactional
+    public void updateMIFChangeRequest(String mifId, ApproveChangeRequest req) {
+        boolean approved = req.isApproved();
+            ApproveChangeMIFFDto b = req.getBusinessInfoIds();
+            if (hasChange(b)) {
+                logger.info("{} change request for businessInfo",req.isApproved() ? APPROVED : REJECTED);
+                if (approved) businessInfoDao.approveChange(b.getNewRequestId(), b.getOldRequestId(), mifId);
+                else businessInfoDao.rejectChange(b.getNewRequestId(), mifId);
+            }
+
+            ApproveChangeMIFFDto ct = req.getContactInfoIds();
+            if (hasChange(ct)) {
+                logger.info("{} change request for contactInfo",req.isApproved() ? APPROVED : REJECTED);
+                if (approved) contactInfoDao.approveChange(ct.getNewRequestId(), ct.getOldRequestId(), mifId);
+                else contactInfoDao.rejectChange(ct.getNewRequestId(), mifId);
+            }
+
+            ApproveChangeMIFFDto w = req.getWebsiteInfoIds();
+            if (hasChange(w)) {
+                logger.info("{} change request for webSiteInfo",req.isApproved() ? APPROVED : REJECTED);
+                if (approved) websiteInfoDao.approveChange(w.getNewRequestId(), w.getOldRequestId(), mifId);
+                else websiteInfoDao.rejectChange(w.getNewRequestId(), mifId);
+            }
+
+            ApproveChangeMIFFDto bt = req.getBankTxnInfoIds();
+            if (hasChange(bt)) {
+                logger.info("{} change request for bankTxnInfo",req.isApproved() ? APPROVED : REJECTED);
+                if (approved) bankTxnInfoDao.approveChange(bt.getNewRequestId(), bt.getOldRequestId(), mifId);
+                else bankTxnInfoDao.rejectChange(bt.getNewRequestId(), mifId);
+            }
+
+            ApproveChangeMIFFDto ba = req.getBankAccountInfoIds();
+            if (hasChange(ba)) {
+                logger.info("{} change request for bankAccountInfo",req.isApproved() ? APPROVED : REJECTED);
+                if (approved) bankAccountInfoDao.approveChange(ba.getNewRequestId(), ba.getOldRequestId(), mifId);
+                else bankAccountInfoDao.rejectChange(ba.getNewRequestId(), mifId);
+            }
+
+            ApproveChangeMIFFDto t = req.getTifInfoIds();
+            if (hasChange(t)) {
+                logger.info("{} change request for tifInfo",req.isApproved() ? APPROVED : REJECTED);
+                if (approved) tifInfoDao.approveChange(t.getNewRequestId(), t.getOldRequestId(), mifId);
+                else    tifInfoDao.rejectChange(t.getNewRequestId(), mifId);
+            }
+
+            ApproveChangeMIFFDto v = req.getVsccInfoIds();
+            if (hasChange(v)) {
+                logger.info("{} change request for vsccInfo",req.isApproved() ? APPROVED : REJECTED);
+                if (approved) vsccDao.approveChange(v.getNewRequestId(), v.getOldRequestId(), mifId);
+                else    vsccDao.rejectChange(v.getNewRequestId(), mifId);
+           }
+    }
+
+    private boolean hasChange(ApproveChangeMIFFDto ids) {
+        return ids != null && ids.getNewRequestId() != null && (ids.getOldRequestId() != null || true);
+    }
+
+
+
+    public void approveChange(UUID newId, UUID oldId, String mifId) {
+        int count = businessInfoRepository.approveChange(newId, oldId, mifId);
+        if (count != 2) {
+            throw new AdminPortalException(INVALID_ERROR_CODE, "Invalid or already processed business info change request");
+        }
+    }
+
+    public void rejectChange(UUID newId, String mifId) {
+        int count = businessInfoRepository.rejectChange(newId, mifId);
+        if (count != 1) {
+            throw new AdminPortalException(INVALID_ERROR_CODE, "Invalid or already processed business info change request");
+        }
+    }
+}
+
+
+@Repository
+public interface BusinessInfoRepository extends JpaRepository<BusinessInfo, UUID> {
+
+    Optional<BusinessInfo> findByMerchantMIFId(String merchantMIFId);
+
+    Optional<BusinessInfo> findByMerchantMIFIdAndStatus(String merchantMIFId, MIFStatus status);
+
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("""
+    UPDATE BusinessInfo b
+       SET b.status = CASE WHEN b.id = :newId THEN 'ACTIVE' ELSE 'INACTIVE' END,
+           b.version = b.version + 1
+     WHERE b.merchantMIFId = :mifId
+       AND ( (b.id = :newId AND b.status = 'PENDING')
+          OR (b.id = :oldId AND b.status = 'ACTIVE') )
+    """)
+    int approveChange(@Param("newId") UUID newId, @Param("oldId") UUID oldId, @Param("mifId") String mifId);
+
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("""
+    UPDATE BusinessInfo b
+       SET b.status = 'INACTIVE', b.version = b.version + 1
+     WHERE b.id = :newId AND b.merchantMIFId = :mifId AND b.status = 'PENDING'
+    """)
+    int rejectChange(@Param("newId") UUID newId, @Param("mifId") String mifId);
 }
