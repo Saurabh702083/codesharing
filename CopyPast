@@ -1,277 +1,154 @@
+@Getter
+public enum SystemRole {
+    MASTER_ADMIN("MASTER_ADMIN"),
+    SUPER_ADMIN("SUPER_ADMIN"),
+    BIZ_GROUP_ADMIN("BIZ_GROUP_ADMIN"),
+    BANK_IT_GROUP_ADMIN("BANK_IT_GROUP_ADMIN"),
+    OPS_ITDCR_GROUP_ADMIN("OPS_ITDCR_GROUP_ADMIN"),
+    CMD_GROUP_ADMIN("CMD_GROUP_ADMIN"),
+    CHANNELS_ADMIN("CHANNELS_ADMIN"),
+    CIRCLE_ADMIN("CIRCLE_ADMIN"),
+    BIZ_SUPPORT("BIZ_SUPPORT"),
+    ONBOARDING_MANAGER("ONBOARDING_MANAGER"),
+    RELATIONSHIP_MANAGER("RELATIONSHIP_MANAGER"),
+    CHANNEL_MANAGER("CHANNEL_MANAGER"),
+    CHANNELS_MANAGER("CHANNELS_MANAGER"),
+    OPERATIONS("OPERATIONS"),
+    MERCHANT_SUPPORT("MERCHANT_SUPPORT"),
+    PRODUCTION_SUPPORT("PRODUCTION_SUPPORT"),
+    BANK_IT("BANK_IT"),
+    CUSTOMER_SUPPORT("CUSTOMER_SUPPORT"),
+    CHARGEBACK_TEAM("CHARGEBACK_TEAM"),
+    CHANNELS_USER("CHANNELS_USER"),
+    CIRCLE_USER("CIRCLE_USER");
 
-private void checkChangeRequest(MerchantJourneyRequest request, OnboardingStage stage) {
+    private final String value;
 
-    if (!OnboardingStage.RISK_SCORE_APPROVAL.equals(stage)) {
-        return;
+    SystemRole(String value) {
+        this.value = value;
     }
 
-    Optional.ofNullable(
-            merchantOnboardingDao.checkChangeRequest(request.getMerchantMIFId())
-    ).ifPresent(changeRequest -> {
-
-        String mifStatus = request.getMifStatus();
-
-        if (MIFStatus.APPROVED.name().equals(mifStatus)) {
-            changeRequest.setApproved(true);
-            merchantOnboardingDao.updateMIFChangeRequest(
-                    request.getMerchantMIFId(), changeRequest);
-
-            updateMerchantInfoAfterApproval(request.getMerchantMIFId());
-
-        } else if (MIFStatus.REJECTED.name().equals(mifStatus)) {
-            changeRequest.setApproved(false);
-            merchantOnboardingDao.updateMIFChangeRequest(
-                    request.getMerchantMIFId(), changeRequest);
-        }
-    });
-}
-
-private void updateMerchantInfoAfterApproval(String mifId) {
-
-    logger.info("Updating merchant journey status for MIF ID: {}", mifId);
-
-    String mid = merchantMIFDao.isMidGenerated(mifId);
-
-    if (StringUtils.isNotEmpty(mid)) {
-        logger.info("MID: {} generated for MIF ID: {}", mid, mifId);
-        merchantRegistrationDao.updateMerchantInfo(mifId, mid);
+    public static SystemRole fromValue(String value) {
+        return Arrays.stream(SystemRole.values())
+                .filter(systemRole -> systemRole.value.equalsIgnoreCase(value))
+                .findFirst()
+                .orElseThrow(() -> new AdminPortalException(ErrorConstants.INVALID_ENUM_ERROR_CODE, MessageFormat.format(INVALID_ENUM_ERROR_MESSAGE, ROLE)));
     }
 }
 
-
-
-
-
-
-
-
-private <T> ApproveChangeMIFFDto buildChangeRequest(
-        Optional<T> pendingRecord,
-        Function<String, T> activeRecordFetcher,
-        Function<T, UUID> idExtractor,
-        String mifId) {
-
-    return pendingRecord.map(pending -> {
-
-        T active = activeRecordFetcher.apply(mifId);
-
-        return ApproveChangeMIFFDto.builder()
-                .oldRequestId(active != null ? idExtractor.apply(active) : null)
-                .newRequestId(idExtractor.apply(pending))
-                .build();
-
-    }).orElse(null);
-}
-
-
-
-
-
-import java.util.Optional;
-import java.util.UUID;
-import java.util.function.Function;
-
-
-
-
-
-
-
-
-
-public ApproveChangeRequest checkChangeRequest(String mifId) {
-
-    ApproveChangeMIFFDto business = buildChangeRequest(
-            businessInfoDao.getPendingBusinessInfo(mifId),
-            businessInfoDao::getBusinessInfo,
-            BusinessDto::getId,
-            mifId
+    public static final Map<SystemRole, Set<SystemRole>> ROLE_HIERARCHY = Map.ofEntries(
+            Map.entry(MASTER_ADMIN, Set.of(SUPER_ADMIN)),
+            Map.entry(SUPER_ADMIN, Set.of(BIZ_GROUP_ADMIN, BANK_IT_GROUP_ADMIN, OPS_ITDCR_GROUP_ADMIN, CMD_GROUP_ADMIN)),
+            Map.entry(BIZ_GROUP_ADMIN, Set.of(BIZ_SUPPORT, ONBOARDING_MANAGER, RELATIONSHIP_MANAGER, CHANNEL_MANAGER, CHANNELS_ADMIN, CHANNELS_USER, CIRCLE_ADMIN, CIRCLE_USER)),
+            Map.entry(BANK_IT_GROUP_ADMIN, Set.of(PRODUCTION_SUPPORT, MERCHANT_SUPPORT, BANK_IT)),
+            Map.entry(OPS_ITDCR_GROUP_ADMIN, Set.of(OPERATIONS)),
+            Map.entry(CMD_GROUP_ADMIN, Set.of(CUSTOMER_SUPPORT, CHARGEBACK_TEAM)),
+            Map.entry(CHANNELS_MANAGER, Set.of(CHANNELS_ADMIN)),
+            Map.entry(CHANNELS_ADMIN, Set.of(CHANNELS_USER)),
+            Map.entry(CIRCLE_ADMIN, Set.of(CIRCLE_USER)),
+            Map.entry(BIZ_SUPPORT, Set.of(BIZ_SUPPORT)),
+            Map.entry(ONBOARDING_MANAGER, Set.of(BIZ_SUPPORT))
     );
-
-    ApproveChangeMIFFDto contact = buildChangeRequest(
-            contactInfoDao.getPendingContactInfo(mifId),
-            contactInfoDao::getContactInfo,
-            ContactDto::getId,
-            mifId
-    );
-
-    ApproveChangeMIFFDto website = buildChangeRequest(
-            websiteInfoDao.getPendingWebsiteInfo(mifId),
-            websiteInfoDao::getWebsiteInfo,
-            WebsiteDto::getId,
-            mifId
-    );
-
-    ApproveChangeMIFFDto bankTxn = buildChangeRequest(
-            bankTxnInfoDao.getPendingTxnInfo(mifId),
-            bankTxnInfoDao::getBankTxnInfo,
-            BankTxnDto::getId,
-            mifId
-    );
-
-    ApproveChangeMIFFDto bankAccount = buildChangeRequest(
-            bankAccountInfoDao.getPendingBankAccountInfo(mifId),
-            bankAccountInfoDao::getBankAccountInfo,
-            BankAccountInfoDto::getId,
-            mifId
-    );
-
-    ApproveChangeMIFFDto tif = buildChangeRequest(
-            tifInfoDao.getPendingTifInfo(mifId),
-            tifInfoDao::getTifInfo,
-            TifDto::getId,
-            mifId
-    );
-
-    ApproveChangeMIFFDto vscc = buildChangeRequest(
-            vsccDao.getPendingVSCCInfo(mifId),
-            vsccDao::getVSCCInfo,
-            VsccDto::getId,
-            mifId
-    );
-
-    boolean hasChanges = Stream.of(
-            business, contact, website, bankTxn,
-            bankAccount, tif, vscc
-    ).anyMatch(Objects::nonNull);
-
-    if (!hasChanges) {
-        return null;
-    }
-
-    return ApproveChangeRequest.builder()
-            .businessInfoIds(business)
-            .contactInfoIds(contact)
-            .websiteInfoIds(website)
-            .bankTxnInfoIds(bankTxn)
-            .bankAccountInfoIds(bankAccount)
-            .tifInfoIds(tif)
-            .vsccInfoIds(vscc)
-            .build();
-}
+	
+	
+	User Table :-
+	ID	RAW
+AGGREGATOR_ID	RAW
+FIRST_NAME	VARCHAR2(100 BYTE)
+LAST_NAME	VARCHAR2(100 BYTE)
+PHONE_NUMBER	VARCHAR2(30 BYTE)
+STATUS	VARCHAR2(50 BYTE)
+LAST_SUCCESS_LOGIN	NUMBER(19,0)
+LAST_FAIL_LOGIN	NUMBER(19,0)
+LAST_LOGOUT	NUMBER(19,0)
+VERSION	NUMBER(10,0)
+ADID	VARCHAR2(100 BYTE)
+EMAIL_ID	VARCHAR2(255 BYTE)
+CREATED_BY	VARCHAR2(100 BYTE)
+CREATED_AT	NUMBER
+UPDATED_BY	VARCHAR2(100 BYTE)
+UPDATED_AT	NUMBER
+RECORD_STATUS	VARCHAR2(50 BYTE)
+USER_TYPE	VARCHAR2(50 BYTE)
+AUTH_STATUS	VARCHAR2(50 BYTE)
+OFFICE_ADDRESS	VARCHAR2(255 BYTE)
+DESIGNATION	VARCHAR2(255 BYTE)
+DELETED_AT	NUMBER(19,0)
 
 
+User_role table:-
+ID	RAW
+AGGREGATOR_ID	RAW
+ROLE_ID	RAW
+USER_ID	RAW
+IS_PRIMARY	NUMBER(1,0)
+IS_ACTIVE	NUMBER(1,0)
+CREATED_AT	NUMBER
+CREATED_BY	VARCHAR2(100 BYTE)
+FROM_DATE	NUMBER
+TO_DATE	NUMBER
+SECONDARY_USER_ID	RAW
+REMARK	VARCHAR2(500 BYTE)
+AUTH_STATUS	VARCHAR2(50 BYTE)
+RECORD_STATUS	VARCHAR2(50 BYTE)
+DELETED_AT	NUMBER
 
-import java.util.Objects;
-import java.util.stream.Stream;
+Business_Role Table:-
+ID	RAW
+BUSINESS_GROUP_ID	RAW
+BR_CODE	VARCHAR2(50 BYTE)
+NAME	VARCHAR2(50 BYTE)
+DESCRIPTION	VARCHAR2(100 BYTE)
+TYPE	VARCHAR2(50 BYTE)
+IS_ACTIVE	NUMBER(1,0)
+CREATED_AT	NUMBER
+UPDATED_AT	NUMBER
+AGGREGATOR_ID	RAW
+USER_TYPE	VARCHAR2(255 BYTE)
+TYPE_VALUES	VARCHAR2(255 BYTE)
+SECONDARY_BR_CODE	VARCHAR2(255 BYTE)
+
+Business_Group_Master Table:-
+ID	RAW
+NAME	VARCHAR2(50 BYTE)
+BG_CODE	VARCHAR2(50 BYTE)
+DESCRIPTION	VARCHAR2(100 BYTE)
+IS_ACTIVE	NUMBER(1,0)
+CREATED_DATE	NUMBER
+UPDATED_DATE	NUMBER
+AGGREGATOR_ID	RAW
 
 
-
-
-
-
-
-
-
-
-
-private <T> void processChange(
-        ApproveChangeMIFFDto ids,
-        String mifId,
-        String infoType,
-        BiConsumer<UUID, String> rejectAction,
-        TriConsumer<UUID, UUID, String> approveAction,
-        boolean approved) {
-
-    if (ids == null || ids.getNewRequestId() == null) {
-        return;
-    }
-
-    logger.info("{} change request for {}", 
-            approved ? APPROVED : REJECTED, infoType);
-
-    if (approved) {
-        if (ids.getOldRequestId() == null) {
-            throw new AdminPortalException(
-                    INVALID_ERROR_CODE,
-                    "Active record not found for " + infoType
-            );
-        }
-
-        approveAction.accept(
-                ids.getNewRequestId(),
-                ids.getOldRequestId(),
-                mifId
-        );
-    } else {
-        rejectAction.accept(ids.getNewRequestId(), mifId);
-    }
-}
+Business_Group_Master Table:- Data:
+4A879C4100155FE0E0637C86B10A04D0	System Admin	SYSTEM_ADMIN	This is System Admin group	1	1770811668553	1770811668553	4A879C4100135FE0E0637C86B10A04D0
+4A879C4100165FE0E0637C86B10A04D0	Business Support	BIZ	This is Business Support group	1	1770811668587	1770811668587	4A879C4100135FE0E0637C86B10A04D0
+4A879C4100175FE0E0637C86B10A04D0	Bank IT	BANK_IT	This is Bank IT group	1	1770811668611	1770811668611	4A879C4100135FE0E0637C86B10A04D0
+4A879C4100185FE0E0637C86B10A04D0	Ops-ITDCR	OPS_ITDCR	This is Ops-ITDCR group	1	1770811668636	1770811668636	4A879C4100135FE0E0637C86B10A04D0
+4A879C4100195FE0E0637C86B10A04D0	CMD	CMD	This is CMD group	1	1770811668658	1770811668658	4A879C4100135FE0E0637C86B10A04D0
 
 
 
 
-
-
-@FunctionalInterface
-public interface TriConsumer<A, B, C> {
-    void accept(A a, B b, C c);
-}
-
-
-
-
-
-
-@Transactional
-public void updateMIFChangeRequest(String mifId, ApproveChangeRequest req) {
-
-    boolean approved = req.isApproved();
-
-    processChange(req.getBusinessInfoIds(), mifId, "businessInfo",
-            businessInfoDao::rejectChange,
-            businessInfoDao::approveChange, approved);
-
-    processChange(req.getContactInfoIds(), mifId, "contactInfo",
-            contactInfoDao::rejectChange,
-            contactInfoDao::approveChange, approved);
-
-    processChange(req.getWebsiteInfoIds(), mifId, "websiteInfo",
-            websiteInfoDao::rejectChange,
-            websiteInfoDao::approveChange, approved);
-
-    processChange(req.getBankTxnInfoIds(), mifId, "bankTxnInfo",
-            bankTxnInfoDao::rejectChange,
-            bankTxnInfoDao::approveChange, approved);
-
-    processChange(req.getBankAccountInfoIds(), mifId, "bankAccountInfo",
-            bankAccountInfoDao::rejectChange,
-            bankAccountInfoDao::approveChange, approved);
-
-    processChange(req.getTifInfoIds(), mifId, "tifInfo",
-            tifInfoDao::rejectChange,
-            tifInfoDao::approveChange, approved);
-
-    processChange(req.getVsccInfoIds(), mifId, "vsccInfo",
-            vsccDao::rejectChange,
-            vsccDao::approveChange, approved);
-}
-
-
-
-
-
-
-@Modifying(clearAutomatically = true, flushAutomatically = true)
-@Query("""
-    UPDATE BusinessInfo b
-       SET b.status = CASE
-                          WHEN b.id = :newId THEN :activeStatus
-                          ELSE :inactiveStatus
-                      END,
-           b.version = b.version + 1
-     WHERE b.merchantMIFId = :mifId
-       AND (
-            (b.id = :newId AND b.status = :pendingStatus)
-            OR
-            (b.id = :oldId AND b.status = :activeStatus)
-       )
-    """)
-int approveChange(
-        @Param("newId") UUID newId,
-        @Param("oldId") UUID oldId,
-        @Param("mifId") String mifId,
-        @Param("activeStatus") MIFStatus activeStatus,
-        @Param("inactiveStatus") MIFStatus inactiveStatus,
-        @Param("pendingStatus") MIFStatus pendingStatus
-);
+Business_Role Table:- Data
+4A879C41002F5FE0E0637C86B10A04D1	4A879C4100195FE0E0637C86B10A04D0	CHARGEBACK	CHARGEBACK	This is CHARGEBACK		ADMIN			1	1770811669498	1770811669498	4A879C4100135FE0E0637C86B10A04D0
+4A879C41001B5FE0E0637C86B10A04D0	4A879C4100155FE0E0637C86B10A04D0	MASTER_ADMIN	Master Admin	This is Master Admin role	BANKER	ADMIN	MASTER_ADMIN		1	1770811669498	1770811669498	4A879C4100135FE0E0637C86B10A04D0
+4A879C41001C5FE0E0637C86B10A04D0	4A879C4100155FE0E0637C86B10A04D0	SUPER_ADMIN	Super Admin	This is Super Admin role	BANKER	ADMIN	SUPER_ADMIN		1	1770811669527	1770811669527	4A879C4100135FE0E0637C86B10A04D0
+4A879C41001D5FE0E0637C86B10A04D0	4A879C4100165FE0E0637C86B10A04D0	BIZ_GROUP_ADMIN	Business Group Admin	This is Business Group Admin role	BANKER	ADMIN	GROUP_ADMIN		1	1770811669553	1770811669553	4A879C4100135FE0E0637C86B10A04D0
+4A879C41001E5FE0E0637C86B10A04D0	4A879C4100175FE0E0637C86B10A04D0	BANK_IT_GROUP_ADMIN	Bank IT Group Admin	This is Bank IT Group Admin role	BANKER	ADMIN	GROUP_ADMIN		1	1770811669581	1770811669581	4A879C4100135FE0E0637C86B10A04D0
+4A879C41001F5FE0E0637C86B10A04D0	4A879C4100185FE0E0637C86B10A04D0	OPS_ITDCR_GROUP_ADMIN	Operation Group Admin	This is Operation Group Admin role	BANKER	ADMIN	GROUP_ADMIN		1	1770811669608	1770811669608	4A879C4100135FE0E0637C86B10A04D0
+4A879C4100205FE0E0637C86B10A04D0	4A879C4100195FE0E0637C86B10A04D0	CMD_GROUP_ADMIN	CMD Group Admin	This is CMD Group Admin role	BANKER	ADMIN	GROUP_ADMIN		1	1770811669635	1770811669635	4A879C4100135FE0E0637C86B10A04D0
+4A879C4100215FE0E0637C86B10A04D0	4A879C4100165FE0E0637C86B10A04D0	ONBOARDING_MANAGER	Onboarding Manager	This is Onboarding Manager role	BANKER	ADMIN	ADMIN		1	1770811669662	1770811669662	4A879C4100135FE0E0637C86B10A04D0
+4A879C4100225FE0E0637C86B10A04D0	4A879C4100165FE0E0637C86B10A04D0	BIZ_SUPPORT	Business Support	This is Business Support role	VENDOR	ADMIN	USER		1	1770811669687	1770811669687	4A879C4100135FE0E0637C86B10A04D0
+4A879C4100235FE0E0637C86B10A04D0	4A879C4100165FE0E0637C86B10A04D0	RELATIONSHIP_MANAGER	Relationship Manager	This is Relationship Manager role	BANKER	ADMIN	ADMIN		1	1770811669710	1770811669710	4A879C4100135FE0E0637C86B10A04D0
+4A879C4100245FE0E0637C86B10A04D0	4A879C4100165FE0E0637C86B10A04D0	CHANNEL_MANAGER	Channel Manager	This is Channel Manager role	BANKER	ADMIN	ADMIN		1	1770811669737	1770811669737	4A879C4100135FE0E0637C86B10A04D0
+4A879C4100255FE0E0637C86B10A04D0	4A879C4100165FE0E0637C86B10A04D0	CHANNELS_ADMIN	Channels Admin	This is Channels admin role	BANKER	ADMIN	ADMIN		1	1770811669762	1770811669762	4A879C4100135FE0E0637C86B10A04D0
+4A879C4100265FE0E0637C86B10A04D0	4A879C4100165FE0E0637C86B10A04D0	CHANNELS_USER	Channels User	This is Channels user role	BANKER	USER	USER		1	1770811669788	1770811669788	4A879C4100135FE0E0637C86B10A04D0
+4A879C4100275FE0E0637C86B10A04D0	4A879C4100165FE0E0637C86B10A04D0	CIRCLE_ADMIN	Circle Admin	This is Circle admin role	BANKER	ADMIN	ADMIN		1	1770811669813	1770811669813	4A879C4100135FE0E0637C86B10A04D0
+4A879C4100285FE0E0637C86B10A04D0	4A879C4100165FE0E0637C86B10A04D0	CIRCLE_USER	Circle User	This is Circle user role	BANKER	USER	USER		1	1770811669839	1770811669839	4A879C4100135FE0E0637C86B10A04D0
+4A879C4100295FE0E0637C86B10A04D0	4A879C4100175FE0E0637C86B10A04D0	BANK_IT	Bank IT	This is Bank IT role	BANKER	ADMIN	ADMIN		1	1770811669865	1770811669865	4A879C4100135FE0E0637C86B10A04D0
+4A879C41002A5FE0E0637C86B10A04D0	4A879C4100175FE0E0637C86B10A04D0	MERCHANT_SUPPORT	Merchant Support	This is Merchant Support role	BANKER	ADMIN	ADMIN		1	1770811669888	1770811669888	4A879C4100135FE0E0637C86B10A04D0
+4A879C41002B5FE0E0637C86B10A04D0	4A879C4100175FE0E0637C86B10A04D0	PRODUCTION_SUPPORT	Production Support	This is Production Support role	BANKER	ADMIN	ADMIN		1	1770811669911	1770811669911	4A879C4100135FE0E0637C86B10A04D0
+4A879C41002C5FE0E0637C86B10A04D0	4A879C4100185FE0E0637C86B10A04D0	OPERATIONS	Operations	This is Operations role	BANKER	ADMIN	ADMIN		1	1770811669935	1770811669935	4A879C4100135FE0E0637C86B10A04D0
+4A879C41002D5FE0E0637C86B10A04D0	4A879C4100195FE0E0637C86B10A04D0	CHARGEBACK_TEAM	Chargeback Team	This is Chargeback Team role	BANKER	ADMIN	ADMIN		1	1770811669961	1770811669961	4A879C4100135FE0E0637C86B10A04D0
+4A879C41002E5FE0E0637C86B10A04D0	4A879C4100195FE0E0637C86B10A04D0	CUSTOMER_SUPPORT	Customer Support	This is Customer Support role	BANKER	ADMIN	ADMIN		1	1770811669986	1770811669986	4A879C4100135FE0E0637C86B10A04D0
+4A879C41002F5FE0E0637C86B10A04D0		MERCHANT_ONBOARD	Merchant Onboard	This is Merchant Onboard role		USER			1	1770811670293	1770811670293	4A879C4100135FE0E0637C86B10A04D0
