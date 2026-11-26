@@ -1,3 +1,47 @@
+@Getter
+@Setter
+@AllArgsConstructor
+public class AdminPortalException extends RuntimeException {
+
+    private final String errorCode;
+    private final String errorMessage;
+
+}
+
+@AllArgsConstructor
+@Data
+@Builder
+@JsonInclude(JsonInclude.Include.NON_NULL)
+public class AdminPortalResponse<T> {
+
+    private Integer status;
+    private List<T> data;
+    private Long count;
+    private Long total;
+    private List<ErrorDto> errors;
+
+    @Override
+    public String toString() {
+        return "ResponseDto{" +
+                "status=" + status +
+                ", data=" + data +
+                ", count=" + count +
+                ", total=" + total +
+                ", errors=" + errors +
+                '}';
+    }
+}
+
+    @PreAuthorize("hasAnyRole('ONBOARDING_MANAGER','RELATIONSHIP_MANAGER', 'BIZ_SUPPORT', 'CIRCLE')")
+    @PostMapping("/list/{stage}")
+    @Operation(summary = "Get list of MIF", description = "This API used to get all MIF.")
+    public AdminPortalResponse<AdminMerchantOnboardingListResponse> getSubmittedMIFList(@PathVariable String stage, @RequestBody AdminMerchantOnboardingListRequest adminMerchantOnboardingListRequest, @PageableDefault(size = FIFTY_LENGTH, sort = SUBMISSION_DATE, direction = Sort.Direction.DESC) Pageable pageable) {
+        if (!StringUtils.isEmpty(adminMerchantOnboardingListRequest.getStage()) && StringUtils.isEmpty(adminMerchantOnboardingListRequest.getStatus())) {
+            adminMerchantOnboardingListRequest.setStatus(StageStatus.YET_TO_START.name());
+        }
+        return adminMerchantOnboardingService.getSubmittedMIFList(stage, adminMerchantOnboardingListRequest, pageable);
+    }
+
 @Table(name = "BUSINESS_ROLES_MASTER")
 @Entity
 @AllArgsConstructor
