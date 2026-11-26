@@ -1,3 +1,144 @@
+@Table(name = "BUSINESS_ROLES_MASTER")
+@Entity
+@AllArgsConstructor
+@NoArgsConstructor
+@Builder
+@Setter
+@Getter
+public class BusinessRolesMaster extends AuditEntityByDate {
+    @Id
+    @GeneratedValue(strategy = GenerationType.UUID)
+    private UUID id;
+    private UUID businessGroupId;
+    private String brCode;
+    private String name;
+    private String description;
+    private String type;
+    private Boolean isActive;
+    private UUID aggregatorId;
+    private UserType userType;
+    private String typeValues;
+    private String secondaryBrCode;
+}
+
+@EqualsAndHashCode(callSuper = true)
+@Data
+@Entity
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
+@Table(name = "USER_ROLE")
+public class UserRole extends AuditEntityCreatedDate {
+    @Id
+    @GeneratedValue(strategy = GenerationType.UUID)
+    @Column(nullable = false, updatable = false, unique = true)
+    private UUID id;
+    private UUID userId;
+    private UUID roleId;
+    private UUID aggregatorId;
+    private Boolean isPrimary;
+    private Boolean isActive;
+    private Long fromDate;
+    private Long toDate;
+    @Column(name = "SECONDARY_USER_ID")
+    private UUID secondaryUserId;
+    private String remark;
+    @Enumerated(EnumType.STRING)
+    private AuthStatus authStatus;
+    private String recordStatus;
+    private Long deletedAt;
+
+}
+
+@EqualsAndHashCode(callSuper = true)
+@Table(name = "USERS")
+@Data
+@AllArgsConstructor
+@NoArgsConstructor
+@Entity
+@Builder
+@Audited
+@AuditTable(value = "USERS_AUDIT")
+public class Users extends AuditEntity {
+    @Id
+    @GeneratedValue(strategy = GenerationType.UUID)
+    @Column(nullable = false, updatable = false, unique = true)
+    private UUID id;
+    private UUID aggregatorId;
+    private String firstName;
+    private String lastName;
+    private String phoneNumber;
+    @Enumerated(EnumType.STRING)
+    private UserStatus status;
+    private Long lastSuccessLogin;
+    private Long lastFailLogin;
+    private Long lastLogout;
+    @Version
+    private int version;
+    @Column(name = "ADID")
+    private String adId;
+    private String emailId;
+    private String RecordStatus;
+    @Enumerated(EnumType.STRING)
+    private UserType userType;
+    @Enumerated(EnumType.STRING)
+    private AuthStatus authStatus;
+    private String officeAddress;
+    private String designation;
+    private Long deletedAt;
+
+    @PrePersist
+    @PreUpdate
+    public void setEntityNameForRevision() {
+        AuditRevisionListener.setEntityName(this.getClass().getSimpleName());
+    }
+}
+
+@Getter
+@AllArgsConstructor
+public enum UserType {
+    VENDOR("VENDOR"),
+    BANKER("BANKER"),
+    EXTERNAL("EXTERNAL");
+    private final String value;
+
+}
+
+@Getter
+@AllArgsConstructor
+public enum AuthStatus {
+    APPROVED("APPROVED"),
+    PENDING_FOR_AUTHORIZATION("PENDING_FOR_AUTHORIZATION"),
+    PENDING("PENDING"),
+    REJECTED("REJECTED");
+    private final String value;
+
+    public static AuthStatus getMerchantRisK(String authType) {
+        return Arrays.stream(values()).filter(p -> p.name().equalsIgnoreCase(authType)).findFirst().orElseThrow(() -> new AdminPortalException(INVALID_ENUM_ERROR_CODE, MessageFormat.format(INVALID_ENUM_ERROR_MESSAGE, "Auth Type")));
+    
+    }
+}
+
+@Repository
+public interface BusinessRolesMasterRepository extends JpaRepository<BusinessRolesMaster, UUID> {
+
+    @Query("FROM BusinessRolesMaster r WHERE r.id IN :roleIds")
+    List<BusinessRolesMaster> findRoleIdAndNamesByIds(@Param("roleIds") List<UUID> roleIds);
+
+    @Query("SELECT b.id FROM BusinessRolesMaster b WHERE b.brCode = :brCode")
+    Optional<UUID> findIdByBrCode(@Param("brCode") String brCode);
+}
+
+public interface UserRoleRepository extends JpaRepository<UserRole, UUID> {
+    @Query(value = "select UR.USER_ID FROM BUSINESS_ROLES_MASTER BR JOIN USER_ROLE UR ON UR.ROLE_ID=BR.ID WHERE BR.BR_CODE= :brCode",nativeQuery = true)
+    List<byte[]> getUserIdByRoleCode(@Param("brCode") String brCode);
+
+    @Query(value = "select sm.stage_num from merchant_onboarding_stages_master sm where stage_code=:stageCode",nativeQuery = true)
+    int getStageNumByStageCode(@Param("stageCode") String stageCode);
+
+}
+
+
 @Getter
 public enum SystemRole {
     MASTER_ADMIN("MASTER_ADMIN"),
