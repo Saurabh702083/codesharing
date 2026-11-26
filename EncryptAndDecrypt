@@ -1,3 +1,994 @@
+CREATE OR REPLACE VIEW VW_ADMIN_USER_SEARCH AS
+SELECT
+    /* User details */
+    U.ID                    AS USER_ID,
+    U.AGGREGATOR_ID         AS AGGREGATOR_ID,
+    U.AD_ID                 AS AD_ID,
+    U.FIRST_NAME            AS FIRST_NAME,
+    U.LAST_NAME             AS LAST_NAME,
+    U.EMAIL_ID              AS EMAIL_ID,
+    U.PHONE_NUMBER          AS PHONE_NUMBER,
+    U.STATUS                AS USER_STATUS,
+    U.USER_TYPE             AS USER_TYPE,
+    U.DESIGNATION           AS DESIGNATION,
+    U.OFFICE_ADDRESS        AS OFFICE_ADDRESS,
+    U.RECORD_STATUS         AS USER_RECORD_STATUS,
+
+    /* User role details */
+    UR.ID                   AS USER_ROLE_ID,
+    UR.IS_PRIMARY           AS IS_PRIMARY,
+    UR.IS_ACTIVE            AS ROLE_ACTIVE,
+    UR.AUTH_STATUS          AS ROLE_AUTH_STATUS,
+    UR.RECORD_STATUS        AS ROLE_RECORD_STATUS,
+    UR.FROM_DATE            AS ROLE_FROM_DATE,
+    UR.TO_DATE              AS ROLE_TO_DATE,
+    UR.CREATED_AT           AS CREATED_AT,
+
+    /* Business role details */
+    BRM.ID                  AS ROLE_ID,
+    BRM.BR_CODE             AS ROLE_CODE,
+    BRM.NAME                AS ROLE_NAME,
+    BRM.TYPE                AS ROLE_TYPE,
+    BRM.USER_TYPE           AS ROLE_USER_TYPE,
+    BRM.BUSINESS_GROUP_ID   AS BUSINESS_GROUP_ID,
+
+    /* Business group details */
+    BGM.NAME                AS GROUP_NAME,
+    BGM.BG_CODE             AS GROUP_CODE
+
+FROM USERS U
+
+INNER JOIN USER_ROLE UR
+    ON UR.USER_ID = U.ID
+
+INNER JOIN BUSINESS_ROLES_MASTER BRM
+    ON BRM.ID = UR.ROLE_ID
+
+LEFT JOIN BUSINESS_GROUP_MASTER BGM
+    ON BGM.ID = BRM.BUSINESS_GROUP_ID
+
+WHERE
+    UR.IS_PRIMARY = 1
+    AND UR.DELETED_AT IS NULL
+    AND U.DELETED_AT IS NULL;
+
+
+
+@Entity
+@Table(name = "VW_ADMIN_USER_SEARCH")
+@org.hibernate.annotations.Immutable
+@Getter
+@Setter
+@NoArgsConstructor
+public class AdminUserSearchView {
+
+    @Id
+    @Column(name = "USER_ROLE_ID")
+    private UUID userRoleId;
+
+    @Column(name = "USER_ID")
+    private UUID userId;
+
+    @Column(name = "AGGREGATOR_ID")
+    private UUID aggregatorId;
+
+    @Column(name = "AD_ID")
+    private String adId;
+
+    @Column(name = "FIRST_NAME")
+    private String firstName;
+
+    @Column(name = "LAST_NAME")
+    private String lastName;
+
+    @Column(name = "EMAIL_ID")
+    private String emailId;
+
+    @Column(name = "PHONE_NUMBER")
+    private String phoneNumber;
+
+    @Column(name = "USER_STATUS")
+    private String userStatus;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "USER_TYPE")
+    private UserType userType;
+
+    @Column(name = "DESIGNATION")
+    private String designation;
+
+    @Column(name = "OFFICE_ADDRESS")
+    private String officeAddress;
+
+    @Column(name = "USER_RECORD_STATUS")
+    private String userRecordStatus;
+
+    @Column(name = "IS_PRIMARY")
+    private Boolean primary;
+
+    @Column(name = "ROLE_ACTIVE")
+    private Boolean roleActive;
+
+    @Column(name = "ROLE_AUTH_STATUS")
+    private String roleAuthStatus;
+
+    @Column(name = "ROLE_RECORD_STATUS")
+    private String roleRecordStatus;
+
+    @Column(name = "ROLE_FROM_DATE")
+    private LocalDateTime roleFromDate;
+
+    @Column(name = "ROLE_TO_DATE")
+    private LocalDateTime roleToDate;
+
+    // Epoch value, not LocalDateTime.
+    @Column(name = "CREATED_AT")
+    private Long createdAt;
+
+    @Column(name = "ROLE_ID")
+    private UUID roleId;
+
+    @Column(name = "ROLE_CODE")
+    private String roleCode;
+
+    @Column(name = "ROLE_NAME")
+    private String roleName;
+
+    @Column(name = "ROLE_TYPE")
+    private String roleType;
+
+    @Column(name = "ROLE_USER_TYPE")
+    private String roleUserType;
+
+    @Column(name = "BUSINESS_GROUP_ID")
+    private UUID businessGroupId;
+
+    @Column(name = "GROUP_NAME")
+    private String groupName;
+
+    @Column(name = "GROUP_CODE")
+    private String groupCode;
+}
+
+
+
+public enum UserSearchTarget {
+    SUPER_ADMIN,
+    GROUP_ADMIN,
+    GROUP_USERS
+}
+
+
+
+@Data
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
+public class UserSearchRequest {
+
+    private UUID businessGroupId;
+
+    private String adId;
+    private String firstName;
+    private String lastName;
+    private String emailId;
+    private String phoneNumber;
+
+    private String userStatus;
+    private UserType userType;
+
+    private String roleCode;
+    private String roleName;
+
+    private String groupName;
+
+    private String authStatus;
+    private Boolean roleActive;
+
+    private LocalDate fromDate;
+    private LocalDate toDate;
+}
+
+@Data
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
+public class UserSearchResponse {
+
+    private UUID userId;
+    private UUID userRoleId;
+
+    private String adId;
+    private String firstName;
+    private String lastName;
+    private String emailId;
+    private String phoneNumber;
+
+    private String userStatus;
+    private UserType userType;
+
+    private String designation;
+    private String officeAddress;
+
+    private String roleCode;
+    private String roleName;
+    private Boolean roleActive;
+    private String roleAuthStatus;
+    private String roleRecordStatus;
+
+    private String groupName;
+    private String groupCode;
+    private UUID businessGroupId;
+
+    private Long createdAt;
+}
+
+@Data
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
+public class UserSearchScope {
+
+    private UUID aggregatorId;
+
+    private UUID businessGroupId;
+
+    private Set<String> allowedRoleCodes;
+
+    private boolean allGroupsAllowed;
+}
+
+
+@Repository
+public interface AdminUserSearchRepository
+        extends JpaRepository<AdminUserSearchView, UUID>,
+                JpaSpecificationExecutor<AdminUserSearchView> {
+}
+
+
+public final class AdminUserSearchSpecification {
+
+    private static final String MASTER_ADMIN = "MASTER_ADMIN";
+    private static final String SUPER_ADMIN = "SUPER_ADMIN";
+
+    private static final Set<String> GROUP_ADMIN_ROLE_CODES = Set.of(
+            "BIZ_GROUP_ADMIN",
+            "BANK_IT_GROUP_ADMIN",
+            "OPS_ITDCR_GROUP_ADMIN",
+            "CMD_GROUP_ADMIN"
+    );
+
+    private AdminUserSearchSpecification() {
+    }
+
+    public static Specification<AdminUserSearchView> buildSpecification(
+            UserSearchTarget target,
+            UserSearchRequest request,
+            UserSearchScope scope
+    ) {
+
+        return Specification
+                .where(hasTargetRole(target, scope))
+                .and(hasAggregator(scope.getAggregatorId()))
+                .and(hasGroupScope(target, scope))
+                .and(hasAdId(request.getAdId()))
+                .and(hasFirstName(request.getFirstName()))
+                .and(hasLastName(request.getLastName()))
+                .and(hasEmailId(request.getEmailId()))
+                .and(hasPhoneNumber(request.getPhoneNumber()))
+                .and(hasUserStatus(request.getUserStatus()))
+                .and(hasUserType(request.getUserType()))
+                .and(hasRoleCode(request.getRoleCode()))
+                .and(hasRoleName(request.getRoleName()))
+                .and(hasGroupName(request.getGroupName()))
+                .and(hasAuthStatus(request.getAuthStatus()))
+                .and(hasRoleActive(request.getRoleActive()))
+                .and(createdFrom(request.getFromDate()))
+                .and(createdTo(request.getToDate()));
+    }
+
+    /*
+     * Target role filter
+     */
+    private static Specification<AdminUserSearchView> hasTargetRole(
+            UserSearchTarget target,
+            UserSearchScope scope
+    ) {
+
+        return (root, query, cb) -> {
+
+            Set<String> allowedRoleCodes = scope.getAllowedRoleCodes();
+
+            if (allowedRoleCodes == null || allowedRoleCodes.isEmpty()) {
+                return cb.conjunction();
+            }
+
+            return root.get("roleCode").in(allowedRoleCodes);
+        };
+    }
+
+    /*
+     * Tenant filter
+     */
+    private static Specification<AdminUserSearchView> hasAggregator(
+            UUID aggregatorId
+    ) {
+
+        return (root, query, cb) ->
+                aggregatorId == null
+                        ? cb.conjunction()
+                        : cb.equal(root.get("aggregatorId"), aggregatorId);
+    }
+
+    /*
+     * Group scope
+     *
+     * GROUP_ADMIN:
+     *   Always logged-in user's group.
+     *
+     * SUPER_ADMIN:
+     *   Selected group for GROUP_USERS.
+     *
+     * GROUP_ADMIN target:
+     *   All groups.
+     */
+    private static Specification<AdminUserSearchView> hasGroupScope(
+            UserSearchTarget target,
+            UserSearchScope scope
+    ) {
+
+        return (root, query, cb) -> {
+
+            if (target == UserSearchTarget.GROUP_ADMIN) {
+                return cb.conjunction();
+            }
+
+            if (scope.isAllGroupsAllowed()) {
+                return cb.conjunction();
+            }
+
+            if (scope.getBusinessGroupId() == null) {
+                return cb.disjunction();
+            }
+
+            return cb.equal(
+                    root.get("businessGroupId"),
+                    scope.getBusinessGroupId()
+            );
+        };
+    }
+
+    private static Specification<AdminUserSearchView> hasAdId(String value) {
+
+        return (root, query, cb) ->
+                likeIgnoreCase(cb, root.get("adId"), value);
+    }
+
+    private static Specification<AdminUserSearchView> hasFirstName(String value) {
+
+        return (root, query, cb) ->
+                likeIgnoreCase(cb, root.get("firstName"), value);
+    }
+
+    private static Specification<AdminUserSearchView> hasLastName(String value) {
+
+        return (root, query, cb) ->
+                likeIgnoreCase(cb, root.get("lastName"), value);
+    }
+
+    private static Specification<AdminUserSearchView> hasEmailId(String value) {
+
+        return (root, query, cb) ->
+                likeIgnoreCase(cb, root.get("emailId"), value);
+    }
+
+    private static Specification<AdminUserSearchView> hasPhoneNumber(String value) {
+
+        return (root, query, cb) ->
+                likeIgnoreCase(cb, root.get("phoneNumber"), value);
+    }
+
+    private static Specification<AdminUserSearchView> hasUserStatus(String value) {
+
+        return (root, query, cb) -> {
+
+            if (!StringUtils.hasText(value)) {
+                return cb.conjunction();
+            }
+
+            return cb.equal(
+                    cb.upper(root.get("userStatus")),
+                    value.trim().toUpperCase()
+            );
+        };
+    }
+
+    private static Specification<AdminUserSearchView> hasUserType(UserType value) {
+
+        return (root, query, cb) -> {
+
+            if (value == null) {
+                return cb.conjunction();
+            }
+
+            return cb.equal(root.get("userType"), value);
+        };
+    }
+
+    private static Specification<AdminUserSearchView> hasRoleCode(String value) {
+
+        return (root, query, cb) ->
+                likeIgnoreCase(cb, root.get("roleCode"), value);
+    }
+
+    private static Specification<AdminUserSearchView> hasRoleName(String value) {
+
+        return (root, query, cb) ->
+                likeIgnoreCase(cb, root.get("roleName"), value);
+    }
+
+    private static Specification<AdminUserSearchView> hasGroupName(String value) {
+
+        return (root, query, cb) ->
+                likeIgnoreCase(cb, root.get("groupName"), value);
+    }
+
+    private static Specification<AdminUserSearchView> hasAuthStatus(String value) {
+
+        return (root, query, cb) -> {
+
+            if (!StringUtils.hasText(value)
+                    || "ALL".equalsIgnoreCase(value.trim())) {
+                return cb.conjunction();
+            }
+
+            return cb.equal(
+                    cb.upper(root.get("roleAuthStatus")),
+                    value.trim().toUpperCase()
+            );
+        };
+    }
+
+    private static Specification<AdminUserSearchView> hasRoleActive(Boolean value) {
+
+        return (root, query, cb) ->
+                value == null
+                        ? cb.conjunction()
+                        : cb.equal(root.get("roleActive"), value);
+    }
+
+    /*
+     * CREATED_AT is epoch value in milliseconds.
+     */
+    private static Specification<AdminUserSearchView> createdFrom(LocalDate date) {
+
+        return (root, query, cb) -> {
+
+            if (date == null) {
+                return cb.conjunction();
+            }
+
+            long startEpoch = date
+                    .atStartOfDay(ZoneId.systemDefault())
+                    .toInstant()
+                    .toEpochMilli();
+
+            return cb.greaterThanOrEqualTo(
+                    root.get("createdAt"),
+                    startEpoch
+            );
+        };
+    }
+
+    private static Specification<AdminUserSearchView> createdTo(LocalDate date) {
+
+        return (root, query, cb) -> {
+
+            if (date == null) {
+                return cb.conjunction();
+            }
+
+            long nextDayEpoch = date
+                    .plusDays(1)
+                    .atStartOfDay(ZoneId.systemDefault())
+                    .toInstant()
+                    .toEpochMilli();
+
+            return cb.lessThan(
+                    root.get("createdAt"),
+                    nextDayEpoch
+            );
+        };
+    }
+
+    private static Predicate likeIgnoreCase(
+            CriteriaBuilder cb,
+            Expression<String> field,
+            String value
+    ) {
+
+        if (!StringUtils.hasText(value)) {
+            return cb.conjunction();
+        }
+
+        String searchValue = value.trim()
+                .toLowerCase()
+                .replace("\\", "\\\\")
+                .replace("%", "\\%")
+                .replace("_", "\\_");
+
+        return cb.like(
+                cb.lower(field),
+                "%" + searchValue + "%",
+                '\\'
+        );
+    }
+}
+
+
+@Service
+@RequiredArgsConstructor
+public class UserSearchScopeService {
+
+    private static final String MASTER_ADMIN = "MASTER_ADMIN";
+    private static final String SUPER_ADMIN = "SUPER_ADMIN";
+
+    private static final Set<String> GROUP_ADMIN_ROLE_CODES = Set.of(
+            "BIZ_GROUP_ADMIN",
+            "BANK_IT_GROUP_ADMIN",
+            "OPS_ITDCR_GROUP_ADMIN",
+            "CMD_GROUP_ADMIN"
+    );
+
+    private final UsersRepository usersRepository;
+    private final UserRoleRepository userRoleRepository;
+    private final BusinessRolesMasterRepository businessRolesMasterRepository;
+
+    public UserSearchScope resolveScope(
+            UserSearchTarget target,
+            UUID requestedGroupId,
+            String loggedInAdId
+    ) {
+
+        Users loggedInUser = usersRepository
+                .findByAdIdIgnoreCaseAndDeletedAtIsNull(loggedInAdId)
+                .orElseThrow(() -> new AdminPortalException(
+                        "USR_001",
+                        "Logged-in user not found"
+                ));
+
+        UserRole primaryUserRole = userRoleRepository
+                .findFirstByUserIdAndIsPrimaryTrueAndIsActiveTrueAndDeletedAtIsNull(
+                        loggedInUser.getId()
+                )
+                .orElseThrow(() -> new AdminPortalException(
+                        "USR_002",
+                        "Primary active role not found"
+                ));
+
+        BusinessRolesMaster loggedInRole = businessRolesMasterRepository
+                .findByIdAndIsActiveTrue(primaryUserRole.getRoleId())
+                .orElseThrow(() -> new AdminPortalException(
+                        "USR_003",
+                        "Logged-in user's role not found"
+                ));
+
+        String loggedInRoleCode = loggedInRole.getBrCode();
+
+        UUID aggregatorId = loggedInUser.getAggregatorId();
+
+        // MASTER ADMIN
+        if (MASTER_ADMIN.equals(loggedInRoleCode)) {
+
+            if (target == UserSearchTarget.SUPER_ADMIN
+                    || target == UserSearchTarget.GROUP_ADMIN) {
+
+                return UserSearchScope.builder()
+                        .aggregatorId(aggregatorId)
+                        .allGroupsAllowed(true)
+                        .build();
+            }
+
+            throw new AdminPortalException(
+                    "USR_004",
+                    "Master Admin is not authorized for this search"
+            );
+        }
+
+        // SUPER ADMIN
+        if (SUPER_ADMIN.equals(loggedInRoleCode)) {
+
+            if (target == UserSearchTarget.GROUP_ADMIN) {
+                return UserSearchScope.builder()
+                        .aggregatorId(aggregatorId)
+                        .allGroupsAllowed(true)
+                        .build();
+            }
+
+            if (target == UserSearchTarget.GROUP_USERS) {
+
+                if (requestedGroupId == null) {
+                    throw new AdminPortalException(
+                            "USR_005",
+                            "Business group is required"
+                    );
+                }
+
+                return UserSearchScope.builder()
+                        .aggregatorId(aggregatorId)
+                        .businessGroupId(requestedGroupId)
+                        .allGroupsAllowed(false)
+                        .build();
+            }
+
+            throw new AdminPortalException(
+                    "USR_006",
+                    "Super Admin is not authorized for this search"
+            );
+        }
+
+        // GROUP ADMIN
+        if (GROUP_ADMIN_ROLE_CODES.contains(loggedInRoleCode)) {
+
+            if (target != UserSearchTarget.GROUP_USERS) {
+                throw new AdminPortalException(
+                        "USR_007",
+                        "Group Admin can search only group users"
+                );
+            }
+
+            UUID loggedInGroupId = loggedInRole.getBusinessGroupId();
+
+            if (loggedInGroupId == null) {
+                throw new AdminPortalException(
+                        "USR_008",
+                        "Group is not configured for logged-in user"
+                );
+            }
+
+            // Do not allow Group Admin to search another group.
+            if (requestedGroupId != null
+                    && !loggedInGroupId.equals(requestedGroupId)) {
+                throw new AdminPortalException(
+                        "USR_009",
+                        "You are not authorized to access this group"
+                );
+            }
+
+            return UserSearchScope.builder()
+                    .aggregatorId(aggregatorId)
+                    .businessGroupId(loggedInGroupId)
+                    .allGroupsAllowed(false)
+                    .build();
+        }
+
+        throw new AdminPortalException(
+                "USR_010",
+                "You are not authorized to search users"
+        );
+    }
+}
+
+
+Corrected Specification target logic
+The target itself determines which role codes are included. This is important because GROUP_USERS must exclude Group Admin roles even when the Super Admin searches across a selected group.
+
+Replace the hasTargetRole() method in AdminUserSearchSpecification with this implementation:
+private static Specification<AdminUserSearchView> hasTargetRole(
+        UserSearchTarget target
+) {
+
+    return (root, query, cb) -> {
+
+        switch (target) {
+
+            case SUPER_ADMIN:
+                return cb.equal(
+                        root.get("roleCode"),
+                        "SUPER_ADMIN"
+                );
+
+            case GROUP_ADMIN:
+                return root.get("roleCode").in(
+                        GROUP_ADMIN_ROLE_CODES
+                );
+
+            case GROUP_USERS:
+                return cb.not(
+                        root.get("roleCode").in(
+                                GROUP_ADMIN_ROLE_CODES
+                        )
+                );
+
+            default:
+                return cb.disjunction();
+        }
+    };
+}
+
+Also replace hasGroupScope() with:
+private static Specification<AdminUserSearchView> hasGroupScope(
+        UserSearchTarget target,
+        UserSearchScope scope
+) {
+
+    return (root, query, cb) -> {
+
+        // Group Admin and Super Admin target: all groups.
+        if (target == UserSearchTarget.GROUP_ADMIN) {
+            return cb.conjunction();
+        }
+
+        // SUPER_ADMIN and GROUP_USERS and GROUP_ADMIN and GROUP_USERS
+        // both have a specific group ID.
+        if (scope.getBusinessGroupId() == null) {
+            return cb.disjunction();
+        }
+
+        return cb.equal(
+                root.get("businessGroupId"),
+                scope.getBusinessGroupId()
+        );
+    };
+}
+
+@Repository
+public interface UsersRepository extends JpaRepository<Users, UUID> {
+
+    Optional<Users> findByAdIdIgnoreCaseAndDeletedAtIsNull(String adId);
+}
+
+
+@Repository
+public interface UserRoleRepository extends JpaRepository<UserRole, UUID> {
+
+    Optional<UserRole>
+    findFirstByUserIdAndIsPrimaryTrueAndIsActiveTrueAndDeletedAtIsNull(
+            UUID userId
+    );
+}
+
+@Repository
+public interface BusinessRolesMasterRepository
+        extends JpaRepository<BusinessRolesMaster, UUID> {
+
+    Optional<BusinessRolesMaster> findByIdAndIsActiveTrue(UUID id);
+}
+
+
+@Component
+public class UserSearchValidator {
+
+    private static final Set<String> ALLOWED_AUTH_STATUSES = Set.of(
+            "ALL",
+            "APPROVED",
+            "PENDING",
+            "PENDING_FOR_AUTHORIZATION",
+            "REJECTED"
+    );
+
+    public void validate(
+            UserSearchTarget target,
+            UserSearchRequest request
+    ) {
+
+        if (target == null) {
+            throw new AdminPortalException(
+                    "USR_011",
+                    "Search target is mandatory"
+            );
+        }
+
+        if (request == null) {
+            throw new AdminPortalException(
+                    "USR_012",
+                    "Search request is mandatory"
+            );
+        }
+
+        if (StringUtils.hasText(request.getAuthStatus())
+                && !ALLOWED_AUTH_STATUSES.contains(
+                        request.getAuthStatus().trim().toUpperCase()
+                )) {
+            throw new AdminPortalException(
+                    "USR_013",
+                    "Invalid authorization status"
+            );
+        }
+
+        if (request.getFromDate() != null
+                && request.getToDate() != null
+                && request.getFromDate().isAfter(request.getToDate())) {
+            throw new AdminPortalException(
+                    "USR_014",
+                    "From date cannot be greater than to date"
+            );
+        }
+
+        validateLength(request.getAdId(), 100, "AD ID");
+        validateLength(request.getFirstName(), 100, "First name");
+        validateLength(request.getLastName(), 100, "Last name");
+        validateLength(request.getEmailId(), 150, "Email");
+        validateLength(request.getPhoneNumber(), 20, "Phone number");
+        validateLength(request.getRoleCode(), 100, "Role code");
+        validateLength(request.getRoleName(), 150, "Role name");
+        validateLength(request.getGroupName(), 150, "Group name");
+    }
+
+    private void validateLength(
+            String value,
+            int maxLength,
+            String fieldName
+    ) {
+
+        if (StringUtils.hasText(value)
+                && value.trim().length() > maxLength) {
+            throw new AdminPortalException(
+                    "USR_015",
+                    fieldName + " cannot exceed " + maxLength + " characters"
+            );
+        }
+    }
+}
+
+
+@Service
+@RequiredArgsConstructor
+public class UserSearchService {
+
+    private final AdminUserSearchRepository adminUserSearchRepository;
+    private final UserSearchScopeService userSearchScopeService;
+    private final UserSearchValidator userSearchValidator;
+
+    public AdminPortalResponse<UserSearchResponse> searchUsers(
+            UserSearchTarget target,
+            UserSearchRequest request,
+            Pageable pageable
+    ) {
+
+        userSearchValidator.validate(target, request);
+        validateSort(pageable);
+
+        String loggedInAdId = EPayIdentityUtil
+                .getUserPrincipal()
+                .getUserName();
+
+        if (!StringUtils.hasText(loggedInAdId)) {
+            throw new AdminPortalException(
+                    "USR_016",
+                    "Unable to identify logged-in user"
+            );
+        }
+
+        // Resolve logged-in user's actual access scope.
+        UserSearchScope scope = userSearchScopeService.resolveScope(
+                target,
+                request.getBusinessGroupId(),
+                loggedInAdId
+        );
+
+        // Build all filters in one Specification class.
+        Specification<AdminUserSearchView> specification =
+                AdminUserSearchSpecification.buildSpecification(
+                        target,
+                        request,
+                        scope
+                );
+
+        Page<AdminUserSearchView> resultPage =
+                adminUserSearchRepository.findAll(
+                        specification,
+                        pageable
+                );
+
+        List<UserSearchResponse> responseData =
+                resultPage.getContent()
+                        .stream()
+                        .map(this::mapToResponse)
+                        .toList();
+
+        return AdminPortalResponse.<UserSearchResponse>builder()
+                .status(HttpStatus.OK.value())
+                .data(responseData)
+                .count((long) responseData.size())
+                .total(resultPage.getTotalElements())
+                .build();
+    }
+
+    private UserSearchResponse mapToResponse(AdminUserSearchView view) {
+
+        return UserSearchResponse.builder()
+                .userId(view.getUserId())
+                .userRoleId(view.getUserRoleId())
+
+                .adId(view.getAdId())
+                .firstName(view.getFirstName())
+                .lastName(view.getLastName())
+                .emailId(view.getEmailId())
+                .phoneNumber(view.getPhoneNumber())
+
+                .userStatus(view.getUserStatus())
+                .userType(view.getUserType())
+
+                .designation(view.getDesignation())
+                .officeAddress(view.getOfficeAddress())
+
+                .roleCode(view.getRoleCode())
+                .roleName(view.getRoleName())
+                .roleActive(view.getRoleActive())
+                .roleAuthStatus(view.getRoleAuthStatus())
+                .roleRecordStatus(view.getRoleRecordStatus())
+
+                .groupName(view.getGroupName())
+                .groupCode(view.getGroupCode())
+                .businessGroupId(view.getBusinessGroupId())
+
+                .createdAt(view.getCreatedAt())
+                .build();
+    }
+
+    private void validateSort(Pageable pageable) {
+
+        Set<String> allowedSortFields = Set.of(
+                "createdAt",
+                "adId",
+                "firstName",
+                "lastName",
+                "emailId",
+                "roleName",
+                "groupName",
+                "userStatus"
+        );
+
+        for (Sort.Order order : pageable.getSort()) {
+
+            if (!allowedSortFields.contains(order.getProperty())) {
+                throw new AdminPortalException(
+                        "USR_017",
+                        "Unsupported sort field: " + order.getProperty()
+                );
+            }
+        }
+    }
+}
+
+@RestController
+@RequestMapping("/admin/users")
+@RequiredArgsConstructor
+public class UserSearchController {
+
+    private final UserSearchService userSearchService;
+
+    @PreAuthorize("""
+            hasAnyRole(
+                'MASTER_ADMIN',
+                'SUPER_ADMIN',
+                'BIZ_GROUP_ADMIN',
+                'BANK_IT_GROUP_ADMIN',
+                'OPS_ITDCR_GROUP_ADMIN',
+                'CMD_GROUP_ADMIN'
+            )
+            """)
+    @PostMapping("/search/{target}")
+    @Operation(summary = "Search users based on admin role and group")
+    public AdminPortalResponse<UserSearchResponse> searchUsers(
+            @PathVariable UserSearchTarget target,
+            @RequestBody UserSearchRequest request,
+            @PageableDefault(
+                    size = 50,
+                    sort = "createdAt",
+                    direction = Sort.Direction.DESC
+            ) Pageable pageable
+    ) {
+
+        return userSearchService.searchUsers(
+                target,
+                request,
+                pageable
+        );
+    }
+}
+--------------------------------------------------
 import com.epay.admin.portal.entity.admin.MvJourney;
 import com.epay.admin.portal.model.request.AdminMerchantOnboardingListRequest;
 import org.apache.commons.lang3.StringUtils;
