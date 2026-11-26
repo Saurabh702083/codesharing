@@ -1,339 +1,556 @@
-@Getter
-@Setter
-@AllArgsConstructor
-public class AdminPortalException extends RuntimeException {
+-- =====================================================================
+-- VW_USER_ROLE_LIST
+-- One row per USER_ROLE (user x role), enriched with user, role and group.
+-- Plain (non-materialized) view on purpose: approval screens need
+-- real-time AUTH_STATUS, a materialized view would show stale data.
+-- =====================================================================
+CREATE OR REPLACE VIEW VW_USER_ROLE_LIST AS
+SELECT
+    ur.ID                                           AS USER_ROLE_ID,   -- PK of the view
+    u.ID                                            AS USER_ID,
+    u.AGGREGATOR_ID                                 AS AGGREGATOR_ID,
 
-    private final String errorCode;
-    private final String errorMessage;
+    -- user details
+    u.ADID                                          AS ADID,
+    u.FIRST_NAME                                    AS FIRST_NAME,
+    u.LAST_NAME                                     AS LAST_NAME,
+    TRIM(u.FIRST_NAME || ' ' || u.LAST_NAME)        AS FULL_NAME,
+    u.EMAIL_ID                                      AS EMAIL_ID,
+    u.PHONE_NUMBER                                  AS PHONE_NUMBER,
+    u.DESIGNATION                                   AS DESIGNATION,
+    u.USER_TYPE                                     AS USER_TYPE,
+    u.STATUS                                        AS USER_STATUS,
+    u.CREATED_AT                                    AS USER_CREATED_AT,
+    u.CREATED_BY                                    AS CREATED_BY,
 
-}
+    -- user_role details (Status / Auth Status shown on the screens come from here)
+    ur.IS_PRIMARY                                   AS IS_PRIMARY,
+    ur.IS_ACTIVE                                    AS IS_ACTIVE,
+    ur.AUTH_STATUS                                  AS AUTH_STATUS,
+    ur.RECORD_STATUS                                AS RECORD_STATUS,
+    ur.CREATED_AT                                   AS ROLE_CREATED_AT,
 
-@AllArgsConstructor
-@Data
-@Builder
-@JsonInclude(JsonInclude.Include.NON_NULL)
-public class AdminPortalResponse<T> {
+    -- role details
+    br.ID                                           AS ROLE_ID,
+    br.BR_CODE                                      AS ROLE_CODE,
+    br.NAME                                         AS ROLE_NAME,
 
-    private Integer status;
-    private List<T> data;
-    private Long count;
-    private Long total;
-    private List<ErrorDto> errors;
+    -- group details
+    bg.ID                                           AS GROUP_ID,
+    bg.BG_CODE                                      AS GROUP_CODE,
+    bg.NAME                                         AS GROUP_NAME
+FROM USER_ROLE ur
+         JOIN USERS u                    ON u.ID  = ur.USER_ID
+         JOIN BUSINESS_ROLES_MASTER br   ON br.ID = ur.ROLE_ID
+         LEFT JOIN BUSINESS_GROUP_MASTER bg ON bg.ID = br.BUSINESS_GROUP_ID
+WHERE (u.DELETED_AT  IS NULL OR u.DELETED_AT  = 0)
+  AND (ur.DELETED_AT IS NULL OR ur.DELETED_AT = 0);
 
-    @Override
-    public String toString() {
-        return "ResponseDto{" +
-                "status=" + status +
-                ", data=" + data +
-                ", count=" + count +
-                ", total=" + total +
-                ", errors=" + errors +
-                '}';
-    }
-}
+-- Optional: indexes on base tables that the filters will hit (check what you already have)
+-- CREATE INDEX IDX_USER_ROLE_USER_ID   ON USER_ROLE (USER_ID);
+-- CREATE INDEX IDX_USER_ROLE_ROLE_ID   ON USER_ROLE (ROLE_ID);
+-- CREATE INDEX IDX_USER_ROLE_PRIM_AUTH ON USER_ROLE (IS_PRIMARY, AUTH_STATUS);
+-- CREATE INDEX IDX_USERS_ADID          ON USERS (ADID);
 
-    @PreAuthorize("hasAnyRole('ONBOARDING_MANAGER','RELATIONSHIP_MANAGER', 'BIZ_SUPPORT', 'CIRCLE')")
-    @PostMapping("/list/{stage}")
-    @Operation(summary = "Get list of MIF", description = "This API used to get all MIF.")
-    public AdminPortalResponse<AdminMerchantOnboardingListResponse> getSubmittedMIFList(@PathVariable String stage, @RequestBody AdminMerchantOnboardingListRequest adminMerchantOnboardingListRequest, @PageableDefault(size = FIFTY_LENGTH, sort = SUBMISSION_DATE, direction = Sort.Direction.DESC) Pageable pageable) {
-        if (!StringUtils.isEmpty(adminMerchantOnboardingListRequest.getStage()) && StringUtils.isEmpty(adminMerchantOnboardingListRequest.getStatus())) {
-            adminMerchantOnboardingListRequest.setStatus(StageStatus.YET_TO_START.name());
-        }
-        return adminMerchantOnboardingService.getSubmittedMIFList(stage, adminMerchantOnboardingListRequest, pageable);
-    }
+----------------------
 
-@Table(name = "BUSINESS_ROLES_MASTER")
+package com.epay.admin.portal.entity.admin;
+
+import com.epay.admin.portal.enums.AuthStatus;
+import com.epay.admin.portal.enums.UserType;
+import jakarta.persistence.*;
+import lombok.Getter;
+import lombok.NoArgsConstructor;
+import org.hibernate.annotations.Immutable;
+
+import java.util.UUID;
+
+/**
+ * Read-only mapping of VW_USER_ROLE_LIST.
+ * Do NOT let hibernate.ddl-auto create/update this (use none/validate).
+ */
 @Entity
-@AllArgsConstructor
-@NoArgsConstructor
-@Builder
-@Setter
+@Immutable
 @Getter
-public class BusinessRolesMaster extends AuditEntityByDate {
-    @Id
-    @GeneratedValue(strategy = GenerationType.UUID)
-    private UUID id;
-    private UUID businessGroupId;
-    private String brCode;
-    private String name;
-    private String description;
-    private String type;
-    private Boolean isActive;
-    private UUID aggregatorId;
-    private UserType userType;
-    private String typeValues;
-    private String secondaryBrCode;
-}
-
-@EqualsAndHashCode(callSuper = true)
-@Data
-@Entity
-@Builder
 @NoArgsConstructor
-@AllArgsConstructor
-@Table(name = "USER_ROLE")
-public class UserRole extends AuditEntityCreatedDate {
+@Table(name = "VW_USER_ROLE_LIST")
+public class VwUserRoleList {
+
     @Id
-    @GeneratedValue(strategy = GenerationType.UUID)
-    @Column(nullable = false, updatable = false, unique = true)
-    private UUID id;
+    private UUID userRoleId;
     private UUID userId;
-    private UUID roleId;
     private UUID aggregatorId;
+
+    @Column(name = "ADID")
+    private String adId;
+    private String firstName;
+    private String lastName;
+    private String fullName;
+    private String emailId;
+    private String phoneNumber;
+    private String designation;
+    @Enumerated(EnumType.STRING)
+    private UserType userType;
+    private String userStatus;
+    private Long userCreatedAt;
+    private String createdBy;
+
     private Boolean isPrimary;
     private Boolean isActive;
-    private Long fromDate;
-    private Long toDate;
-    @Column(name = "SECONDARY_USER_ID")
-    private UUID secondaryUserId;
-    private String remark;
     @Enumerated(EnumType.STRING)
     private AuthStatus authStatus;
     private String recordStatus;
-    private Long deletedAt;
+    private Long roleCreatedAt;
 
+    private UUID roleId;
+    private String roleCode;
+    private String roleName;
+
+    private UUID groupId;
+    private String groupCode;
+    private String groupName;
 }
 
-@EqualsAndHashCode(callSuper = true)
-@Table(name = "USERS")
+---------------------
+
+package com.epay.admin.portal.specification;
+
+import com.epay.admin.portal.entity.admin.VwUserRoleList;
+import com.epay.admin.portal.enums.AuthStatus;
+import com.epay.admin.portal.model.request.AdminUserListRequest;
+import org.apache.commons.lang3.StringUtils;
+import org.springframework.data.jpa.domain.Specification;
+
+import java.util.Set;
+import java.util.UUID;
+
+import static com.epay.admin.portal.util.AdminPortalConstants.LIKE_ALL_STRING_FORMATTER;
+
+public class UserRoleListSpecification {
+
+    private UserRoleListSpecification() {}
+
+    /**
+     * @param roleCodes  roles the caller may see for this list (already validated)
+     * @param groupId    non-null only for group admins -> restricts to their own group
+     * @param active     parsed status filter (null = no filter)
+     * @param authStatus parsed auth status filter (null = no filter)
+     */
+    public static Specification<VwUserRoleList> searchUserRoles(AdminUserListRequest request, Set<String> roleCodes,
+                                                                UUID groupId, Boolean active, AuthStatus authStatus) {
+        return Specification.where(isPrimaryRole())
+                .and(hasRoleCodeIn(roleCodes))
+                .and(hasGroupId(groupId))
+                .and(hasGroupName(request.getGroupName()))
+                .and(likeIgnoreCase("adId", request.getAdId()))
+                .and(likeIgnoreCase("fullName", request.getName()))
+                .and(likeIgnoreCase("emailId", request.getEmailId()))
+                .and(likeIgnoreCase("designation", request.getDesignation()))
+                .and(hasActive(active))
+                .and(hasAuthStatus(authStatus))
+                .and(hasFrom(request.getFrom()))
+                .and(hasTo(request.getTo()));
+    }
+
+    /** Secondary role assignments have their own screens, so list primary roles only. */
+    public static Specification<VwUserRoleList> isPrimaryRole() {
+        return (root, query, cb) -> cb.isTrue(root.<Boolean>get("isPrimary"));
+    }
+
+    public static Specification<VwUserRoleList> hasRoleCodeIn(Set<String> roleCodes) {
+        return (root, query, cb) -> roleCodes == null || roleCodes.isEmpty()
+                ? cb.disjunction()                      // nothing allowed -> nothing returned
+                : root.get("roleCode").in(roleCodes);
+    }
+
+    public static Specification<VwUserRoleList> hasGroupId(UUID groupId) {
+        return (root, query, cb) -> groupId == null ? cb.conjunction()
+                : cb.equal(root.get("groupId"), groupId);
+    }
+
+    public static Specification<VwUserRoleList> hasGroupName(String groupName) {
+        return (root, query, cb) -> StringUtils.isBlank(groupName) ? cb.conjunction()
+                : cb.equal(cb.lower(root.<String>get("groupName")), groupName.trim().toLowerCase());
+    }
+
+    public static Specification<VwUserRoleList> hasActive(Boolean active) {
+        return (root, query, cb) -> active == null ? cb.conjunction()
+                : cb.equal(root.<Boolean>get("isActive"), active);
+    }
+
+    public static Specification<VwUserRoleList> hasAuthStatus(AuthStatus authStatus) {
+        return (root, query, cb) -> authStatus == null ? cb.conjunction()
+                : cb.equal(root.get("authStatus"), authStatus);
+    }
+
+    public static Specification<VwUserRoleList> hasFrom(Long from) {
+        return (root, query, cb) -> from == null ? cb.conjunction()
+                : cb.ge(root.get("userCreatedAt"), from);
+    }
+
+    public static Specification<VwUserRoleList> hasTo(Long to) {
+        return (root, query, cb) -> to == null ? cb.conjunction()
+                : cb.le(root.get("userCreatedAt"), to);
+    }
+
+    private static Specification<VwUserRoleList> likeIgnoreCase(String field, String value) {
+        return (root, query, cb) -> StringUtils.isBlank(value) ? cb.conjunction()
+                : cb.like(cb.lower(root.<String>get(field)),
+                          String.format(LIKE_ALL_STRING_FORMATTER, value.trim().toLowerCase()));
+    }
+}
+
+---------------
+
+package com.epay.admin.portal.util;
+
+import com.epay.admin.portal.enums.SystemRole;
+import com.epay.admin.portal.enums.UserListType;
+import com.epay.admin.portal.exception.AdminPortalException;
+import org.apache.commons.lang3.StringUtils;
+
+import java.util.*;
+import java.util.stream.Collectors;
+
+import static com.epay.admin.portal.enums.SystemRole.*;
+import static com.epay.admin.portal.util.AdminPortalConstants.ROLE_HIERARCHY;   // adjust to where your map lives
+
+/**
+ * Decides which roles a logged-in admin may see in the user list.
+ *   MASTER_ADMIN      -> SUPER_ADMIN + the group admins only
+ *   SUPER_ADMIN       -> group admins + every role below them
+ *   <GROUP>_ADMIN     -> roles below that group admin (own group only)
+ * Built from ROLE_HIERARCHY so new roles only need to be added there.
+ */
+public final class UserListAccessPolicy {
+
+    // move these two to your ErrorConstants
+    public static final String ACCESS_DENIED_ERROR_CODE = "ADMIN_ACCESS_DENIED";
+    public static final String ACCESS_DENIED_ERROR_MESSAGE = "You are not allowed to view this list";
+
+    public static final Set<SystemRole> GROUP_ADMIN_ROLES =
+            Collections.unmodifiableSet(EnumSet.of(BIZ_GROUP_ADMIN, BANK_IT_GROUP_ADMIN, OPS_ITDCR_GROUP_ADMIN, CMD_GROUP_ADMIN));
+
+    /** caller role -> roles the caller is allowed to search */
+    public static final Map<SystemRole, Set<SystemRole>> SEARCH_SCOPE;
+
+    static {
+        Map<SystemRole, Set<SystemRole>> scope = new EnumMap<>(SystemRole.class);
+
+        Set<SystemRole> master = EnumSet.of(SUPER_ADMIN);
+        master.addAll(GROUP_ADMIN_ROLES);
+        scope.put(MASTER_ADMIN, Collections.unmodifiableSet(master));
+
+        scope.put(SUPER_ADMIN, Collections.unmodifiableSet(descendants(SUPER_ADMIN)));
+        GROUP_ADMIN_ROLES.forEach(r -> scope.put(r, Collections.unmodifiableSet(descendants(r))));
+
+        SEARCH_SCOPE = Collections.unmodifiableMap(scope);
+    }
+
+    private UserListAccessPolicy() {}
+
+    /** All roles reachable from root through ROLE_HIERARCHY (cycle safe, e.g. BIZ_SUPPORT -> BIZ_SUPPORT). */
+    private static Set<SystemRole> descendants(SystemRole root) {
+        Set<SystemRole> result = EnumSet.noneOf(SystemRole.class);
+        Deque<SystemRole> queue = new ArrayDeque<>(List.of(root));
+        while (!queue.isEmpty()) {
+            SystemRole current = queue.poll();
+            for (SystemRole child : ROLE_HIERARCHY.getOrDefault(current, Set.of())) {
+                if (result.add(child)) {
+                    queue.add(child);
+                }
+            }
+        }
+        return result;
+    }
+
+    /** Null-safe lookup (SystemRole.fromValue throws on unknown values, tokens may carry other roles). */
+    public static Optional<SystemRole> toSystemRole(String value) {
+        return Arrays.stream(SystemRole.values())
+                .filter(r -> r.getValue().equalsIgnoreCase(value))
+                .findFirst();
+    }
+
+    /** First role in the token that is allowed to use the list API. */
+    public static SystemRole resolveCallerRole(List<String> tokenRoles) {
+        return Optional.ofNullable(tokenRoles).orElse(List.of()).stream()
+                .map(UserListAccessPolicy::toSystemRole)
+                .flatMap(Optional::stream)
+                .filter(SEARCH_SCOPE::containsKey)
+                .findFirst()
+                .orElseThrow(() -> new AdminPortalException(ACCESS_DENIED_ERROR_CODE, ACCESS_DENIED_ERROR_MESSAGE));
+    }
+
+    /**
+     * Role codes to filter the view on = (roles of the requested list type) ∩ (roles the caller may see),
+     * optionally narrowed by the "Role" dropdown.
+     */
+    public static Set<String> resolveRoleCodes(SystemRole caller, UserListType listType, String requestedRoleCode) {
+        Set<SystemRole> allowed = SEARCH_SCOPE.getOrDefault(caller, Set.of());
+
+        Set<SystemRole> forType = new HashSet<>(switch (listType) {
+            case SUPER_ADMIN -> Set.of(SUPER_ADMIN);
+            case GROUP_ADMIN -> GROUP_ADMIN_ROLES;
+            case ROLE_USER -> allowed.stream()
+                    .filter(r -> r != SUPER_ADMIN && !GROUP_ADMIN_ROLES.contains(r))
+                    .collect(Collectors.toSet());
+        });
+        forType.retainAll(allowed);
+
+        if (forType.isEmpty()) {
+            throw new AdminPortalException(ACCESS_DENIED_ERROR_CODE, ACCESS_DENIED_ERROR_MESSAGE);
+        }
+        if (StringUtils.isNotBlank(requestedRoleCode)) {
+            SystemRole requested = SystemRole.fromValue(requestedRoleCode);
+            if (!forType.contains(requested)) {
+                throw new AdminPortalException(ACCESS_DENIED_ERROR_CODE, ACCESS_DENIED_ERROR_MESSAGE);
+            }
+            return Set.of(requested.getValue());
+        }
+        return forType.stream().map(SystemRole::getValue).collect(Collectors.toSet());
+    }
+}
+------------------
+package com.epay.admin.portal.service;
+
+import com.epay.admin.portal.entity.admin.VwUserRoleList;
+import com.epay.admin.portal.enums.AuthStatus;
+import com.epay.admin.portal.enums.SystemRole;
+import com.epay.admin.portal.exception.AdminPortalException;
+import com.epay.admin.portal.model.request.AdminUserListRequest;
+import com.epay.admin.portal.model.response.AdminPortalResponse;
+import com.epay.admin.portal.model.response.UserRoleListDto;
+import com.epay.admin.portal.repository.BusinessRolesMasterRepository;
+import com.epay.admin.portal.repository.VwUserRoleListRepository;
+import com.epay.admin.portal.specification.UserRoleListSpecification;
+import com.epay.admin.portal.util.EPayIdentityUtil;
+import com.epay.admin.portal.util.UserListAccessPolicy;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.apache.commons.lang3.StringUtils;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.jpa.domain.Specification;
+import org.springframework.http.HttpStatus;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.text.MessageFormat;
+import java.util.Set;
+import java.util.UUID;
+
+import static com.epay.admin.portal.util.ErrorConstants.*;   // INVALID_ERROR_CODE, INVALID_ENUM_ERROR_CODE/MESSAGE - adjust imports
+
+@Slf4j
+@Service
+@RequiredArgsConstructor
+public class AdminUserListService {
+
+    private final VwUserRoleListRepository vwUserRoleListRepository;
+    private final BusinessRolesMasterRepository businessRolesMasterRepository;
+
+    @Transactional(readOnly = true)
+    public AdminPortalResponse<UserRoleListDto> getUserRoleList(AdminUserListRequest request, Pageable pageable) {
+        validateRequest(request);
+
+        // 1. who is calling (from the JWT)
+        SystemRole caller = UserListAccessPolicy.resolveCallerRole(EPayIdentityUtil.getUserPrincipal().getUserRole());
+        log.debug("User list requested by role {} for listType {}", caller, request.getListType());
+
+        // 2. what may they see for this list type
+        Set<String> roleCodes = UserListAccessPolicy.resolveRoleCodes(caller, request.getListType(), request.getRoleCode());
+
+        // 3. group admins are locked to their own group
+        UUID groupId = UserListAccessPolicy.GROUP_ADMIN_ROLES.contains(caller)
+                ? businessRolesMasterRepository.findBusinessGroupIdByBrCode(caller.getValue())
+                    .orElseThrow(() -> new AdminPortalException(UserListAccessPolicy.ACCESS_DENIED_ERROR_CODE,
+                            UserListAccessPolicy.ACCESS_DENIED_ERROR_MESSAGE))
+                : null;
+
+        // 4. filters
+        Specification<VwUserRoleList> specification = UserRoleListSpecification.searchUserRoles(
+                request, roleCodes, groupId, parseActive(request.getStatus()), parseAuthStatus(request.getAuthStatus()));
+
+        Page<UserRoleListDto> page = vwUserRoleListRepository.findAll(specification, pageable).map(this::toDto);
+
+        return AdminPortalResponse.<UserRoleListDto>builder()
+                .status(HttpStatus.OK.value())
+                .data(page.getContent())
+                .count((long) page.getNumberOfElements())
+                .total(page.getTotalElements())
+                .build();
+    }
+
+    private void validateRequest(AdminUserListRequest request) {
+        if (request.getFrom() != null && request.getTo() != null && request.getFrom() > request.getTo()) {
+            throw new AdminPortalException(INVALID_ERROR_CODE, "'from' date cannot be after 'to' date");
+        }
+    }
+
+    private Boolean parseActive(String status) {
+        if (StringUtils.isBlank(status)) return null;
+        if ("ACTIVE".equalsIgnoreCase(status)) return Boolean.TRUE;
+        if ("INACTIVE".equalsIgnoreCase(status)) return Boolean.FALSE;
+        throw new AdminPortalException(INVALID_ENUM_ERROR_CODE, MessageFormat.format(INVALID_ENUM_ERROR_MESSAGE, "Status"));
+    }
+
+    private AuthStatus parseAuthStatus(String authStatus) {
+        return StringUtils.isBlank(authStatus) ? null : AuthStatus.getMerchantRisK(authStatus);
+    }
+
+    private UserRoleListDto toDto(VwUserRoleList v) {
+        return UserRoleListDto.builder()
+                .userRoleId(toStr(v.getUserRoleId()))
+                .userId(toStr(v.getUserId()))
+                .adId(v.getAdId())
+                .name(v.getFullName())
+                .designation(v.getDesignation())
+                .emailId(v.getEmailId())
+                .phoneNumber(v.getPhoneNumber())
+                .roleId(toStr(v.getRoleId()))
+                .roleCode(v.getRoleCode())
+                .roleName(v.getRoleName())
+                .groupId(toStr(v.getGroupId()))
+                .groupCode(v.getGroupCode())
+                .groupName(v.getGroupName())
+                .createdDate(v.getUserCreatedAt())
+                .status(Boolean.TRUE.equals(v.getIsActive()) ? "ACTIVE" : "INACTIVE")
+                .authStatus(v.getAuthStatus() == null ? null : v.getAuthStatus().name())
+                .userStatus(v.getUserStatus())
+                .build();
+    }
+
+    private String toStr(UUID id) {
+        return id == null ? null : id.toString();
+    }
+}
+------------------------
+package com.epay.admin.portal.controller;
+
+import com.epay.admin.portal.model.request.AdminUserListRequest;
+import com.epay.admin.portal.model.response.AdminPortalResponse;
+import com.epay.admin.portal.model.response.UserRoleListDto;
+import com.epay.admin.portal.service.AdminUserListService;
+import io.swagger.v3.oas.annotations.Operation;
+import jakarta.validation.Valid;
+import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
+import org.springframework.data.web.PageableDefault;
+import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.web.bind.annotation.*;
+
+import static com.epay.admin.portal.util.AdminPortalConstants.FIFTY_LENGTH;
+
+@RestController
+@RequestMapping("/admin/user-roles")
+@RequiredArgsConstructor
+public class AdminUserListController {
+
+    private final AdminUserListService adminUserListService;
+
+    @PreAuthorize("hasAnyRole('MASTER_ADMIN','SUPER_ADMIN','BIZ_GROUP_ADMIN','BANK_IT_GROUP_ADMIN','OPS_ITDCR_GROUP_ADMIN','CMD_GROUP_ADMIN')")
+    @PostMapping("/list")
+    @Operation(summary = "Get list of admins/users",
+               description = "Single list API for Manage/Approve Super Admins, Group Admins and Role Admins/Users screens.")
+    public AdminPortalResponse<UserRoleListDto> getUserRoleList(
+            @Valid @RequestBody AdminUserListRequest request,
+            @PageableDefault(size = FIFTY_LENGTH, sort = "userCreatedAt", direction = Sort.Direction.DESC) Pageable pageable) {
+        return adminUserListService.getUserRoleList(request, pageable);
+    }
+}
+
+------------
+package com.epay.admin.portal.model.request;
+
+import com.epay.admin.portal.enums.UserListType;
+import com.fasterxml.jackson.annotation.JsonInclude;
+import jakarta.validation.constraints.NotNull;   // javax.validation if you are on Boot 2
+import lombok.AllArgsConstructor;
+import lombok.Data;
+import lombok.NoArgsConstructor;
+
 @Data
 @AllArgsConstructor
 @NoArgsConstructor
-@Entity
-@Builder
-@Audited
-@AuditTable(value = "USERS_AUDIT")
-public class Users extends AuditEntity {
-    @Id
-    @GeneratedValue(strategy = GenerationType.UUID)
-    @Column(nullable = false, updatable = false, unique = true)
-    private UUID id;
-    private UUID aggregatorId;
-    private String firstName;
-    private String lastName;
-    private String phoneNumber;
-    @Enumerated(EnumType.STRING)
-    private UserStatus status;
-    private Long lastSuccessLogin;
-    private Long lastFailLogin;
-    private Long lastLogout;
-    @Version
-    private int version;
-    @Column(name = "ADID")
+@JsonInclude(JsonInclude.Include.NON_NULL)
+public class AdminUserListRequest {
+    @NotNull(message = "listType is required")
+    private UserListType listType;
+
     private String adId;
+    private String name;          // matches first + last name
     private String emailId;
-    private String RecordStatus;
-    @Enumerated(EnumType.STRING)
-    private UserType userType;
-    @Enumerated(EnumType.STRING)
-    private AuthStatus authStatus;
-    private String officeAddress;
     private String designation;
-    private Long deletedAt;
+    private String groupName;
+    private String roleCode;      // optional, e.g. BIZ_SUPPORT (the "Role" dropdown)
+    private String status;        // ACTIVE | INACTIVE   (USER_ROLE.IS_ACTIVE)
+    private String authStatus;    // APPROVED | PENDING_FOR_AUTHORIZATION | PENDING | REJECTED
+    private Long from;            // created date range, epoch millis
+    private Long to;
+}
+------------
+package com.epay.admin.portal.model.response;
 
-    @PrePersist
-    @PreUpdate
-    public void setEntityNameForRevision() {
-        AuditRevisionListener.setEntityName(this.getClass().getSimpleName());
-    }
+import com.fasterxml.jackson.annotation.JsonInclude;
+import lombok.Builder;
+import lombok.Data;
+
+@Data
+@Builder
+@JsonInclude(JsonInclude.Include.NON_NULL)
+public class UserRoleListDto {
+    private String userRoleId;
+    private String userId;
+    private String adId;
+    private String name;
+    private String designation;
+    private String emailId;
+    private String phoneNumber;
+    private String roleId;
+    private String roleCode;
+    private String roleName;
+    private String groupId;
+    private String groupCode;
+    private String groupName;
+    private Long createdDate;
+    private String status;        // user_role status  : ACTIVE / INACTIVE
+    private String authStatus;    // user_role auth    : APPROVED / PENDING_FOR_AUTHORIZATION ...
+    private String userStatus;    // users.status
+}
+---------------
+package com.epay.admin.portal.enums;
+
+/**
+ * Tells the single list API which kind of list a screen wants.
+ * (Needed because MASTER_ADMIN, for example, can see both super admins and
+ *  group admins, but on two different screens.)
+ */
+public enum UserListType {
+    /** Master Admin  -> Manage Super Admins */
+    SUPER_ADMIN,
+    /** Master Admin  -> Approve Group Admins | Super Admin -> Manage Group Admins */
+    GROUP_ADMIN,
+    /** Super Admin   -> Approve Role Admins/Users | Group Admin -> Manage Role Admins/Users */
+    ROLE_USER
 }
 
-@Getter
-@AllArgsConstructor
-public enum UserType {
-    VENDOR("VENDOR"),
-    BANKER("BANKER"),
-    EXTERNAL("EXTERNAL");
-    private final String value;
+-------------
+package com.epay.admin.portal.repository;
 
-}
+import com.epay.admin.portal.entity.admin.VwUserRoleList;
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
+import org.springframework.stereotype.Repository;
 
-@Getter
-@AllArgsConstructor
-public enum AuthStatus {
-    APPROVED("APPROVED"),
-    PENDING_FOR_AUTHORIZATION("PENDING_FOR_AUTHORIZATION"),
-    PENDING("PENDING"),
-    REJECTED("REJECTED");
-    private final String value;
-
-    public static AuthStatus getMerchantRisK(String authType) {
-        return Arrays.stream(values()).filter(p -> p.name().equalsIgnoreCase(authType)).findFirst().orElseThrow(() -> new AdminPortalException(INVALID_ENUM_ERROR_CODE, MessageFormat.format(INVALID_ENUM_ERROR_MESSAGE, "Auth Type")));
-    
-    }
-}
+import java.util.UUID;
 
 @Repository
-public interface BusinessRolesMasterRepository extends JpaRepository<BusinessRolesMaster, UUID> {
-
-    @Query("FROM BusinessRolesMaster r WHERE r.id IN :roleIds")
-    List<BusinessRolesMaster> findRoleIdAndNamesByIds(@Param("roleIds") List<UUID> roleIds);
-
-    @Query("SELECT b.id FROM BusinessRolesMaster b WHERE b.brCode = :brCode")
-    Optional<UUID> findIdByBrCode(@Param("brCode") String brCode);
+public interface VwUserRoleListRepository
+        extends JpaRepository<VwUserRoleList, UUID>, JpaSpecificationExecutor<VwUserRoleList> {
 }
 
-public interface UserRoleRepository extends JpaRepository<UserRole, UUID> {
-    @Query(value = "select UR.USER_ID FROM BUSINESS_ROLES_MASTER BR JOIN USER_ROLE UR ON UR.ROLE_ID=BR.ID WHERE BR.BR_CODE= :brCode",nativeQuery = true)
-    List<byte[]> getUserIdByRoleCode(@Param("brCode") String brCode);
-
-    @Query(value = "select sm.stage_num from merchant_onboarding_stages_master sm where stage_code=:stageCode",nativeQuery = true)
-    int getStageNumByStageCode(@Param("stageCode") String stageCode);
-
-}
-
-
-@Getter
-public enum SystemRole {
-    MASTER_ADMIN("MASTER_ADMIN"),
-    SUPER_ADMIN("SUPER_ADMIN"),
-    BIZ_GROUP_ADMIN("BIZ_GROUP_ADMIN"),
-    BANK_IT_GROUP_ADMIN("BANK_IT_GROUP_ADMIN"),
-    OPS_ITDCR_GROUP_ADMIN("OPS_ITDCR_GROUP_ADMIN"),
-    CMD_GROUP_ADMIN("CMD_GROUP_ADMIN"),
-    CHANNELS_ADMIN("CHANNELS_ADMIN"),
-    CIRCLE_ADMIN("CIRCLE_ADMIN"),
-    BIZ_SUPPORT("BIZ_SUPPORT"),
-    ONBOARDING_MANAGER("ONBOARDING_MANAGER"),
-    RELATIONSHIP_MANAGER("RELATIONSHIP_MANAGER"),
-    CHANNEL_MANAGER("CHANNEL_MANAGER"),
-    CHANNELS_MANAGER("CHANNELS_MANAGER"),
-    OPERATIONS("OPERATIONS"),
-    MERCHANT_SUPPORT("MERCHANT_SUPPORT"),
-    PRODUCTION_SUPPORT("PRODUCTION_SUPPORT"),
-    BANK_IT("BANK_IT"),
-    CUSTOMER_SUPPORT("CUSTOMER_SUPPORT"),
-    CHARGEBACK_TEAM("CHARGEBACK_TEAM"),
-    CHANNELS_USER("CHANNELS_USER"),
-    CIRCLE_USER("CIRCLE_USER");
-
-    private final String value;
-
-    SystemRole(String value) {
-        this.value = value;
-    }
-
-    public static SystemRole fromValue(String value) {
-        return Arrays.stream(SystemRole.values())
-                .filter(systemRole -> systemRole.value.equalsIgnoreCase(value))
-                .findFirst()
-                .orElseThrow(() -> new AdminPortalException(ErrorConstants.INVALID_ENUM_ERROR_CODE, MessageFormat.format(INVALID_ENUM_ERROR_MESSAGE, ROLE)));
-    }
-}
-
-    public static final Map<SystemRole, Set<SystemRole>> ROLE_HIERARCHY = Map.ofEntries(
-            Map.entry(MASTER_ADMIN, Set.of(SUPER_ADMIN)),
-            Map.entry(SUPER_ADMIN, Set.of(BIZ_GROUP_ADMIN, BANK_IT_GROUP_ADMIN, OPS_ITDCR_GROUP_ADMIN, CMD_GROUP_ADMIN)),
-            Map.entry(BIZ_GROUP_ADMIN, Set.of(BIZ_SUPPORT, ONBOARDING_MANAGER, RELATIONSHIP_MANAGER, CHANNEL_MANAGER, CHANNELS_ADMIN, CHANNELS_USER, CIRCLE_ADMIN, CIRCLE_USER)),
-            Map.entry(BANK_IT_GROUP_ADMIN, Set.of(PRODUCTION_SUPPORT, MERCHANT_SUPPORT, BANK_IT)),
-            Map.entry(OPS_ITDCR_GROUP_ADMIN, Set.of(OPERATIONS)),
-            Map.entry(CMD_GROUP_ADMIN, Set.of(CUSTOMER_SUPPORT, CHARGEBACK_TEAM)),
-            Map.entry(CHANNELS_MANAGER, Set.of(CHANNELS_ADMIN)),
-            Map.entry(CHANNELS_ADMIN, Set.of(CHANNELS_USER)),
-            Map.entry(CIRCLE_ADMIN, Set.of(CIRCLE_USER)),
-            Map.entry(BIZ_SUPPORT, Set.of(BIZ_SUPPORT)),
-            Map.entry(ONBOARDING_MANAGER, Set.of(BIZ_SUPPORT))
-    );
-	
-	
-	User Table :-
-	ID	RAW
-AGGREGATOR_ID	RAW
-FIRST_NAME	VARCHAR2(100 BYTE)
-LAST_NAME	VARCHAR2(100 BYTE)
-PHONE_NUMBER	VARCHAR2(30 BYTE)
-STATUS	VARCHAR2(50 BYTE)
-LAST_SUCCESS_LOGIN	NUMBER(19,0)
-LAST_FAIL_LOGIN	NUMBER(19,0)
-LAST_LOGOUT	NUMBER(19,0)
-VERSION	NUMBER(10,0)
-ADID	VARCHAR2(100 BYTE)
-EMAIL_ID	VARCHAR2(255 BYTE)
-CREATED_BY	VARCHAR2(100 BYTE)
-CREATED_AT	NUMBER
-UPDATED_BY	VARCHAR2(100 BYTE)
-UPDATED_AT	NUMBER
-RECORD_STATUS	VARCHAR2(50 BYTE)
-USER_TYPE	VARCHAR2(50 BYTE)
-AUTH_STATUS	VARCHAR2(50 BYTE)
-OFFICE_ADDRESS	VARCHAR2(255 BYTE)
-DESIGNATION	VARCHAR2(255 BYTE)
-DELETED_AT	NUMBER(19,0)
-
-
-User_role table:-
-ID	RAW
-AGGREGATOR_ID	RAW
-ROLE_ID	RAW
-USER_ID	RAW
-IS_PRIMARY	NUMBER(1,0)
-IS_ACTIVE	NUMBER(1,0)
-CREATED_AT	NUMBER
-CREATED_BY	VARCHAR2(100 BYTE)
-FROM_DATE	NUMBER
-TO_DATE	NUMBER
-SECONDARY_USER_ID	RAW
-REMARK	VARCHAR2(500 BYTE)
-AUTH_STATUS	VARCHAR2(50 BYTE)
-RECORD_STATUS	VARCHAR2(50 BYTE)
-DELETED_AT	NUMBER
-
-Business_Role Table:-
-ID	RAW
-BUSINESS_GROUP_ID	RAW
-BR_CODE	VARCHAR2(50 BYTE)
-NAME	VARCHAR2(50 BYTE)
-DESCRIPTION	VARCHAR2(100 BYTE)
-TYPE	VARCHAR2(50 BYTE)
-IS_ACTIVE	NUMBER(1,0)
-CREATED_AT	NUMBER
-UPDATED_AT	NUMBER
-AGGREGATOR_ID	RAW
-USER_TYPE	VARCHAR2(255 BYTE)
-TYPE_VALUES	VARCHAR2(255 BYTE)
-SECONDARY_BR_CODE	VARCHAR2(255 BYTE)
-
-Business_Group_Master Table:-
-ID	RAW
-NAME	VARCHAR2(50 BYTE)
-BG_CODE	VARCHAR2(50 BYTE)
-DESCRIPTION	VARCHAR2(100 BYTE)
-IS_ACTIVE	NUMBER(1,0)
-CREATED_DATE	NUMBER
-UPDATED_DATE	NUMBER
-AGGREGATOR_ID	RAW
-
-
-Business_Group_Master Table:- Data:
-4A879C4100155FE0E0637C86B10A04D0	System Admin	SYSTEM_ADMIN	This is System Admin group	1	1770811668553	1770811668553	4A879C4100135FE0E0637C86B10A04D0
-4A879C4100165FE0E0637C86B10A04D0	Business Support	BIZ	This is Business Support group	1	1770811668587	1770811668587	4A879C4100135FE0E0637C86B10A04D0
-4A879C4100175FE0E0637C86B10A04D0	Bank IT	BANK_IT	This is Bank IT group	1	1770811668611	1770811668611	4A879C4100135FE0E0637C86B10A04D0
-4A879C4100185FE0E0637C86B10A04D0	Ops-ITDCR	OPS_ITDCR	This is Ops-ITDCR group	1	1770811668636	1770811668636	4A879C4100135FE0E0637C86B10A04D0
-4A879C4100195FE0E0637C86B10A04D0	CMD	CMD	This is CMD group	1	1770811668658	1770811668658	4A879C4100135FE0E0637C86B10A04D0
-
-
-
-
-Business_Role Table:- Data
-4A879C41002F5FE0E0637C86B10A04D1	4A879C4100195FE0E0637C86B10A04D0	CHARGEBACK	CHARGEBACK	This is CHARGEBACK		ADMIN			1	1770811669498	1770811669498	4A879C4100135FE0E0637C86B10A04D0
-4A879C41001B5FE0E0637C86B10A04D0	4A879C4100155FE0E0637C86B10A04D0	MASTER_ADMIN	Master Admin	This is Master Admin role	BANKER	ADMIN	MASTER_ADMIN		1	1770811669498	1770811669498	4A879C4100135FE0E0637C86B10A04D0
-4A879C41001C5FE0E0637C86B10A04D0	4A879C4100155FE0E0637C86B10A04D0	SUPER_ADMIN	Super Admin	This is Super Admin role	BANKER	ADMIN	SUPER_ADMIN		1	1770811669527	1770811669527	4A879C4100135FE0E0637C86B10A04D0
-4A879C41001D5FE0E0637C86B10A04D0	4A879C4100165FE0E0637C86B10A04D0	BIZ_GROUP_ADMIN	Business Group Admin	This is Business Group Admin role	BANKER	ADMIN	GROUP_ADMIN		1	1770811669553	1770811669553	4A879C4100135FE0E0637C86B10A04D0
-4A879C41001E5FE0E0637C86B10A04D0	4A879C4100175FE0E0637C86B10A04D0	BANK_IT_GROUP_ADMIN	Bank IT Group Admin	This is Bank IT Group Admin role	BANKER	ADMIN	GROUP_ADMIN		1	1770811669581	1770811669581	4A879C4100135FE0E0637C86B10A04D0
-4A879C41001F5FE0E0637C86B10A04D0	4A879C4100185FE0E0637C86B10A04D0	OPS_ITDCR_GROUP_ADMIN	Operation Group Admin	This is Operation Group Admin role	BANKER	ADMIN	GROUP_ADMIN		1	1770811669608	1770811669608	4A879C4100135FE0E0637C86B10A04D0
-4A879C4100205FE0E0637C86B10A04D0	4A879C4100195FE0E0637C86B10A04D0	CMD_GROUP_ADMIN	CMD Group Admin	This is CMD Group Admin role	BANKER	ADMIN	GROUP_ADMIN		1	1770811669635	1770811669635	4A879C4100135FE0E0637C86B10A04D0
-4A879C4100215FE0E0637C86B10A04D0	4A879C4100165FE0E0637C86B10A04D0	ONBOARDING_MANAGER	Onboarding Manager	This is Onboarding Manager role	BANKER	ADMIN	ADMIN		1	1770811669662	1770811669662	4A879C4100135FE0E0637C86B10A04D0
-4A879C4100225FE0E0637C86B10A04D0	4A879C4100165FE0E0637C86B10A04D0	BIZ_SUPPORT	Business Support	This is Business Support role	VENDOR	ADMIN	USER		1	1770811669687	1770811669687	4A879C4100135FE0E0637C86B10A04D0
-4A879C4100235FE0E0637C86B10A04D0	4A879C4100165FE0E0637C86B10A04D0	RELATIONSHIP_MANAGER	Relationship Manager	This is Relationship Manager role	BANKER	ADMIN	ADMIN		1	1770811669710	1770811669710	4A879C4100135FE0E0637C86B10A04D0
-4A879C4100245FE0E0637C86B10A04D0	4A879C4100165FE0E0637C86B10A04D0	CHANNEL_MANAGER	Channel Manager	This is Channel Manager role	BANKER	ADMIN	ADMIN		1	1770811669737	1770811669737	4A879C4100135FE0E0637C86B10A04D0
-4A879C4100255FE0E0637C86B10A04D0	4A879C4100165FE0E0637C86B10A04D0	CHANNELS_ADMIN	Channels Admin	This is Channels admin role	BANKER	ADMIN	ADMIN		1	1770811669762	1770811669762	4A879C4100135FE0E0637C86B10A04D0
-4A879C4100265FE0E0637C86B10A04D0	4A879C4100165FE0E0637C86B10A04D0	CHANNELS_USER	Channels User	This is Channels user role	BANKER	USER	USER		1	1770811669788	1770811669788	4A879C4100135FE0E0637C86B10A04D0
-4A879C4100275FE0E0637C86B10A04D0	4A879C4100165FE0E0637C86B10A04D0	CIRCLE_ADMIN	Circle Admin	This is Circle admin role	BANKER	ADMIN	ADMIN		1	1770811669813	1770811669813	4A879C4100135FE0E0637C86B10A04D0
-4A879C4100285FE0E0637C86B10A04D0	4A879C4100165FE0E0637C86B10A04D0	CIRCLE_USER	Circle User	This is Circle user role	BANKER	USER	USER		1	1770811669839	1770811669839	4A879C4100135FE0E0637C86B10A04D0
-4A879C4100295FE0E0637C86B10A04D0	4A879C4100175FE0E0637C86B10A04D0	BANK_IT	Bank IT	This is Bank IT role	BANKER	ADMIN	ADMIN		1	1770811669865	1770811669865	4A879C4100135FE0E0637C86B10A04D0
-4A879C41002A5FE0E0637C86B10A04D0	4A879C4100175FE0E0637C86B10A04D0	MERCHANT_SUPPORT	Merchant Support	This is Merchant Support role	BANKER	ADMIN	ADMIN		1	1770811669888	1770811669888	4A879C4100135FE0E0637C86B10A04D0
-4A879C41002B5FE0E0637C86B10A04D0	4A879C4100175FE0E0637C86B10A04D0	PRODUCTION_SUPPORT	Production Support	This is Production Support role	BANKER	ADMIN	ADMIN		1	1770811669911	1770811669911	4A879C4100135FE0E0637C86B10A04D0
-4A879C41002C5FE0E0637C86B10A04D0	4A879C4100185FE0E0637C86B10A04D0	OPERATIONS	Operations	This is Operations role	BANKER	ADMIN	ADMIN		1	1770811669935	1770811669935	4A879C4100135FE0E0637C86B10A04D0
-4A879C41002D5FE0E0637C86B10A04D0	4A879C4100195FE0E0637C86B10A04D0	CHARGEBACK_TEAM	Chargeback Team	This is Chargeback Team role	BANKER	ADMIN	ADMIN		1	1770811669961	1770811669961	4A879C4100135FE0E0637C86B10A04D0
-4A879C41002E5FE0E0637C86B10A04D0	4A879C4100195FE0E0637C86B10A04D0	CUSTOMER_SUPPORT	Customer Support	This is Customer Support role	BANKER	ADMIN	ADMIN		1	1770811669986	1770811669986	4A879C4100135FE0E0637C86B10A04D0
-4A879C41002F5FE0E0637C86B10A04D0		MERCHANT_ONBOARD	Merchant Onboard	This is Merchant Onboard role		USER			1	1770811670293	1770811670293	4A879C4100135FE0E0637C86B10A04D0
+-------------------
+// ADD this method to your existing BusinessRolesMasterRepository
+@Query("SELECT b.businessGroupId FROM BusinessRolesMaster b WHERE b.brCode = :brCode")
+Optional<UUID> findBusinessGroupIdByBrCode(@Param("brCode") String brCode);
