@@ -1,0 +1,1194 @@
+@Entity
+@Table(name = "BUSINESS_ROLES_MASTER")
+@Getter
+@Setter
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
+public class BusinessRolesMaster extends AuditEntityByDate {
+
+    @Id
+    @GeneratedValue(strategy = GenerationType.UUID)
+    @Column(name = "ID")
+    private UUID id;
+
+    @Column(name = "BUSINESS_GROUP_ID")
+    private UUID businessGroupId;
+
+    @Column(name = "BR_CODE")
+    private String brCode;
+
+    @Column(name = "NAME")
+    private String name;
+
+    @Column(name = "DESCRIPTION")
+    private String description;
+
+    @Column(name = "TYPE")
+    private String type;
+
+    @Column(name = "IS_ACTIVE")
+    private Boolean isActive;
+
+    @Column(name = "AGGREGATOR_ID")
+    private UUID aggregatorId;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "USER_TYPE")
+    private UserType userType;
+
+    @Column(name = "TYPE_VALUES")
+    private String typeValues;
+
+    @Column(name = "SECONDARY_BR_CODE")
+    private String secondaryBrCode;
+}
+
+
+
+
+@Column(name = "RECORD_STATUS")
+private String recordStatus;
+
+
+@Entity
+@Table(name = "BUSINESS_GROUP_MASTER")
+@Getter
+@Setter
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
+public class BusinessGroupMaster {
+
+    @Id
+    @Column(name = "ID")
+    private UUID id;
+
+    @Column(name = "NAME")
+    private String name;
+
+    @Column(name = "BG_CODE")
+    private String bgCode;
+
+    @Column(name = "DESCRIPTION")
+    private String description;
+
+    @Column(name = "IS_ACTIVE")
+    private Boolean isActive;
+
+    @Column(name = "AGGREGATOR_ID")
+    private UUID aggregatorId;
+
+    @Column(name = "CREATED_DATE")
+    private Long createdDate;
+
+    @Column(name = "UPDATED_DATE")
+    private Long updatedDate;
+}
+
+
+@Getter
+@AllArgsConstructor
+public enum UserSearchView {
+
+    MANAGE_SUPER_ADMINS,
+
+    APPROVE_GROUP_ADMINS,
+
+    MANAGE_GROUP_ADMINS,
+
+    APPROVE_GROUP_USERS,
+
+    MANAGE_GROUP_USERS
+}
+
+
+@Data
+public class UserSearchRequest {
+
+    @NotNull(message = "View type is mandatory")
+    private UserSearchView viewType;
+
+    // User filters
+    private String adId;
+    private String name;
+    private String emailId;
+    private String mobileNumber;
+    private String designation;
+
+    // Role filters
+    private String roleCode;
+    private String roleName;
+
+    // Group filters
+    private String groupCode;
+    private String groupName;
+
+    // User status filters
+    private UserStatus userStatus;
+    private AuthStatus userAuthStatus;
+    private String userRecordStatus;
+
+    // User role filters
+    private Boolean userRoleActive;
+    private String userRoleRecordStatus;
+    private AuthStatus userRoleAuthStatus;
+
+    // Date filters
+    private Long createdDateFrom;
+    private Long createdDateTo;
+
+    // Pagination
+    @Min(0)
+    private Integer page = 0;
+
+    @Min(1)
+    @Max(100)
+    private Integer size = 10;
+
+    // Sorting
+    private String sortBy = "createdAt";
+
+    private Sort.Direction sortDirection = Sort.Direction.DESC;
+}
+
+
+@Data
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
+public class UserSearchResponse {
+
+    private String userId;
+
+    private String userRoleId;
+
+    private String adId;
+
+    private String firstName;
+
+    private String lastName;
+
+    private String emailId;
+
+    private String mobileNumber;
+
+    private String designation;
+
+    private String officeAddress;
+
+    private String roleId;
+
+    private String roleCode;
+
+    private String roleName;
+
+    private String groupId;
+
+    private String groupCode;
+
+    private String groupName;
+
+    private Boolean primaryRole;
+
+    private Boolean roleActive;
+
+    private String userStatus;
+
+    private String userRecordStatus;
+
+    private String userAuthStatus;
+
+    private String userRoleRecordStatus;
+
+    private String userRoleAuthStatus;
+
+    private Long createdAt;
+}
+
+
+@Data
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
+public class UserSearchPageResponse {
+
+    private List<UserSearchResponse> content;
+
+    private Integer page;
+
+    private Integer size;
+
+    private Long totalElements;
+
+    private Integer totalPages;
+
+    private Boolean first;
+
+    private Boolean last;
+}
+
+
+@Data
+@Builder
+@AllArgsConstructor
+@NoArgsConstructor
+public class CurrentAdminContext {
+
+    private UUID userId;
+
+    private UUID aggregatorId;
+}
+
+public interface CurrentAdminProvider {
+
+    CurrentAdminContext getCurrentAdmin();
+}
+
+
+@Repository
+public interface BusinessRolesMasterRepository
+        extends JpaRepository<BusinessRolesMaster, UUID> {
+
+    @Query("""
+        SELECT r.id
+        FROM BusinessRolesMaster r
+        WHERE r.brCode = :brCode
+        AND r.aggregatorId = :aggregatorId
+        AND r.isActive = true
+    """)
+    Optional<UUID> findIdByBrCode(
+            @Param("brCode") String brCode,
+            @Param("aggregatorId") UUID aggregatorId
+    );
+
+    Optional<BusinessRolesMaster> findByBrCodeAndAggregatorId(
+            String brCode,
+            UUID aggregatorId
+    );
+
+    List<BusinessRolesMaster> findByBrCodeInAndAggregatorIdAndIsActiveTrue(
+            Collection<String> brCodes,
+            UUID aggregatorId
+    );
+
+    List<BusinessRolesMaster> findByBusinessGroupIdAndAggregatorIdAndIsActiveTrue(
+            UUID businessGroupId,
+            UUID aggregatorId
+    );
+}
+
+
+@Repository
+public interface UserRoleRepository extends JpaRepository<UserRole, UUID> {
+
+    Optional<UserRole> findByUserIdAndAggregatorIdAndIsPrimaryTrueAndDeletedAtIsNull(
+            UUID userId,
+            UUID aggregatorId
+    );
+
+    List<UserRole> findByRoleIdInAndAggregatorId(
+            Collection<UUID> roleIds,
+            UUID aggregatorId
+    );
+
+    // Keep your existing methods.
+}
+
+
+@Component
+public class UserSearchRoleConfig {
+
+    private static final List<String> GROUP_ADMIN_ROLES = List.of(
+            "BIZ_GROUP_ADMIN",
+            "BANK_IT_GROUP_ADMIN",
+            "OPS_ITDCR_GROUP_ADMIN",
+            "CMD_GROUP_ADMIN"
+    );
+
+    private static final Map<String, List<String>> GROUP_USER_ROLES =
+            Map.of(
+                "BIZ_GROUP_ADMIN", List.of(
+                    "BIZ_SUPPORT",
+                    "ONBOARDING_MANAGER",
+                    "RELATIONSHIP_MANAGER",
+                    "CHANNEL_MANAGER",
+                    "CHANNELS_ADMIN",
+                    "CHANNELS_USER",
+                    "CIRCLE_ADMIN",
+                    "CIRCLE_USER"
+                ),
+
+                "BANK_IT_GROUP_ADMIN", List.of(
+                    "PRODUCTION_SUPPORT",
+                    "MERCHANT_SUPPORT",
+                    "BANK_IT"
+                ),
+
+                "OPS_ITDCR_GROUP_ADMIN", List.of(
+                    "OPERATIONS"
+                ),
+
+                "CMD_GROUP_ADMIN", List.of(
+                    "CUSTOMER_SUPPORT",
+                    "CHARGEBACK_TEAM"
+                )
+            );
+
+    public List<String> getGroupAdminRoles() {
+        return GROUP_ADMIN_ROLES;
+    }
+
+    public List<String> getGroupUserRoles(String groupAdminRole) {
+        return GROUP_USER_ROLES.getOrDefault(
+                groupAdminRole,
+                Collections.emptyList()
+        );
+    }
+
+    public List<String> getAllGroupUserRoles() {
+        return GROUP_USER_ROLES.values()
+                .stream()
+                .flatMap(Collection::stream)
+                .distinct()
+                .toList();
+    }
+}
+
+
+@Data
+@Builder
+@AllArgsConstructor
+@NoArgsConstructor
+public class UserSearchScope {
+
+    private SystemRole loggedInRole;
+
+    private List<String> allowedRoleCodes;
+
+    private UUID allowedGroupId;
+
+    private UUID aggregatorId;
+}
+
+
+@Service
+@RequiredArgsConstructor
+public class UserSearchAuthorizationService {
+
+    private final UserRoleRepository userRoleRepository;
+
+    private final BusinessRolesMasterRepository businessRolesMasterRepository;
+
+    private final UserSearchRoleConfig roleConfig;
+
+    private final CurrentAdminProvider currentAdminProvider;
+
+    public UserSearchScope authorize(UserSearchView viewType) {
+
+        CurrentAdminContext currentAdmin =
+                currentAdminProvider.getCurrentAdmin();
+
+        if (currentAdmin == null
+                || currentAdmin.getUserId() == null
+                || currentAdmin.getAggregatorId() == null) {
+            throw new AdminPortalException(
+                    ErrorConstants.INVALID_REQUEST_ERROR_CODE,
+                    "Invalid logged-in user context"
+            );
+        }
+
+        UserRole primaryRole = userRoleRepository
+                .findByUserIdAndAggregatorIdAndIsPrimaryTrueAndDeletedAtIsNull(
+                        currentAdmin.getUserId(),
+                        currentAdmin.getAggregatorId()
+                )
+                .orElseThrow(() -> new AdminPortalException(
+                        ErrorConstants.INVALID_REQUEST_ERROR_CODE,
+                        "Primary role not found for logged-in user"
+                ));
+
+        BusinessRolesMaster businessRole =
+                businessRolesMasterRepository.findById(primaryRole.getRoleId())
+                        .orElseThrow(() -> new AdminPortalException(
+                                ErrorConstants.INVALID_REQUEST_ERROR_CODE,
+                                "Business role not found"
+                        ));
+
+        SystemRole loggedInRole =
+                SystemRole.fromValue(businessRole.getBrCode());
+
+        validateScreenPermission(loggedInRole, viewType);
+
+        List<String> allowedRoles = getAllowedRoles(
+                loggedInRole,
+                businessRole,
+                viewType
+        );
+
+        UUID groupId = null;
+
+        if (isGroupAdmin(loggedInRole)) {
+
+            groupId = businessRole.getBusinessGroupId();
+
+            if (groupId == null) {
+                throw new AdminPortalException(
+                        ErrorConstants.INVALID_REQUEST_ERROR_CODE,
+                        "Group mapping not found for logged-in admin"
+                );
+            }
+        }
+
+        return UserSearchScope.builder()
+                .loggedInRole(loggedInRole)
+                .allowedRoleCodes(allowedRoles)
+                .allowedGroupId(groupId)
+                .aggregatorId(currentAdmin.getAggregatorId())
+                .build();
+    }
+
+    private void validateScreenPermission(
+            SystemRole loggedInRole,
+            UserSearchView viewType) {
+
+        boolean authorized = switch (viewType) {
+
+            case MANAGE_SUPER_ADMINS,
+                 APPROVE_GROUP_ADMINS ->
+                    loggedInRole == SystemRole.MASTER_ADMIN;
+
+            case MANAGE_GROUP_ADMINS,
+                 APPROVE_GROUP_USERS ->
+                    loggedInRole == SystemRole.SUPER_ADMIN;
+
+            case MANAGE_GROUP_USERS ->
+                    isGroupAdmin(loggedInRole);
+        };
+
+        if (!authorized) {
+            throw new AdminPortalException(
+                    ErrorConstants.INVALID_REQUEST_ERROR_CODE,
+                    "You are not authorized to access this search view"
+            );
+        }
+    }
+
+    private List<String> getAllowedRoles(
+            SystemRole loggedInRole,
+            BusinessRolesMaster businessRole,
+            UserSearchView viewType) {
+
+        return switch (viewType) {
+
+            case MANAGE_SUPER_ADMINS ->
+                    List.of(SystemRole.SUPER_ADMIN.name());
+
+            case APPROVE_GROUP_ADMINS, MANAGE_GROUP_ADMINS ->
+                    roleConfig.getGroupAdminRoles();
+
+            case APPROVE_GROUP_USERS ->
+                    roleConfig.getAllGroupUserRoles();
+
+            case MANAGE_GROUP_USERS ->
+                    roleConfig.getGroupUserRoles(loggedInRole.name());
+        };
+    }
+
+    private boolean isGroupAdmin(SystemRole role) {
+
+        return roleConfig.getGroupAdminRoles()
+                .contains(role.name());
+    }
+}
+
+
+public interface UserSearchRepository {
+
+    Page<UserSearchResponse> searchUsers(
+            UserSearchRequest request,
+            UserSearchScope scope,
+            Pageable pageable
+    );
+}
+
+
+
+@Repository
+@RequiredArgsConstructor
+public class UserSearchRepositoryImpl implements UserSearchRepository {
+
+    private final EntityManager entityManager;
+
+    @Override
+    public Page<UserSearchResponse> searchUsers(
+            UserSearchRequest request,
+            UserSearchScope scope,
+            Pageable pageable) {
+
+        CriteriaBuilder cb = entityManager.getCriteriaBuilder();
+
+        // -------------------------------
+        // Main data query
+        // -------------------------------
+
+        CriteriaQuery<Tuple> query = cb.createTupleQuery();
+
+        Root<Users> user = query.from(Users.class);
+        Root<UserRole> userRole = query.from(UserRole.class);
+        Root<BusinessRolesMaster> businessRole =
+                query.from(BusinessRolesMaster.class);
+        Root<BusinessGroupMaster> businessGroup =
+                query.from(BusinessGroupMaster.class);
+
+        List<Predicate> predicates = buildPredicates(
+                cb,
+                request,
+                scope,
+                user,
+                userRole,
+                businessRole,
+                businessGroup
+        );
+
+        query.multiselect(
+                user.get("id").alias("userId"),
+                userRole.get("id").alias("userRoleId"),
+
+                user.get("adId").alias("adId"),
+                user.get("firstName").alias("firstName"),
+                user.get("lastName").alias("lastName"),
+                user.get("emailId").alias("emailId"),
+                user.get("phoneNumber").alias("mobileNumber"),
+                user.get("designation").alias("designation"),
+                user.get("officeAddress").alias("officeAddress"),
+
+                businessRole.get("id").alias("roleId"),
+                businessRole.get("brCode").alias("roleCode"),
+                businessRole.get("name").alias("roleName"),
+
+                businessGroup.get("id").alias("groupId"),
+                businessGroup.get("bgCode").alias("groupCode"),
+                businessGroup.get("name").alias("groupName"),
+
+                userRole.get("isPrimary").alias("primaryRole"),
+                userRole.get("isActive").alias("roleActive"),
+
+                user.get("status").alias("userStatus"),
+                user.get("recordStatus").alias("userRecordStatus"),
+                user.get("authStatus").alias("userAuthStatus"),
+
+                userRole.get("recordStatus").alias("userRoleRecordStatus"),
+                userRole.get("authStatus").alias("userRoleAuthStatus"),
+
+                user.get("createdAt").alias("createdAt")
+        );
+
+        query.where(predicates.toArray(new Predicate[0]));
+
+        query.distinct(true);
+
+        query.orderBy(
+                getOrder(cb, user, userRole, businessRole, businessGroup, pageable)
+        );
+
+        List<Tuple> results = entityManager.createQuery(query)
+                .setFirstResult((int) pageable.getOffset())
+                .setMaxResults(pageable.getPageSize())
+                .getResultList();
+
+        List<UserSearchResponse> content = results.stream()
+                .map(this::mapToResponse)
+                .toList();
+
+        // -------------------------------
+        // Count query
+        // -------------------------------
+
+        CriteriaQuery<Long> countQuery = cb.createQuery(Long.class);
+
+        Root<Users> countUser = countQuery.from(Users.class);
+        Root<UserRole> countUserRole = countQuery.from(UserRole.class);
+        Root<BusinessRolesMaster> countBusinessRole =
+                countQuery.from(BusinessRolesMaster.class);
+        Root<BusinessGroupMaster> countBusinessGroup =
+                countQuery.from(BusinessGroupMaster.class);
+
+        List<Predicate> countPredicates = buildPredicates(
+                cb,
+                request,
+                scope,
+                countUser,
+                countUserRole,
+                countBusinessRole,
+                countBusinessGroup
+        );
+
+        countQuery.select(cb.countDistinct(countUserRole.get("id")));
+
+        countQuery.where(
+                countPredicates.toArray(new Predicate[0])
+        );
+
+        Long totalElements = entityManager.createQuery(countQuery)
+                .getSingleResult();
+
+        return new PageImpl<>(
+                content,
+                pageable,
+                totalElements
+        );
+    }
+
+    private List<Predicate> buildPredicates(
+            CriteriaBuilder cb,
+            UserSearchRequest request,
+            UserSearchScope scope,
+            Root<Users> user,
+            Root<UserRole> userRole,
+            Root<BusinessRolesMaster> businessRole,
+            Root<BusinessGroupMaster> businessGroup) {
+
+        List<Predicate> predicates = new ArrayList<>();
+
+        // -----------------------------------
+        // Table relationships
+        // -----------------------------------
+
+        predicates.add(
+                cb.equal(userRole.get("userId"), user.get("id"))
+        );
+
+        predicates.add(
+                cb.equal(userRole.get("roleId"), businessRole.get("id"))
+        );
+
+        predicates.add(
+                cb.equal(
+                        businessRole.get("businessGroupId"),
+                        businessGroup.get("id")
+                )
+        );
+
+        // -----------------------------------
+        // Aggregator isolation
+        // -----------------------------------
+
+        predicates.add(
+                cb.equal(
+                        user.get("aggregatorId"),
+                        scope.getAggregatorId()
+                )
+        );
+
+        predicates.add(
+                cb.equal(
+                        userRole.get("aggregatorId"),
+                        scope.getAggregatorId()
+                )
+        );
+
+        predicates.add(
+                cb.equal(
+                        businessRole.get("aggregatorId"),
+                        scope.getAggregatorId()
+                )
+        );
+
+        predicates.add(
+                cb.equal(
+                        businessGroup.get("aggregatorId"),
+                        scope.getAggregatorId()
+                )
+        );
+
+        // -----------------------------------
+        // Mandatory conditions
+        // -----------------------------------
+
+        predicates.add(
+                cb.isNull(user.get("deletedAt"))
+        );
+
+        predicates.add(
+                cb.isNull(userRole.get("deletedAt"))
+        );
+
+        predicates.add(
+                cb.isTrue(userRole.get("isPrimary"))
+        );
+
+        predicates.add(
+                cb.isTrue(businessRole.get("isActive"))
+        );
+
+        predicates.add(
+                cb.isTrue(businessGroup.get("isActive"))
+        );
+
+        // -----------------------------------
+        // Allowed roles
+        // -----------------------------------
+
+        if (scope.getAllowedRoleCodes() == null
+                || scope.getAllowedRoleCodes().isEmpty()) {
+
+            predicates.add(cb.disjunction());
+
+        } else {
+
+            predicates.add(
+                    businessRole.get("brCode")
+                            .in(scope.getAllowedRoleCodes())
+            );
+        }
+
+        // -----------------------------------
+        // Group-level restriction
+        // -----------------------------------
+
+        if (scope.getAllowedGroupId() != null) {
+
+            predicates.add(
+                    cb.equal(
+                            businessRole.get("businessGroupId"),
+                            scope.getAllowedGroupId()
+                    )
+            );
+        }
+
+        // -----------------------------------
+        // User filters
+        // -----------------------------------
+
+        addLikeFilter(
+                cb,
+                predicates,
+                user.get("adId"),
+                request.getAdId()
+        );
+
+        addLikeFilter(
+                cb,
+                predicates,
+                user.get("emailId"),
+                request.getEmailId()
+        );
+
+        addLikeFilter(
+                cb,
+                predicates,
+                user.get("phoneNumber"),
+                request.getMobileNumber()
+        );
+
+        addLikeFilter(
+                cb,
+                predicates,
+                user.get("designation"),
+                request.getDesignation()
+        );
+
+        if (StringUtils.hasText(request.getName())) {
+
+            String searchName = "%" +
+                    request.getName().trim().toLowerCase() + "%";
+
+            Expression<String> fullName = cb.lower(
+                    cb.concat(
+                            cb.concat(user.get("firstName"), " "),
+                            cb.coalesce(user.get("lastName"), "")
+                    )
+            );
+
+            predicates.add(
+                    cb.or(
+                            cb.like(
+                                    cb.lower(user.get("firstName")),
+                                    searchName
+                            ),
+                            cb.like(
+                                    cb.lower(user.get("lastName")),
+                                    searchName
+                            ),
+                            cb.like(fullName, searchName)
+                    )
+            );
+        }
+
+        // -----------------------------------
+        // Role filters
+        // -----------------------------------
+
+        addLikeFilter(
+                cb,
+                predicates,
+                businessRole.get("brCode"),
+                request.getRoleCode()
+        );
+
+        addLikeFilter(
+                cb,
+                predicates,
+                businessRole.get("name"),
+                request.getRoleName()
+        );
+
+        // -----------------------------------
+        // Group filters
+        // -----------------------------------
+
+        addLikeFilter(
+                cb,
+                predicates,
+                businessGroup.get("bgCode"),
+                request.getGroupCode()
+        );
+
+        addLikeFilter(
+                cb,
+                predicates,
+                businessGroup.get("name"),
+                request.getGroupName()
+        );
+
+        // -----------------------------------
+        // User status filters
+        // -----------------------------------
+
+        if (request.getUserStatus() != null) {
+
+            predicates.add(
+                    cb.equal(
+                            user.get("status"),
+                            request.getUserStatus()
+                    )
+            );
+        }
+
+        if (request.getUserAuthStatus() != null) {
+
+            predicates.add(
+                    cb.equal(
+                            user.get("authStatus"),
+                            request.getUserAuthStatus()
+                    )
+            );
+        }
+
+        addLikeFilter(
+                cb,
+                predicates,
+                user.get("recordStatus"),
+                request.getUserRecordStatus()
+        );
+
+        // -----------------------------------
+        // User role filters
+        // -----------------------------------
+
+        if (request.getUserRoleActive() != null) {
+
+            predicates.add(
+                    cb.equal(
+                            userRole.get("isActive"),
+                            request.getUserRoleActive()
+                    )
+            );
+        }
+
+        if (request.getUserRoleAuthStatus() != null) {
+
+            predicates.add(
+                    cb.equal(
+                            userRole.get("authStatus"),
+                            request.getUserRoleAuthStatus()
+                    )
+            );
+        }
+
+        addLikeFilter(
+                cb,
+                predicates,
+                userRole.get("recordStatus"),
+                request.getUserRoleRecordStatus()
+        );
+
+        // -----------------------------------
+        // Date filters
+        // -----------------------------------
+
+        if (request.getCreatedDateFrom() != null) {
+
+            predicates.add(
+                    cb.greaterThanOrEqualTo(
+                            user.<Long>get("createdAt"),
+                            request.getCreatedDateFrom()
+                    )
+            );
+        }
+
+        if (request.getCreatedDateTo() != null) {
+
+            predicates.add(
+                    cb.lessThanOrEqualTo(
+                            user.<Long>get("createdAt"),
+                            request.getCreatedDateTo()
+                    )
+            );
+        }
+
+        return predicates;
+    }
+
+    private void addLikeFilter(
+            CriteriaBuilder cb,
+            List<Predicate> predicates,
+            Expression<String> field,
+            String value) {
+
+        if (StringUtils.hasText(value)) {
+
+            predicates.add(
+                    cb.like(
+                            cb.lower(field),
+                            "%" + value.trim().toLowerCase() + "%"
+                    )
+            );
+        }
+    }
+
+    private Order getOrder(
+            CriteriaBuilder cb,
+            Root<Users> user,
+            Root<UserRole> userRole,
+            Root<BusinessRolesMaster> businessRole,
+            Root<BusinessGroupMaster> businessGroup,
+            Pageable pageable) {
+
+        String sortBy = pageable.getSort()
+                .stream()
+                .findFirst()
+                .map(Sort.Order::getProperty)
+                .orElse("createdAt");
+
+        Sort.Direction direction = pageable.getSort()
+                .stream()
+                .findFirst()
+                .map(Sort.Order::getDirection)
+                .orElse(Sort.Direction.DESC);
+
+        Expression<?> sortExpression = switch (sortBy) {
+
+            case "firstName" -> user.get("firstName");
+
+            case "adId" -> user.get("adId");
+
+            case "emailId" -> user.get("emailId");
+
+            case "roleName" -> businessRole.get("name");
+
+            case "groupName" -> businessGroup.get("name");
+
+            case "createdAt" -> user.get("createdAt");
+
+            default -> user.get("createdAt");
+        };
+
+        return direction == Sort.Direction.ASC
+                ? cb.asc(sortExpression)
+                : cb.desc(sortExpression);
+    }
+
+    private UserSearchResponse mapToResponse(Tuple tuple) {
+
+        return UserSearchResponse.builder()
+
+                .userId(toString(tuple.get("userId", UUID.class)))
+
+                .userRoleId(toString(tuple.get("userRoleId", UUID.class)))
+
+                .adId(tuple.get("adId", String.class))
+
+                .firstName(tuple.get("firstName", String.class))
+
+                .lastName(tuple.get("lastName", String.class))
+
+                .emailId(tuple.get("emailId", String.class))
+
+                .mobileNumber(tuple.get("mobileNumber", String.class))
+
+                .designation(tuple.get("designation", String.class))
+
+                .officeAddress(tuple.get("officeAddress", String.class))
+
+                .roleId(toString(tuple.get("roleId", UUID.class)))
+
+                .roleCode(tuple.get("roleCode", String.class))
+
+                .roleName(tuple.get("roleName", String.class))
+
+                .groupId(toString(tuple.get("groupId", UUID.class)))
+
+                .groupCode(tuple.get("groupCode", String.class))
+
+                .groupName(tuple.get("groupName", String.class))
+
+                .primaryRole(tuple.get("primaryRole", Boolean.class))
+
+                .roleActive(tuple.get("roleActive", Boolean.class))
+
+                .userStatus(enumValue(tuple.get("userStatus")))
+
+                .userRecordStatus(tuple.get("userRecordStatus", String.class))
+
+                .userAuthStatus(enumValue(tuple.get("userAuthStatus")))
+
+                .userRoleRecordStatus(
+                        tuple.get("userRoleRecordStatus", String.class)
+                )
+
+                .userRoleAuthStatus(
+                        enumValue(tuple.get("userRoleAuthStatus"))
+                )
+
+                .createdAt(tuple.get("createdAt", Long.class))
+
+                .build();
+    }
+
+    private String toString(UUID value) {
+        return value == null ? null : value.toString();
+    }
+
+    private String enumValue(Object value) {
+        return value == null ? null : value.toString();
+    }
+}
+
+
+
+@Service
+@RequiredArgsConstructor
+public class UserSearchService {
+
+    private final UserSearchAuthorizationService authorizationService;
+
+    private final UserSearchRepository userSearchRepository;
+
+    public UserSearchPageResponse searchUsers(
+            UserSearchRequest request) {
+
+        validateRequest(request);
+
+        UserSearchScope scope =
+                authorizationService.authorize(request.getViewType());
+
+        Sort.Direction direction =
+                request.getSortDirection() == null
+                        ? Sort.Direction.DESC
+                        : request.getSortDirection();
+
+        String sortBy = request.getSortBy() == null
+                ? "createdAt"
+                : request.getSortBy();
+
+        Pageable pageable = PageRequest.of(
+                request.getPage() == null ? 0 : request.getPage(),
+                request.getSize() == null ? 10 : request.getSize(),
+                direction,
+                sortBy
+        );
+
+        Page<UserSearchResponse> result =
+                userSearchRepository.searchUsers(
+                        request,
+                        scope,
+                        pageable
+                );
+
+        return UserSearchPageResponse.builder()
+                .content(result.getContent())
+                .page(result.getNumber())
+                .size(result.getSize())
+                .totalElements(result.getTotalElements())
+                .totalPages(result.getTotalPages())
+                .first(result.isFirst())
+                .last(result.isLast())
+                .build();
+    }
+
+    private void validateRequest(UserSearchRequest request) {
+
+        if (request == null || request.getViewType() == null) {
+            throw new AdminPortalException(
+                    ErrorConstants.INVALID_REQUEST_ERROR_CODE,
+                    "View type is mandatory"
+            );
+        }
+
+        if (request.getPage() != null && request.getPage() < 0) {
+            throw new AdminPortalException(
+                    ErrorConstants.INVALID_REQUEST_ERROR_CODE,
+                    "Page number cannot be negative"
+            );
+        }
+
+        if (request.getSize() != null
+                && (request.getSize() < 1 || request.getSize() > 100)) {
+
+            throw new AdminPortalException(
+                    ErrorConstants.INVALID_REQUEST_ERROR_CODE,
+                    "Page size must be between 1 and 100"
+            );
+        }
+
+        if (request.getCreatedDateFrom() != null
+                && request.getCreatedDateTo() != null
+                && request.getCreatedDateFrom()
+                    > request.getCreatedDateTo()) {
+
+            throw new AdminPortalException(
+                    ErrorConstants.INVALID_REQUEST_ERROR_CODE,
+                    "Invalid created date range"
+            );
+        }
+    }
+}
+
+
+
+@RestController
+@RequiredArgsConstructor
+@RequestMapping("/admin/users")
+@Validated
+public class UserSearchController {
+
+    private final UserSearchService userSearchService;
+
+    @PostMapping("/search")
+    public ResponseEntity<UserSearchPageResponse> searchUsers(
+            @Valid @RequestBody UserSearchRequest request) {
+
+        return ResponseEntity.ok(
+                userSearchService.searchUsers(request)
+        );
+    }
+}
+
+private void validateAdminAssignment(UserRole userRole) {
+
+    if (!Boolean.TRUE.equals(userRole.getIsActive())) {
+        throw new AdminPortalException(
+                ErrorConstants.INVALID_REQUEST_ERROR_CODE,
+                "Logged-in user role is inactive"
+        );
+    }
+
+    if (userRole.getAuthStatus() != AuthStatus.APPROVED) {
+        throw new AdminPortalException(
+                ErrorConstants.INVALID_REQUEST_ERROR_CODE,
+                "Logged-in user role is not approved"
+        );
+    }
+}
